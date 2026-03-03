@@ -1,0 +1,1076 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+	<class>MainWidget</class>
+	<widget class="QWidget" name="MainWidget">
+		<property name="geometry">
+			<rect>
+				<x>0</x>
+				<y>0</y>
+				<width>950</width>
+				<height>750</height>
+			</rect>
+		</property>
+		<property name="windowTitle">
+			<string>人脸识别考勤系统</string>
+		</property>
+		<property name="styleSheet">
+			<string notr="true">QWidget#MainWidget { background-color: #FFFFFF; }</string>
+		</property>
+		<layout class="QHBoxLayout" name="horizontalLayout">
+			<property name="spacing">
+				<number>0</number>
+			</property>
+			<property name="leftMargin">
+				<number>0</number>
+			</property>
+			<property name="topMargin">
+				<number>0</number>
+			</property>
+			<property name="rightMargin">
+				<number>0</number>
+			</property>
+			<property name="bottomMargin">
+				<number>0</number>
+			</property>
+			<item>
+				<widget class="QListWidget" name="listWidget_Nav">
+					<property name="minimumSize">
+						<size>
+							<width>160</width>
+							<height>0</height>
+						</size>
+					</property>
+					<property name="maximumSize">
+						<size>
+							<width>160</width>
+							<height>16777215</height>
+						</size>
+					</property>
+					<property name="font">
+						<font>
+							<pointsize>13</pointsize>
+						</font>
+					</property>
+					<property name="styleSheet">
+						<string notr="true">
+							QListWidget { background-color: #2E2E2E; color: #D0D0D0; border: none; outline: none; padding-top: 10px; }
+							QListWidget::item { height: 55px; padding-left: 15px; }
+							QListWidget::item:selected { background-color: #1E1E1E; color: #FFFFFF; border-left: 4px solid #0099FF; }
+							QListWidget::item:hover { background-color: #3E3E3E; }
+						</string>
+					</property>
+					<item>
+						<property name="text">
+							<string>📷 考勤打卡</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>👤 人脸录入</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>📅 考勤记录</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>👥 员工管理</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>💬 局域网聊天</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>🤖 AI 助手</string>
+						</property>
+					</item>
+					<item>
+						<property name="text">
+							<string>⚙️ 个人信息</string>
+						</property>
+					</item>
+				</widget>
+			</item>
+			<item>
+				<widget class="QStackedWidget" name="stackedWidget">
+					<property name="currentIndex">
+						<number>0</number>
+					</property>
+
+					<widget class="QWidget" name="page_Attendance">
+						<layout class="QVBoxLayout" name="verticalLayout_Attendance">
+							<item>
+								<layout class="QHBoxLayout" name="horizontalLayout_AttendanceInfo">
+									<item>
+										<widget class="QFrame" name="frame_Morning">
+											<property name="styleSheet">
+												<string notr="true">background-color: #F5F7FA; border: 1px solid #E4E7ED; border-radius: 8px; padding: 5px;</string>
+											</property>
+											<layout class="QVBoxLayout" name="vL_Morn">
+												<item>
+													<widget class="QLabel" name="label_MorningTime">
+														<property name="font">
+															<font>
+																<family>Microsoft YaHei</family>
+																<pointsize>12</pointsize>
+																<bold>true</bold>
+															</font>
+														</property>
+														<property name="text">
+															<string>上班 09:00</string>
+														</property>
+													</widget>
+												</item>
+												<item>
+													<widget class="QLabel" name="label_MorningStatus">
+														<property name="text">
+															<string>未打卡</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #909399;</string>
+														</property>
+													</widget>
+												</item>
+											</layout>
+										</widget>
+									</item>
+									<item>
+										<widget class="QFrame" name="frame_Evening">
+											<property name="styleSheet">
+												<string notr="true">background-color: #F5F7FA; border: 1px solid #E4E7ED; border-radius: 8px; padding: 5px;</string>
+											</property>
+											<layout class="QVBoxLayout" name="vL_Eve">
+												<item>
+													<widget class="QLabel" name="label_EveningTime">
+														<property name="font">
+															<font>
+																<family>Microsoft YaHei</family>
+																<pointsize>12</pointsize>
+																<bold>true</bold>
+															</font>
+														</property>
+														<property name="text">
+															<string>下班 18:00</string>
+														</property>
+													</widget>
+												</item>
+												<item>
+													<widget class="QLabel" name="label_EveningStatus">
+														<property name="text">
+															<string>未打卡</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #909399;</string>
+														</property>
+													</widget>
+												</item>
+											</layout>
+										</widget>
+									</item>
+									<item>
+										<spacer name="spacer_att">
+											<property name="orientation">
+												<enum>Qt::Horizontal</enum>
+											</property>
+										</spacer>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_LeaveRequest">
+											<property name="minimumSize">
+												<size>
+													<width>100</width>
+													<height>35</height>
+												</size>
+											</property>
+											<property name="styleSheet">
+												<string notr="true">color: #409EFF; font-weight: bold;</string>
+											</property>
+											<property name="text">
+												<string>📅 申请请假</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_LeaveApprove">
+											<property name="minimumSize">
+												<size>
+													<width>100</width>
+													<height>35</height>
+												</size>
+											</property>
+											<property name="styleSheet">
+												<string notr="true">color: #E6A23C; font-weight: bold;</string>
+											</property>
+											<property name="text">
+												<string>📝 审批请假</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_RuleSettings">
+											<property name="minimumSize">
+												<size>
+													<width>100</width>
+													<height>35</height>
+												</size>
+											</property>
+											<property name="text">
+												<string>⚙️ 规则设置</string>
+											</property>
+										</widget>
+									</item>
+								</layout>
+							</item>
+							<item>
+								<widget class="QLabel" name="label_Camera_Punch">
+									<property name="minimumSize">
+										<size>
+											<width>480</width>
+											<height>360</height>
+										</size>
+									</property>
+									<property name="styleSheet">
+										<string notr="true">background-color: #1E1E1E; border-radius: 8px;</string>
+									</property>
+									<property name="alignment">
+										<set>Qt::AlignCenter</set>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QLabel" name="label_CurrentTime">
+									<property name="font">
+										<font>
+											<family>Microsoft YaHei</family>
+											<pointsize>14</pointsize>
+											<bold>true</bold>
+										</font>
+									</property>
+									<property name="styleSheet">
+										<string notr="true">color: #409EFF;</string>
+									</property>
+									<property name="alignment">
+										<set>Qt::AlignRight</set>
+									</property>
+									<property name="text">
+										<string>当前时间: --:--:--</string>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QLabel" name="label_Status">
+									<property name="font">
+										<font>
+											<family>Microsoft YaHei</family>
+											<pointsize>15</pointsize>
+										</font>
+									</property>
+									<property name="alignment">
+										<set>Qt::AlignCenter</set>
+									</property>
+									<property name="text">
+										<string>请正对摄像头进行考勤</string>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QPushButton" name="btn_manualPunch">
+									<property name="minimumSize">
+										<size>
+											<width>0</width>
+											<height>45</height>
+										</size>
+									</property>
+									<property name="font">
+										<font>
+											<family>Microsoft YaHei</family>
+											<pointsize>12</pointsize>
+											<bold>true</bold>
+										</font>
+									</property>
+									<property name="text">
+										<string>无法识别？手动打卡辅助</string>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_Register">
+						<layout class="QVBoxLayout" name="vL_Reg">
+							<item>
+								<widget class="QLabel" name="label_Camera_Register">
+									<property name="styleSheet">
+										<string notr="true">background-color: #000; border-radius: 8px;</string>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QPushButton" name="btn_Register">
+									<property name="minimumSize">
+										<size>
+											<width>0</width>
+											<height>40</height>
+										</size>
+									</property>
+									<property name="text">
+										<string>开始拍照录入</string>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_Records">
+						<layout class="QVBoxLayout" name="vL_Rec">
+							<item>
+								<layout class="QHBoxLayout" name="hL_RecTop">
+									<item>
+										<widget class="QLabel" name="l1">
+											<property name="text">
+												<string>日期筛选:</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QDateEdit" name="dateEdit_Filter">
+											<property name="calendarPopup">
+												<bool>true</bool>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_FilterDate">
+											<property name="text">
+												<string>查询记录</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<spacer name="s_rec">
+											<property name="orientation">
+												<enum>Qt::Horizontal</enum>
+											</property>
+										</spacer>
+									</item>
+								</layout>
+							</item>
+							<item>
+								<widget class="QTableView" name="tableView_Records"/>
+							</item>
+							<item>
+								<widget class="QPushButton" name="btn_Export">
+									<property name="text">
+										<string>导出为 Excel (CSV)</string>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_Profile_Admin">
+						<layout class="QVBoxLayout" name="vL_Admin">
+							<item>
+								<layout class="QHBoxLayout" name="hL_Admin">
+									<item>
+										<widget class="QLabel" name="l2">
+											<property name="text">
+												<string>部门:</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QComboBox" name="comboBox_FilterDept">
+											<item>
+												<property name="text">
+													<string>全部</string>
+												</property>
+											</item>
+											<item>
+												<property name="text">
+													<string>总办</string>
+												</property>
+											</item>
+											<item>
+												<property name="text">
+													<string>研发部</string>
+												</property>
+											</item>
+											<item>
+												<property name="text">
+													<string>财务部</string>
+												</property>
+											</item>
+											<item>
+												<property name="text">
+													<string>人事行政部</string>
+												</property>
+											</item>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_FilterDept">
+											<property name="text">
+												<string>筛选人员</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<spacer name="s_admin_top">
+											<property name="orientation">
+												<enum>Qt::Horizontal</enum>
+											</property>
+										</spacer>
+									</item>
+								</layout>
+							</item>
+							<item>
+								<widget class="QTableView" name="tableView_Users"/>
+							</item>
+							<item>
+								<widget class="QPushButton" name="btn_deleteUser">
+									<property name="text">
+										<string>删除选中员工</string>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_Chat">
+						<layout class="QHBoxLayout" name="horizontalLayout_ChatMain" stretch="3,7">
+							<property name="spacing">
+								<number>0</number>
+							</property>
+							<item>
+								<widget class="QFrame" name="frame_Contacts">
+									<property name="styleSheet">
+										<string notr="true">background-color: #FAFAFA; border-right: 1px solid #E5E5E5;</string>
+									</property>
+									<layout class="QVBoxLayout" name="vL_Contacts">
+										<item>
+											<widget class="QLineEdit" name="lineEdit_ChatSearch">
+												<property name="minimumSize">
+													<size>
+														<width>0</width>
+														<height>32</height>
+													</size>
+												</property>
+												<property name="placeholderText">
+													<string>🔍 搜索联系人/聊天记录</string>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">background: #EAEAEA; border: none; border-radius: 4px; padding-left: 8px;</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<widget class="QListWidget" name="listWidget_Contacts">
+												<property name="styleSheet">
+													<string notr="true">QListWidget { border: none; background: transparent; outline: none; } QListWidget::item { height: 60px; border-bottom: 1px solid #F0F0F0; }</string>
+												</property>
+											</widget>
+										</item>
+									</layout>
+								</widget>
+							</item>
+							<item>
+								<widget class="QFrame" name="frame_ChatRight">
+									<layout class="QVBoxLayout" name="vL_ChatArea">
+										<property name="spacing">
+											<number>0</number>
+										</property>
+										<property name="leftMargin">
+											<number>0</number>
+										</property>
+										<property name="topMargin">
+											<number>0</number>
+										</property>
+										<property name="rightMargin">
+											<number>0</number>
+										</property>
+										<property name="bottomMargin">
+											<number>0</number>
+										</property>
+										<item>
+											<widget class="QFrame" name="frame_ChatHeader">
+												<property name="minimumSize">
+													<size>
+														<width>0</width>
+														<height>50</height>
+													</size>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">border-bottom: 1px solid #E5E5E5;</string>
+												</property>
+												<layout class="QHBoxLayout" name="hL_ChatHead">
+													<item>
+														<widget class="QLabel" name="label_ChatTarget">
+															<property name="font">
+																<font>
+																	<pointsize>12</pointsize>
+																	<bold>true</bold>
+																</font>
+															</property>
+															<property name="text">
+																<string>请选择联系人</string>
+															</property>
+														</widget>
+													</item>
+													<item>
+														<spacer name="s_head">
+															<property name="orientation">
+																<enum>Qt::Horizontal</enum>
+															</property>
+														</spacer>
+													</item>
+													<item>
+														<widget class="QPushButton" name="btn_MoreOpt">
+															<property name="text">
+																<string>...</string>
+															</property>
+															<property name="flat">
+																<bool>true</bool>
+															</property>
+														</widget>
+													</item>
+												</layout>
+											</widget>
+										</item>
+										<item>
+											<widget class="QTextBrowser" name="textBrowser_Chat">
+												<property name="styleSheet">
+													<string notr="true">border: none; background: #F5F5F5; padding: 10px;</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<widget class="QFrame" name="frame_Input">
+												<property name="minimumSize">
+													<size>
+														<width>0</width>
+														<height>150</height>
+													</size>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">background: #FFF; border-top: 1px solid #E5E5E5;</string>
+												</property>
+												<layout class="QVBoxLayout" name="vL_In">
+													<item>
+														<layout class="QHBoxLayout" name="hL_Tools">
+															<item>
+																<widget class="QPushButton" name="btn_Emoji">
+																	<property name="text">
+																		<string>😀</string>
+																	</property>
+																	<property name="flat">
+																		<bool>true</bool>
+																	</property>
+																</widget>
+															</item>
+															<item>
+																<widget class="QPushButton" name="btn_Folder">
+																	<property name="text">
+																		<string>📁</string>
+																	</property>
+																	<property name="flat">
+																		<bool>true</bool>
+																	</property>
+																</widget>
+															</item>
+															<item>
+																<widget class="QPushButton" name="btn_History">
+																	<property name="text">
+																		<string>🕒</string>
+																	</property>
+																	<property name="flat">
+																		<bool>true</bool>
+																	</property>
+																</widget>
+															</item>
+															<item>
+																<spacer name="s_tool">
+																	<property name="orientation">
+																		<enum>Qt::Horizontal</enum>
+																	</property>
+																</spacer>
+															</item>
+														</layout>
+													</item>
+													<item>
+														<widget class="QLineEdit" name="lineEdit_ChatMessage">
+															<property name="styleSheet">
+																<string notr="true">border: none; font-size: 14px;</string>
+															</property>
+															<property name="placeholderText">
+																<string>请输入内容...</string>
+															</property>
+														</widget>
+													</item>
+													<item>
+														<layout class="QHBoxLayout" name="hL_Send">
+															<item>
+																<spacer name="s_send">
+																	<property name="orientation">
+																		<enum>Qt::Horizontal</enum>
+																	</property>
+																</spacer>
+															</item>
+															<item>
+																<widget class="QPushButton" name="btn_SendChat">
+																	<property name="minimumSize">
+																		<size>
+																			<width>80</width>
+																			<height>30</height>
+																		</size>
+																	</property>
+																	<property name="styleSheet">
+																		<string notr="true">background: #0099FF; color: #FFF; border-radius: 4px;</string>
+																	</property>
+																	<property name="text">
+																		<string>发送(S)</string>
+																	</property>
+																</widget>
+															</item>
+														</layout>
+													</item>
+												</layout>
+											</widget>
+										</item>
+									</layout>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_AIAssistant">
+						<property name="styleSheet">
+							<string notr="true">QWidget#page_AIAssistant { background-color: #F7F9FC; }</string>
+						</property>
+						<layout class="QVBoxLayout" name="verticalLayout_AI">
+							<property name="spacing">
+								<number>0</number>
+							</property>
+							<property name="leftMargin">
+								<number>0</number>
+							</property>
+							<property name="topMargin">
+								<number>0</number>
+							</property>
+							<property name="rightMargin">
+								<number>0</number>
+							</property>
+							<property name="bottomMargin">
+								<number>0</number>
+							</property>
+							<item>
+								<widget class="QFrame" name="frame_AIHeader">
+									<property name="minimumSize">
+										<size>
+											<width>0</width>
+											<height>60</height>
+										</size>
+									</property>
+									<property name="styleSheet">
+										<string notr="true">QFrame { background-color: #FFFFFF; border-bottom: 1px solid #EBEDF0; }</string>
+									</property>
+									<layout class="QHBoxLayout" name="horizontalLayout_AIHead">
+										<item>
+											<widget class="QLabel" name="label_AITitle">
+												<property name="font">
+													<font>
+														<family>Microsoft YaHei</family>
+														<pointsize>14</pointsize>
+														<bold>true</bold>
+													</font>
+												</property>
+												<property name="text">
+													<string>✨ 企业办公智能 AI 助手</string>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">color: #2F3542;</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<spacer name="spacer_aiHead">
+												<property name="orientation">
+													<enum>Qt::Horizontal</enum>
+												</property>
+											</spacer>
+										</item>
+										<item>
+											<widget class="QPushButton" name="btn_ClearAIHistory">
+												<property name="text">
+													<string>🧹 清除记忆</string>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">QPushButton { color: #8A92A6; border: none; background: transparent; } QPushButton:hover { color: #F53B57; }</string>
+												</property>
+												<property name="cursor">
+													<cursorShape>PointingHandCursor</cursorShape>
+												</property>
+											</widget>
+										</item>
+									</layout>
+								</widget>
+							</item>
+							<item>
+								<widget class="QTextBrowser" name="textBrowser_AI">
+									<property name="font">
+										<font>
+											<family>Microsoft YaHei</family>
+											<pointsize>11</pointsize>
+										</font>
+									</property>
+									<property name="styleSheet">
+										<string notr="true">QTextBrowser { border: none; background-color: transparent; padding: 20px; }</string>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QFrame" name="frame_AIInput">
+									<property name="minimumSize">
+										<size>
+											<width>0</width>
+											<height>160</height>
+										</size>
+									</property>
+									<property name="maximumSize">
+										<size>
+											<width>16777215</width>
+											<height>160</height>
+										</size>
+									</property>
+									<property name="styleSheet">
+										<string notr="true">QFrame { background-color: #FFFFFF; border-top: 1px solid #EBEDF0; }</string>
+									</property>
+									<layout class="QVBoxLayout" name="verticalLayout_AIIn">
+										<property name="leftMargin">
+											<number>15</number>
+										</property>
+										<property name="topMargin">
+											<number>10</number>
+										</property>
+										<property name="rightMargin">
+											<number>15</number>
+										</property>
+										<property name="bottomMargin">
+											<number>15</number>
+										</property>
+										<item>
+											<widget class="QLineEdit" name="lineEdit_AIInput">
+												<property name="sizePolicy">
+													<sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+														<horstretch>0</horstretch>
+														<verstretch>0</verstretch>
+													</sizepolicy>
+												</property>
+												<property name="font">
+													<font>
+														<family>Microsoft YaHei</family>
+														<pointsize>12</pointsize>
+													</font>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">QLineEdit { border: none; background-color: transparent; }</string>
+												</property>
+												<property name="alignment">
+													<set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+												</property>
+												<property name="placeholderText">
+													<string>向 AI 助手提问（例如：帮我写一份关于考勤系统的请假制度通知...）</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<layout class="QHBoxLayout" name="horizontalLayout_AISend">
+												<item>
+													<spacer name="spacer_aiSend">
+														<property name="orientation">
+															<enum>Qt::Horizontal</enum>
+														</property>
+													</spacer>
+												</item>
+												<item>
+													<widget class="QPushButton" name="btn_SendAI">
+														<property name="minimumSize">
+															<size>
+																<width>100</width>
+																<height>36</height>
+															</size>
+														</property>
+														<property name="font">
+															<font>
+																<family>Microsoft YaHei</family>
+																<pointsize>10</pointsize>
+																<bold>true</bold>
+															</font>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">QPushButton { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #7F00FF, stop:1 #E100FF); color: white; border-radius: 6px; } QPushButton:hover { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6B00D7, stop:1 #B900D7); } QPushButton:disabled { background-color: #DCDDE1; color: #A4B0BE; }</string>
+														</property>
+														<property name="text">
+															<string>发送</string>
+														</property>
+														<property name="cursor">
+															<cursorShape>PointingHandCursor</cursorShape>
+														</property>
+													</widget>
+												</item>
+											</layout>
+										</item>
+									</layout>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+
+					<widget class="QWidget" name="page_Settings">
+						<property name="styleSheet">
+							<string notr="true">QWidget#page_Settings { background-color: #F0F2F5; }</string>
+						</property>
+						<layout class="QVBoxLayout" name="vL_SettingsMain">
+							<property name="leftMargin">
+								<number>50</number>
+							</property>
+							<property name="rightMargin">
+								<number>50</number>
+							</property>
+							<item>
+								<spacer name="s_set_top">
+									<property name="orientation">
+										<enum>Qt::Vertical</enum>
+									</property>
+								</spacer>
+							</item>
+							<item>
+								<widget class="QFrame" name="frame_ProfileCard">
+									<property name="styleSheet">
+										<string notr="true">background-color: #FFFFFF; border-radius: 15px; border: 1px solid #E5E5E5;</string>
+									</property>
+									<layout class="QVBoxLayout" name="vL_Card">
+										<property name="spacing">
+											<number>20</number>
+										</property>
+										<property name="topMargin">
+											<number>30</number>
+										</property>
+										<property name="bottomMargin">
+											<number>30</number>
+										</property>
+										<item>
+											<layout class="QHBoxLayout" name="hL_AvatarCenter">
+												<item>
+													<spacer name="s_av_l">
+														<property name="orientation">
+															<enum>Qt::Horizontal</enum>
+														</property>
+													</spacer>
+												</item>
+												<item>
+													<layout class="QVBoxLayout" name="vL_AvGroup">
+														<item>
+															<widget class="QLabel" name="label_Avatar">
+																<property name="minimumSize">
+																	<size>
+																		<width>120</width>
+																		<height>120</height>
+																	</size>
+																</property>
+																<property name="maximumSize">
+																	<size>
+																		<width>120</width>
+																		<height>120</height>
+																	</size>
+																</property>
+																<property name="styleSheet">
+																	<string notr="true">background-color: transparent;</string>
+																</property>
+																<property name="text">
+																	<string>暂无头像</string>
+																</property>
+																<property name="alignment">
+																	<set>Qt::AlignCenter</set>
+																</property>
+															</widget>
+														</item>
+														<item>
+															<widget class="QPushButton" name="btn_ChangeAvatar">
+																<property name="text">
+																	<string>修改头像</string>
+																</property>
+																<property name="styleSheet">
+																	<string notr="true">color: #0089FF; border: none; background: transparent;</string>
+																</property>
+																<property name="cursor">
+																	<cursorShape>PointingHandCursor</cursorShape>
+																</property>
+															</widget>
+														</item>
+													</layout>
+												</item>
+												<item>
+													<spacer name="s_av_r">
+														<property name="orientation">
+															<enum>Qt::Horizontal</enum>
+														</property>
+													</spacer>
+												</item>
+											</layout>
+										</item>
+										<item>
+											<widget class="QLabel" name="label_ProfileName">
+												<property name="font">
+													<font>
+														<family>Microsoft YaHei</family>
+														<pointsize>18</pointsize>
+														<bold>true</bold>
+													</font>
+												</property>
+												<property name="alignment">
+													<set>Qt::AlignCenter</set>
+												</property>
+												<property name="text">
+													<string>姓名: --</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<widget class="Line" name="line_separator">
+												<property name="orientation">
+													<enum>Qt::Horizontal</enum>
+												</property>
+												<property name="styleSheet">
+													<string notr="true">color: #EEEEEE;</string>
+												</property>
+											</widget>
+										</item>
+										<item>
+											<layout class="QFormLayout" name="formLayout_Profile">
+												<property name="horizontalSpacing">
+													<number>40</number>
+												</property>
+												<property name="verticalSpacing">
+													<number>15</number>
+												</property>
+												<property name="formAlignment">
+													<set>Qt::AlignHCenter|Qt::AlignTop</set>
+												</property>
+												<item row="0" column="0">
+													<widget class="QLabel" name="lb_1">
+														<property name="text">
+															<string>工号</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #888;</string>
+														</property>
+													</widget>
+												</item>
+												<item row="0" column="1">
+													<widget class="QLabel" name="label_ProfileEmpId">
+														<property name="font">
+															<font>
+																<bold>true</bold>
+															</font>
+														</property>
+														<property name="text">
+															<string>000</string>
+														</property>
+													</widget>
+												</item>
+												<item row="1" column="0">
+													<widget class="QLabel" name="lb_2">
+														<property name="text">
+															<string>性别</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #888;</string>
+														</property>
+													</widget>
+												</item>
+												<item row="1" column="1">
+													<widget class="QLabel" name="label_ProfileGender">
+														<property name="text">
+															<string>-</string>
+														</property>
+													</widget>
+												</item>
+												<item row="2" column="0">
+													<widget class="QLabel" name="lb_3">
+														<property name="text">
+															<string>手机号</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #888;</string>
+														</property>
+													</widget>
+												</item>
+												<item row="2" column="1">
+													<widget class="QLabel" name="label_ProfilePhone">
+														<property name="text">
+															<string>-</string>
+														</property>
+													</widget>
+												</item>
+												<item row="3" column="0">
+													<widget class="QLabel" name="lb_4">
+														<property name="text">
+															<string>部门</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #888;</string>
+														</property>
+													</widget>
+												</item>
+												<item row="3" column="1">
+													<widget class="QLabel" name="label_ProfileDept">
+														<property name="text">
+															<string>-</string>
+														</property>
+													</widget>
+												</item>
+												<item row="4" column="0">
+													<widget class="QLabel" name="lb_5">
+														<property name="text">
+															<string>职务</string>
+														</property>
+														<property name="styleSheet">
+															<string notr="true">color: #888;</string>
+														</property>
+													</widget>
+												</item>
+												<item row="4" column="1">
+													<widget class="QLabel" name="label_ProfileRole">
+														<property name="text">
+															<string>-</string>
+														</property>
+													</widget>
+												</item>
+											</layout>
+										</item>
+									</layout>
+								</widget>
+							</item>
+							<item>
+								<spacer name="s_set_bot">
+									<property name="orientation">
+										<enum>Qt::Vertical</enum>
+									</property>
+								</spacer>
+							</item>
+						</layout>
+					</widget>
+				</widget>
+			</item>
+		</layout>
+	</widget>
+	<layoutdefault spacing="6" margin="11"/>
+	<resources/>
+	<connections/>
+</ui>

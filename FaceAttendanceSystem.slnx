@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="AttendanceClient/AttendanceClient.vcxproj" Id="d4ce9108-ac50-4760-b266-d64755b85c6e" />
+  <Project Path="AttendanceServer/AttendanceServer.vcxproj" Id="5417ef51-e58d-4470-ad26-359864b53d2f" />
+</Solution>

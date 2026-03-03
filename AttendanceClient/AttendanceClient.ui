@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AttendanceClientClass</class>
+ <widget class="QWidget" name="AttendanceClientClass">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>400</width>
+    <height>319</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>400</width>
+    <height>319</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>400</width>
+    <height>319</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>人脸识别考勤系统</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="label_Title">
+     <property name="font">
+      <font>
+       <family>Microsoft YaHei</family>
+       <pointsize>16</pointsize>
+       <bold>true</bold>
+      </font>
+     </property>
+     <property name="text">
+      <string>人脸识别考勤系统</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignmentFlag::AlignCenter</set>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QStackedWidget" name="stackedWidget">
+     <property name="currentIndex">
+      <number>1</number>
+     </property>
+     <widget class="QWidget" name="page_Login">
+      <layout class="QVBoxLayout" name="verticalLayout_2">
+       <item>
+        <spacer name="verticalSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout">
+         <item>
+          <widget class="QLabel" name="label">
+           <property name="text">
+            <string>工  号：</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="lineEdit_Account"/>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_2">
+         <item>
+          <widget class="QLabel" name="label_2">
+           <property name="text">
+            <string>密  码：</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="lineEdit_pwd">
+           <property name="echoMode">
+            <enum>QLineEdit::EchoMode::Password</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_3">
+         <item>
+          <widget class="QLabel" name="label_3">
+           <property name="text">
+            <string>角  色：</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="comboBox_Role">
+           <item>
+            <property name="text">
+             <string>普通员工</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>管理员</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Orientation::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_4">
+         <item>
+          <widget class="QPushButton" name="btn_Login">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>35</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>登  录</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_GoRegister">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>35</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>去注册</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="page_Register">
+      <layout class="QFormLayout" name="formLayout">
+       <property name="horizontalSpacing">
+        <number>15</number>
+       </property>
+       <property name="verticalSpacing">
+        <number>15</number>
+       </property>
+       <item row="0" column="0">
+        <widget class="QLabel" name="label_4">
+         <property name="text">
+          <string>工  号:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="lineEdit_RegAccount"/>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="label_5">
+         <property name="text">
+          <string>姓  名:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="lineEdit_RegName"/>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="label_6">
+         <property name="text">
+          <string>密  码:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="lineEdit_RegPwd">
+         <property name="echoMode">
+          <enum>QLineEdit::EchoMode::Password</enum>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="0">
+        <widget class="QLabel" name="label_7">
+         <property name="text">
+          <string>手机号:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="1">
+        <widget class="QLineEdit" name="lineEdit_RegPhone"/>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="label_8">
+         <property name="text">
+          <string>性  别:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QComboBox" name="comboBox_RegGender">
+         <item>
+          <property name="text">
+           <string>无</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>男</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>女</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="label_9">
+         <property name="text">
+          <string>部  门:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="1">
+        <widget class="QComboBox" name="comboBox_RegDept">
+         <item>
+          <property name="text">
+           <string>无</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>总办</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>研发部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>财务部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>人事行政部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>客服部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>产品部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>市场部</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>营销部</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item row="6" column="0" colspan="2">
+        <layout class="QHBoxLayout" name="horizontalLayout_5">
+         <item>
+          <widget class="QPushButton" name="btn_ConfirmRegister">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>35</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>确认注册</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_BackLogin">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>35</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>返回登录</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
