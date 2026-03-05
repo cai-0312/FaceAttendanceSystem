@@ -37,7 +37,7 @@
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
     <QtInstall>Qt 6.8.1 MSVC2022</QtInstall>
-    <QtModules>core;gui;network;widgets;multimedia;sql</QtModules>
+    <QtModules>core;gui;network;widgets;multimedia;sql;charts</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
@@ -104,6 +104,7 @@
     <ClCompile Include="AIAssistantModule.cpp" />
     <ClCompile Include="ChatModule.cpp" />
     <ClCompile Include="FaceProcessThread.cpp" />
+    <ClCompile Include="HomeModule.cpp" />
     <ClCompile Include="MainWidget.cpp" />
     <ClCompile Include="ProfileModule.cpp" />
     <ClCompile Include="PunchModule.cpp" />
@@ -130,6 +131,7 @@
     <QtMoc Include="ChatModule.h" />
     <QtMoc Include="ProfileModule.h" />
     <QtMoc Include="AIAssistantModule.h" />
+    <QtMoc Include="HomeModule.h" />
     <ClInclude Include="RetinaFaceDecoder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

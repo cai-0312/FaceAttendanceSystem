@@ -1,33 +1,50 @@
 #pragma once
 #include <QObject>
 #include <QTableView>
-#include <QSqlQueryModel>
-#include <QWidget>
-#include <QDateEdit>
+#include <QCalendarWidget>
+#include <QLabel>
 #include <QPushButton>
+#include <QLineEdit>
+#include <QSqlTableModel>
+#include <QTextCharFormat>
+#include <QDate>
 
 class RecordModule : public QObject {
     Q_OBJECT
 public:
-    explicit RecordModule(QTableView* tableView, QDateEdit* dateEdit, QPushButton* filterBtn, QWidget* parentWidget);
+    // 构造函数，接收从 UI 传过来的各种控件指针
+    explicit RecordModule(QTableView* tableView, QCalendarWidget* calendar,
+        QLabel* summaryLabel, QLabel* detailDateLabel,
+        QLineEdit* searchNameEdit, QPushButton* filterBtn,
+        QPushButton* exportBtn, QString loginName, QString role, QObject* parent = nullptr);
 
-    // ★ 新增：提供给主界面，用于设置当前登录的员工姓名
-    void setCurrentUser(const QString& userName);
-
-    void refreshTable(QString filterDate = "");
+    // 核心统计与日历上色函数
+    void loadMonthlyDataAndColorize(int year, int month);
 
 public slots:
-    void exportToCsv();
+    // 供外部（如 MainWidget）调用的刷新方法
+    void refreshData();
 
 private slots:
+    // 内部槽函数：处理日历点击、翻页、搜索过滤、导出
+    void onCalendarClicked(const QDate& date);
+    void onCalendarPageChanged(int year, int month);
     void onFilterClicked();
+    void onExportClicked();
 
 private:
+    // 绑定的 UI 控件指针
     QTableView* m_tableView;
-    QDateEdit* m_dateEdit;
-    QSqlQueryModel* m_recordModel;
-    QWidget* m_parentWidget;
+    QCalendarWidget* m_calendarWidget;
+    QLabel* m_summaryLabel;
+    QLabel* m_detailDateLabel;
+    QLineEdit* m_searchNameEdit;
+    QPushButton* m_filterBtn;
+    QPushButton* m_exportBtn;
 
-    // ★ 新增：保存当前登录用户的姓名，用于 SQL 过滤
-    QString m_currentUser;
+    // 核心数据模型与状态记录
+    QSqlTableModel* m_model;
+    QString m_loginName;
+    QString m_role;
+    QDate m_currentSelectedDate; // 记录当前在日历上选中的日期
 };
