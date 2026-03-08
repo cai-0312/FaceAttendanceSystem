@@ -22,6 +22,18 @@ public:
     // 注册请求：提交待录入的人员姓名以启动特征抓取流程
     void requestRegister(QString name);
 
+    void setCurrentUser(const QString& name) {
+        QMutexLocker locker(&mutex);
+        m_currentUser = name;
+    }
+
+    void forceReleaseCamera() {
+        QMutexLocker locker(&mutex);
+        if (capture.isOpened()) {
+            capture.release(); // 强行关闭摄像头硬件连接
+        }
+    }
+
 protected:
     // 线程主执行函数：包含摄像头循环读取、检测、对齐及比对逻辑
     void run() override;
@@ -41,6 +53,7 @@ private:
     int currentPage;
     // 存储当前正在进行录入的人员姓名
     QString pendingRegisterName;
+    int registerRetryCount = 0;
 
     // 视频采集对象
     cv::VideoCapture capture;
@@ -55,4 +68,9 @@ private:
     std::map<QString, QDateTime> lastPunchTime;
     // 互斥锁：保护多线程环境下共享数据的读写安全
     QMutex mutex;
+
+    QString m_currentUser; // 新增：保存当前登录的用户名
+
+
+    
 };

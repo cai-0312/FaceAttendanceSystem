@@ -1,30 +1,57 @@
-#pragma once
+#ifndef HOMEMODULE_H
+#define HOMEMODULE_H
+
 #include <QObject>
 #include <QVBoxLayout>
-#include <QtCharts>
+#include <QWidget>
+#include <QFrame>
+#include <QLabel>
+#include <QPushButton>
+#include <QListWidget>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QtCharts/QChartView>
+#include <QtCharts/QPieSeries>
+#include <QtCharts/QBarSeries>
+#include <QtCharts/QBarSet>
+#include <QtCharts/QLineSeries>
+#include <QtCharts/QBarCategoryAxis>
+#include <QtCharts/QValueAxis>
 
 class HomeModule : public QObject
 {
     Q_OBJECT
-
 public:
-    explicit HomeModule(QVBoxLayout* pieLayout, QVBoxLayout* barLayout, QVBoxLayout* lineLayout, QObject* parent = nullptr);
-    ~HomeModule() override;
+    HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName, QObject* parent = nullptr);
+    ~HomeModule();
 
-    // 每次切换到大屏页面时调用此方法刷新数据
     void refreshDashboard();
 
+signals:
+    void requestQuickLeave();
+    void requestQuickAppeal();
+    void requestApproveLeave();
+    void requestApproveAppeal();
+
 private:
-    // 清除指定布局内的所有控件，防止重绘叠加
+    QVBoxLayout* m_mainLayout;
+    QString m_role;
+    QString m_loginName;
+
+    QWidget* m_dashboardWidget;
+    QVBoxLayout* m_dashboardLayout;
+
     void clearLayout(QLayout* layout);
 
-    // 渲染各个子图表的逻辑
-    void renderPieChart();
-    void renderBarChart();
-    void renderLineChart();
+    // 🚀 核心改造：不再直连数据库，所有渲染函数通过接收 JSON 绘制界面
+    void renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& data);
+    void renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject& res);
+    void renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& res);
 
-private:
-    QVBoxLayout* m_pieLayout;
-    QVBoxLayout* m_barLayout;
-    QVBoxLayout* m_lineLayout;
+    QFrame* createDataCard(const QString& title, const QString& value, const QString& subText, const QString& colorHex);
+    QChartView* createPieChart(const QJsonArray& data);
+    QChartView* createBarChart(const QJsonArray& data);
+    QChartView* createLineChart(const QJsonArray& data);
 };
+
+#endif // HOMEMODULE_H

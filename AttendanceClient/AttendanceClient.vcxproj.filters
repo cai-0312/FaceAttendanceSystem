@@ -73,6 +73,9 @@
     <ClCompile Include="HomeModule.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="NoticePopup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="MainWidget.h">
@@ -99,10 +102,13 @@
     <QtMoc Include="ProfileModule.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="AIAssistantModule.h">
+    <QtMoc Include="HomeModule.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="HomeModule.h">
+    <QtMoc Include="NoticePopup.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="AIAssistantModule.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

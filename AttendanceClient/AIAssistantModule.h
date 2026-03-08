@@ -1,57 +1,95 @@
-#pragma once
+#ifndef AIASSISTANTMODULE_H
+#define AIASSISTANTMODULE_H
+
 #include <QObject>
 #include <QTextBrowser>
 #include <QLineEdit>
+#include <QTextEdit>
 #include <QPushButton>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QDateTime>
+#include <QListWidget>
+#include <QTcpSocket>
+#include <QList>
+#include <QPair>
 
-class AIAssistantModule : public QObject {
+class AIAssistantModule : public QObject
+{
     Q_OBJECT
 public:
-    explicit AIAssistantModule(QTextBrowser* textBrowser,
+    AIAssistantModule(QTextBrowser* textBrowser,
         QLineEdit* lineEdit,
         QPushButton* sendBtn,
         QPushButton* clearBtn,
         QString userName,
         QObject* parent = nullptr);
 
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
+
 private slots:
-    // 发送按钮点击及回车触发的槽函数
     void onSendClicked();
-    // 网络请求完成后的回调处理槽函数
     void onNetworkReply(QNetworkReply* reply);
-    // 清除对话记忆与界面内容的槽函数
-    void onClearClicked();
+    void toggleVoice();
+
+    void onNewSessionClicked();
+    void onSessionSelected(QListWidgetItem* item);
+    void onAttachFileClicked();
+    void onSearchHistory();
+
+    void toggleSidebar();
+    void onSessionContextMenu(const QPoint& pos);
 
 private:
-    // 将对话消息渲染为HTML气泡并添加到显示区域
-    void appendMessage(const QString& role, const QString& msg);
-    // 初始化对话上下文及系统提示词
     void initializeContext();
+    void appendMessage(const QString& role, const QString& msg, bool saveToDb = true);
 
-    // 界面控件指针
+    void rebuildAdvancedUI();
+    bool handleLocalIntent(const QString& inputText);
+    QString parseMarkdown(const QString& md);
+    void speakText(const QString& text);
+
+    void loadSessionsFromDB();
+    void loadChatHistoryFromDB(const QString& sessionId);
+    void saveMessageToDB(const QString& sessionId, const QString& role, const QString& content);
+
+    // 🚀 服务端探针
+    void sendAuditToServer(const QString& sessionId, const QString& role, const QString& content);
+    void sendAuditFileToServer(const QString& sessionId, const QString& fileName, const QByteArray& fileData); // 🚀 新增：拦截原文件探针
+
+    // 控件指针
     QTextBrowser* m_textBrowser;
-    QLineEdit* m_lineEdit;
+    QLineEdit* m_oldLineEdit;
     QPushButton* m_sendBtn;
     QPushButton* m_clearBtn;
+    QPushButton* m_voiceBtn;
 
-    // 网络访问管理器
+    QWidget* m_leftWidget;
+    QPushButton* m_toggleSidebarBtn;
+    QListWidget* m_sessionList;
+    QPushButton* m_newSessionBtn;
+    QPushButton* m_attachBtn;
+    QLineEdit* m_searchBox;
+    QTextEdit* m_inputTextEdit;
+
     QNetworkAccessManager* m_networkManager;
-
-    // 用户与API配置信息
-    QString m_userName;
     QString m_apiUrl;
     QString m_apiKey;
     QString m_modelName;
 
-    // 对话历史记忆数组（用于多轮对话上下文）
     QJsonArray m_messageHistory;
-    // 当前界面显示的全部HTML内容
     QString m_currentHtmlDisplay;
-    // 标志位：判断当前是否处于AI回复等待状态
+    QString m_userName;
+    QString m_currentSessionId;
+    QString m_fileContext;
+
+    // 🚀 新增：暂存用户选择的物理附件，等点发送时一并传给服务器
+    QList<QPair<QString, QByteArray>> m_pendingFiles;
+
     bool m_isReplying;
+    bool m_voiceEnabled;
 };
+
+#endif // AIASSISTANTMODULE_H

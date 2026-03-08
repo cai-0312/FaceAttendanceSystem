@@ -1,581 +1,700 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
-	<class>AttendanceClientClass</class>
-	<widget class="QWidget" name="AttendanceClientClass">
-		<property name="geometry">
-			<rect>
-				<x>0</x>
-				<y>0</y>
-				<width>850</width>
-				<height>600</height>
-			</rect>
-		</property>
-		<property name="windowTitle">
-			<string>人脸识别考勤系统</string>
-		</property>
-		<property name="styleSheet">
-			<string notr="true">QWidget#AttendanceClientClass { background: transparent; }</string>
-		</property>
-		<layout class="QVBoxLayout" name="verticalLayout_Main">
-			<property name="margin" stdset="0">
-				<number>20</number>
-			</property>
-			<item>
-				<widget class="QFrame" name="frame_Background">
-					<property name="styleSheet">
-						<string notr="true">QFrame#frame_Background { background-color: #FFFFFF; border-radius: 12px; }</string>
-					</property>
-					<layout class="QHBoxLayout" name="horizontalLayout_Card" stretch="4,6">
-						<property name="spacing">
-							<number>0</number>
-						</property>
-						<property name="margin" stdset="0">
-							<number>0</number>
-						</property>
-						<item>
-							<widget class="QFrame" name="frame_LeftBrand">
-								<property name="styleSheet">
-									<string notr="true">QFrame#frame_LeftBrand { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1890FF, stop:1 #33A3FF); border-top-left-radius: 12px; border-bottom-left-radius: 12px; }</string>
-								</property>
-								<layout class="QVBoxLayout" name="verticalLayout_Brand">
-									<item>
-										<widget class="QLabel" name="label_LogoText">
-											<property name="font">
-												<font>
-													<family>Microsoft YaHei</family>
-													<pointsize>24</pointsize>
-													<bold>true</bold>
-												</font>
-											</property>
-											<property name="styleSheet">
-												<string notr="true">color: #FFFFFF;</string>
-											</property>
-											<property name="text">
-												<string>人脸识别考勤系统</string>
-											</property>
-											<property name="alignment">
-												<set>Qt::AlignmentFlag::AlignCenter</set>
-											</property>
-										</widget>
-									</item>
-									<item>
-										<widget class="QLabel" name="label_SubTitle">
-											<property name="font">
-												<font>
-													<family>Microsoft YaHei</family>
-													<pointsize>10</pointsize>
-												</font>
-											</property>
-											<property name="styleSheet">
-												<string notr="true">color: #E6F7FF; margin-top: 10px;</string>
-											</property>
-											<property name="text">
-												<string>高效 · 安全 · 智能办理</string>
-											</property>
-											<property name="alignment">
-												<set>Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignTop</set>
-											</property>
-										</widget>
-									</item>
-								</layout>
-							</widget>
-						</item>
-						<item>
-							<widget class="QFrame" name="frame_RightForm">
-								<layout class="QVBoxLayout" name="verticalLayout_Form">
-									<property name="leftMargin">
-										<number>50</number>
-									</property>
-									<property name="topMargin">
-										<number>20</number>
-									</property>
-									<property name="rightMargin">
-										<number>50</number>
-									</property>
-									<property name="bottomMargin">
-										<number>30</number>
-									</property>
-									<item>
-										<layout class="QHBoxLayout" name="horizontalLayout_Controls">
-											<item>
-												<spacer name="spacer_controls">
-													<property name="orientation">
-														<enum>Qt::Orientation::Horizontal</enum>
-													</property>
-													<property name="sizeHint" stdset="0">
-														<size>
-															<width>0</width>
-															<height>0</height>
-														</size>
-													</property>
-												</spacer>
-											</item>
-											<item>
-												<widget class="QPushButton" name="btn_Min">
-													<property name="minimumSize">
-														<size>
-															<width>30</width>
-															<height>30</height>
-														</size>
-													</property>
-													<property name="styleSheet">
-														<string notr="true">QPushButton { color: #909399; font-weight: bold; border: none; background: transparent; } QPushButton:hover { background-color: #F4F4F5; border-radius: 4px; }</string>
-													</property>
-													<property name="text">
-														<string>—</string>
-													</property>
-												</widget>
-											</item>
-											<item>
-												<widget class="QPushButton" name="btn_Close">
-													<property name="minimumSize">
-														<size>
-															<width>30</width>
-															<height>30</height>
-														</size>
-													</property>
-													<property name="styleSheet">
-														<string notr="true">QPushButton { color: #909399; font-weight: bold; border: none; background: transparent; } QPushButton:hover { color: #FFF; background-color: #F56C6C; border-radius: 4px; }</string>
-													</property>
-													<property name="text">
-														<string>✕</string>
-													</property>
-												</widget>
-											</item>
-										</layout>
-									</item>
-									<item>
-										<spacer name="spacer_top">
-											<property name="orientation">
-												<enum>Qt::Orientation::Vertical</enum>
-											</property>
-											<property name="sizeHint" stdset="0">
-												<size>
-													<width>0</width>
-													<height>0</height>
-												</size>
-											</property>
-										</spacer>
-									</item>
-									<item>
-										<widget class="QStackedWidget" name="stackedWidget">
-											<property name="currentIndex">
-												<number>1</number>
-											</property>
-											<widget class="QWidget" name="page_Login">
-												<layout class="QVBoxLayout" name="vL_Login">
-													<property name="spacing">
-														<number>20</number>
-													</property>
-													<item>
-														<widget class="QLabel" name="lbl_LoginTitle">
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>18</pointsize>
-																	<bold>true</bold>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">color: #303133;</string>
-															</property>
-															<property name="text">
-																<string>欢迎登录</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<widget class="QLineEdit" name="lineEdit_Account">
-															<property name="minimumSize">
-																<size>
-																	<width>0</width>
-																	<height>45</height>
-																</size>
-															</property>
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>11</pointsize>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 6px; padding-left: 15px; color: #303133; background: #FFFFFF; } QLineEdit:focus { border: 1px solid #1890FF; }</string>
-															</property>
-															<property name="placeholderText">
-																<string>👤 员工账号</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<widget class="QLineEdit" name="lineEdit_pwd">
-															<property name="minimumSize">
-																<size>
-																	<width>0</width>
-																	<height>45</height>
-																</size>
-															</property>
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>11</pointsize>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 6px; padding-left: 15px; color: #303133; background: #FFFFFF; } QLineEdit:focus { border: 1px solid #1890FF; }</string>
-															</property>
-															<property name="echoMode">
-																<enum>QLineEdit::EchoMode::Password</enum>
-															</property>
-															<property name="placeholderText">
-																<string>🔒 登录密码</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<widget class="QComboBox" name="comboBox_Role">
-															<property name="minimumSize">
-																<size>
-																	<width>0</width>
-																	<height>45</height>
-																</size>
-															</property>
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>11</pointsize>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QComboBox { border: 1px solid #DCDFE6; border-radius: 6px; padding-left: 15px; background: #FFFFFF; } QComboBox:focus { border: 1px solid #1890FF; } QComboBox::drop-down { border: none; }</string>
-															</property>
-															<item>
-																<property name="text">
-																	<string>普通员工</string>
-																</property>
-															</item>
-															<item>
-																<property name="text">
-																	<string>管理员</string>
-																</property>
-															</item>
-														</widget>
-													</item>
-													<item>
-														<widget class="QPushButton" name="btn_Login">
-															<property name="minimumSize">
-																<size>
-																	<width>0</width>
-																	<height>45</height>
-																</size>
-															</property>
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>12</pointsize>
-																	<bold>true</bold>
-																</font>
-															</property>
-															<property name="cursor">
-																<cursorShape>PointingHandCursor</cursorShape>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QPushButton { background-color: #1890FF; color: white; border-radius: 6px; margin-top: 10px; } QPushButton:hover { background-color: #40A9FF; } QPushButton:pressed { background-color: #096DD9; }</string>
-															</property>
-															<property name="text">
-																<string>登 录</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<widget class="QPushButton" name="btn_GoRegister">
-															<property name="cursor">
-																<cursorShape>PointingHandCursor</cursorShape>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QPushButton { color: #1890FF; border: none; background: transparent; text-decoration: underline; margin-top: 5px; } QPushButton:hover { color: #40A9FF; }</string>
-															</property>
-															<property name="text">
-																<string>没有账号？立即注册</string>
-															</property>
-														</widget>
-													</item>
-												</layout>
-											</widget>
-											<widget class="QWidget" name="page_Register">
-												<layout class="QVBoxLayout" name="vL_Reg">
-													<item>
-														<widget class="QLabel" name="lbl_RegTitle">
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>16</pointsize>
-																	<bold>true</bold>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">color: #303133; margin-bottom: 10px;</string>
-															</property>
-															<property name="text">
-																<string>员工入职注册</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<layout class="QFormLayout" name="formLayout_Reg">
-															<property name="horizontalSpacing">
-																<number>15</number>
-															</property>
-															<property name="verticalSpacing">
-																<number>15</number>
-															</property>
-															<item row="0" column="0">
-																<widget class="QLabel" name="label_4">
-																	<property name="text">
-																		<string>账号:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="0" column="1">
-																<widget class="QLineEdit" name="lineEdit_RegAccount">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="1" column="0">
-																<widget class="QLabel" name="label_5">
-																	<property name="text">
-																		<string>姓名:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="1" column="1">
-																<widget class="QLineEdit" name="lineEdit_RegName">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="2" column="0">
-																<widget class="QLabel" name="label_6">
-																	<property name="text">
-																		<string>密码:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="2" column="1">
-																<widget class="QLineEdit" name="lineEdit_RegPwd">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																	<property name="echoMode">
-																		<enum>QLineEdit::EchoMode::Password</enum>
-																	</property>
-																</widget>
-															</item>
-															<item row="3" column="0">
-																<widget class="QLabel" name="label_7">
-																	<property name="text">
-																		<string>手机:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="3" column="1">
-																<widget class="QLineEdit" name="lineEdit_RegPhone">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QLineEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="4" column="0">
-																<widget class="QLabel" name="label_8">
-																	<property name="text">
-																		<string>性别:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="4" column="1">
-																<widget class="QComboBox" name="comboBox_RegGender">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QComboBox { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																	<item>
-																		<property name="text">
-																			<string>男</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>女</string>
-																		</property>
-																	</item>
-																</widget>
-															</item>
-															<item row="5" column="0">
-																<widget class="QLabel" name="label_9">
-																	<property name="text">
-																		<string>部门:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="5" column="1">
-																<widget class="QComboBox" name="comboBox_RegDept">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QComboBox { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																	<item>
-																		<property name="text">
-																			<string>总裁办</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>人力资源部</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>财务部</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>销售部</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>研发部</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>市场部</string>
-																		</property>
-																	</item>
-																	<item>
-																		<property name="text">
-																			<string>客户服务部</string>
-																		</property>
-																	</item>
-																</widget>
-															</item>
-															<item row="6" column="0">
-																<widget class="QLabel" name="label_10">
-																	<property name="text">
-																		<string>职位:</string>
-																	</property>
-																</widget>
-															</item>
-															<item row="6" column="1">
-																<widget class="QComboBox" name="comboBox_RegJobTitle">
-																	<property name="minimumSize">
-																		<size>
-																			<width>0</width>
-																			<height>35</height>
-																		</size>
-																	</property>
-																	<property name="styleSheet">
-																		<string notr="true">QComboBox { border: 1px solid #DCDFE6; border-radius: 4px; padding-left: 10px; }</string>
-																	</property>
-																</widget>
-															</item>
-														</layout>
-													</item>
-													<item>
-														<widget class="QPushButton" name="btn_ConfirmRegister">
-															<property name="minimumSize">
-																<size>
-																	<width>0</width>
-																	<height>40</height>
-																</size>
-															</property>
-															<property name="font">
-																<font>
-																	<family>Microsoft YaHei</family>
-																	<pointsize>11</pointsize>
-																	<bold>true</bold>
-																</font>
-															</property>
-															<property name="styleSheet">
-																<string notr="true">QPushButton { background-color: #67C23A; color: white; border-radius: 6px; margin-top: 10px; } QPushButton:hover { background-color: #85CE61; }</string>
-															</property>
-															<property name="text">
-																<string>确 认 注 册</string>
-															</property>
-														</widget>
-													</item>
-													<item>
-														<widget class="QPushButton" name="btn_BackLogin">
-															<property name="styleSheet">
-																<string notr="true">QPushButton { color: #909399; border: none; background: transparent; margin-top: 5px; } QPushButton:hover { color: #606266; text-decoration: underline; }</string>
-															</property>
-															<property name="text">
-																<string>返回登录</string>
-															</property>
-														</widget>
-													</item>
-												</layout>
-											</widget>
-										</widget>
-									</item>
-									<item>
-										<spacer name="spacer_bot">
-											<property name="orientation">
-												<enum>Qt::Orientation::Vertical</enum>
-											</property>
-											<property name="sizeHint" stdset="0">
-												<size>
-													<width>0</width>
-													<height>0</height>
-												</size>
-											</property>
-										</spacer>
-									</item>
-								</layout>
-							</widget>
-						</item>
-					</layout>
-				</widget>
-			</item>
-		</layout>
-	</widget>
-	<resources/>
-	<connections/>
+ <class>AttendanceClientClass</class>
+ <widget class="QWidget" name="AttendanceClientClass">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>850</width>
+    <height>676</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>人脸识别签到考勤系统</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QWidget#AttendanceClientClass { background: transparent; }</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout_Main">
+   <property name="margin" stdset="0">
+    <number>20</number>
+   </property>
+   <item>
+    <widget class="QFrame" name="frame_Background">
+     <property name="styleSheet">
+      <string notr="true">QFrame#frame_Background { background-color: #FFFFFF; border-radius: 12px; }</string>
+     </property>
+     <layout class="QHBoxLayout" name="horizontalLayout_Card" stretch="4,6">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <property name="margin" stdset="0">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QFrame" name="frame_LeftBrand">
+        <property name="styleSheet">
+         <string notr="true">
+										/* 🚀 核心魔法：在这里加载图案背景，并保持左侧圆角 */
+										QFrame#frame_LeftBrand {
+										/* 如果找不到图片，会退化显示这个科技蓝渐变色保底 */
+										background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1890FF, stop:1 #33A3FF);
+
+										/* 读取外部图片并拉伸填满。请将图片命名为 login_bg.jpg 放在项目目录下 */
+										border-image: url(login_bg.jpg) 0 0 0 0 stretch stretch;
+
+										border-top-left-radius: 12px;
+										border-bottom-left-radius: 12px;
+										}
+									</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_Brand">
+         <item>
+          <spacer name="verticalSpacer">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QLabel" name="label_LogoText">
+           <property name="font">
+            <font>
+             <family>Microsoft YaHei</family>
+             <pointsize>22</pointsize>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">color: #FFFFFF; background-color: rgba(0, 0, 0, 80); border-radius: 8px; padding: 10px; margin-left: 20px; margin-right: 20px;</string>
+           </property>
+           <property name="text">
+            <string>人脸识别考勤系统</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="label_SubTitle">
+           <property name="font">
+            <font>
+             <family>Microsoft YaHei</family>
+             <pointsize>11</pointsize>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">color: #E6F7FF; background-color: rgba(0, 0, 0, 80); border-radius: 6px; padding: 5px; margin-left: 50px; margin-right: 50px; margin-top: 5px;</string>
+           </property>
+           <property name="text">
+            <string>高效 · 安全 · 智能办理</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignTop</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="verticalSpacer_2">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>20</width>
+             <height>40</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="frame_RightForm">
+        <property name="styleSheet">
+         <string notr="true">
+										/* 统一下拉框与输入框外观 */
+										QLineEdit, QComboBox {
+										border: 1px solid #DCDFE6;
+										border-radius: 6px;
+										padding: 6px 12px;
+										background: white;
+										color: #303133;
+										font-size: 14px;
+										min-height: 30px;
+										}
+										QLineEdit:hover, QComboBox:hover { border-color: #C0C4CC; }
+										QLineEdit:focus, QComboBox:focus { border-color: #409EFF; }
+										QComboBox::drop-down { border: none; width: 30px; }
+										QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #909399; margin-top: 2px; }
+
+										/* 统一下拉列表的高颜值面板 */
+										QComboBox QAbstractItemView {
+										outline: none;
+										border: 1px solid #E5E6EB;
+										border-radius: 6px;
+										background: white;
+										padding: 4px;
+										}
+										QComboBox QAbstractItemView::item {
+										min-height: 36px;
+										color: #606266;
+										padding-left: 8px;
+										border-radius: 4px;
+										margin: 2px;
+										}
+										QComboBox QAbstractItemView::item:hover { background-color: #F5F7FA; color: #409EFF; }
+										QComboBox QAbstractItemView::item:selected { background-color: #ECF5FF; color: #409EFF; font-weight: bold; }
+
+										/* 登录按钮 */
+										QPushButton#btn_Login {
+										background-color: #409EFF; color: white; border-radius: 6px; padding: 8px 20px; font-weight: bold; font-size: 15px; border: none; margin-top: 10px;
+										}
+										QPushButton#btn_Login:hover { background-color: #66B1FF; }
+										QPushButton#btn_Login:pressed { background-color: #3A8EE6; }
+
+										/* 注册确认按钮 */
+										QPushButton#btn_ConfirmRegister {
+										background-color: #67C23A; color: white; border-radius: 6px; padding: 8px 20px; font-weight: bold; border: none; margin-top: 10px;
+										}
+										QPushButton#btn_ConfirmRegister:hover { background-color: #85CE61; }
+
+										/* 超链接文本按钮 */
+										QPushButton#btn_GoRegister {
+										color: #409EFF; border: none; background: transparent; text-decoration: underline; margin-top: 5px; font-size: 13px;
+										}
+										QPushButton#btn_GoRegister:hover { color: #66B1FF; }
+
+										QPushButton#btn_BackLogin {
+										color: #909399; border: none; background: transparent; text-decoration: underline; margin-top: 5px; font-size: 13px;
+										}
+										QPushButton#btn_BackLogin:hover { color: #606266; }
+
+										/* 左侧文字标签对齐与美化 */
+										QLabel { color: #606266; font-weight: bold; }
+									</string>
+        </property>
+        <layout class="QVBoxLayout" name="verticalLayout_Form">
+         <property name="leftMargin">
+          <number>50</number>
+         </property>
+         <property name="topMargin">
+          <number>20</number>
+         </property>
+         <property name="rightMargin">
+          <number>50</number>
+         </property>
+         <property name="bottomMargin">
+          <number>30</number>
+         </property>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_Controls">
+           <item>
+            <spacer name="spacer_controls">
+             <property name="orientation">
+              <enum>Qt::Orientation::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btn_Min">
+             <property name="minimumSize">
+              <size>
+               <width>30</width>
+               <height>30</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">QPushButton { color: #909399; font-weight: bold; border: none; background: transparent; } QPushButton:hover { background-color: #F4F4F5; border-radius: 4px; }</string>
+             </property>
+             <property name="text">
+              <string>—</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btn_Close">
+             <property name="minimumSize">
+              <size>
+               <width>30</width>
+               <height>30</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">QPushButton { color: #909399; font-weight: bold; border: none; background: transparent; } QPushButton:hover { color: #FFF; background-color: #F56C6C; border-radius: 4px; }</string>
+             </property>
+             <property name="text">
+              <string>✕</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <spacer name="spacer_top">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QStackedWidget" name="stackedWidget">
+           <property name="currentIndex">
+            <number>0</number>
+           </property>
+           <widget class="QWidget" name="page_Login">
+            <layout class="QVBoxLayout" name="vL_Login">
+             <property name="spacing">
+              <number>20</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="lbl_LoginTitle">
+               <property name="font">
+                <font>
+                 <family>Microsoft YaHei</family>
+                 <pointsize>29</pointsize>
+                 <bold>true</bold>
+                </font>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">color: #303133; border: none; margin-bottom: 10px;</string>
+               </property>
+               <property name="text">
+                <string>欢迎登录</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="lineEdit_Account">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>44</height>
+                </size>
+               </property>
+               <property name="placeholderText">
+                <string>👤 员工账号</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="lineEdit_pwd">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>44</height>
+                </size>
+               </property>
+               <property name="echoMode">
+                <enum>QLineEdit::EchoMode::Password</enum>
+               </property>
+               <property name="placeholderText">
+                <string>🔒 登录密码</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="comboBox_Role">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>44</height>
+                </size>
+               </property>
+               <property name="font">
+                <font>
+                 <family>Microsoft YaHei</family>
+                 <pointsize>-1</pointsize>
+                </font>
+               </property>
+               <item>
+                <property name="text">
+                 <string>普通登录</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
+                 <string>管理员登录</string>
+                </property>
+               </item>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btn_Login">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>45</height>
+                </size>
+               </property>
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
+               </property>
+               <property name="text">
+                <string>登 录</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btn_GoRegister">
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
+               </property>
+               <property name="text">
+                <string>没有账号？立即注册</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+           <widget class="QWidget" name="page_Register">
+            <layout class="QVBoxLayout" name="vL_Reg">
+             <item>
+              <widget class="QLabel" name="lbl_RegTitle">
+               <property name="font">
+                <font>
+                 <family>Microsoft YaHei</family>
+                 <pointsize>16</pointsize>
+                 <bold>true</bold>
+                </font>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">color: #303133; margin-bottom: 10px; border: none;</string>
+               </property>
+               <property name="text">
+                <string>员工入职注册</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <layout class="QFormLayout" name="formLayout_Reg">
+               <property name="labelAlignment">
+                <set>Qt::AlignmentFlag::AlignRight|Qt::AlignmentFlag::AlignTrailing|Qt::AlignmentFlag::AlignVCenter</set>
+               </property>
+               <property name="horizontalSpacing">
+                <number>15</number>
+               </property>
+               <property name="verticalSpacing">
+                <number>15</number>
+               </property>
+               <item row="0" column="1">
+                <widget class="QLineEdit" name="lineEdit_RegAccount">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="label_5">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>姓名:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QLineEdit" name="lineEdit_RegName">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="label_6">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>密码:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QLineEdit" name="lineEdit_RegPwd">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                 <property name="echoMode">
+                  <enum>QLineEdit::EchoMode::Password</enum>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="label_7">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>手机:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLineEdit" name="lineEdit_RegPhone">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0">
+                <widget class="QLabel" name="label_8">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>性别:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="1">
+                <widget class="QComboBox" name="comboBox_RegGender">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>-1</pointsize>
+                  </font>
+                 </property>
+                 <item>
+                  <property name="text">
+                   <string>男</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>女</string>
+                  </property>
+                 </item>
+                </widget>
+               </item>
+               <item row="5" column="0">
+                <widget class="QLabel" name="label_9">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>部门:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="1">
+                <widget class="QComboBox" name="comboBox_RegDept">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>-1</pointsize>
+                  </font>
+                 </property>
+                 <item>
+                  <property name="text">
+                   <string>总经办</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>人力资源部</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>财务部</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>销售部</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>研发部</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>市场部</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>客户服务部</string>
+                  </property>
+                 </item>
+                </widget>
+               </item>
+               <item row="6" column="0">
+                <widget class="QLabel" name="label_10">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>职位:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
+                <widget class="QComboBox" name="comboBox_RegJobTitle">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>44</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="0">
+                <widget class="QLabel" name="label_4">
+                 <property name="font">
+                  <font>
+                   <family>Microsoft YaHei</family>
+                   <pointsize>12</pointsize>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>账号:</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btn_ConfirmRegister">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>40</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>确 认 注 册</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="btn_BackLogin">
+               <property name="text">
+                <string>返回登录</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacer_bot">
+           <property name="orientation">
+            <enum>Qt::Orientation::Vertical</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
 </ui>

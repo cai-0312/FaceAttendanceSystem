@@ -1,302 +1,314 @@
 #include "MainWidget.h"
 #include "ui_MainWidget.h"
-#include "FaceProcessThread.h"
-#include "RecordModule.h"
-#include "PunchModule.h"
-#include "UserModule.h"
-#include "RegisterModule.h"
-#include "ProfileModule.h"
-#include "ChatModule.h"
-#include "AIAssistantModule.h"
-#include "HomeModule.h" 
-
-#include <QSqlQuery>
-#include <QSqlDatabase>
-#include <QSqlError>
+#define NOMINMAX
+#include <windows.h>
 #include <QMessageBox>
 #include <QDebug>
-#include <QDateTime>
-#include <QPainter>
-#include <QPainterPath>
-#include <QBuffer>
-#include <QFileDialog>
-#include <QNetworkRequest>
-#include <QUrl>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QPushButton> 
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QtConcurrent>
+#include <QFuture>
+#include <QThread>
+#include <QTcpSocket>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QTimer>
+
+// 🚀 核心通讯组件：同步请求数据，绝不直连数据库
+static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
+    QTcpSocket socket;
+    socket.connectToHost("127.0.0.1", 9999);
+    QJsonObject responseJson;
+    if (socket.waitForConnected(2000)) {
+        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
+        socket.write(block);
+        socket.waitForBytesWritten(1000);
+
+        if (socket.waitForReadyRead(5000)) {
+            QByteArray responseData;
+            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
+                responseData += socket.readAll();
+                if (responseData.endsWith("\n")) break;
+            }
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isNull()) responseJson = doc.object();
+        }
+        socket.disconnectFromHost();
+    }
+    return responseJson;
+}
+
+// 🚀 核心防崩修复 2：将 TCP 抛投放入独立微线程！
+static void sendLogicCommandToServer(const QJsonObject& json) {
+    QtConcurrent::run([json]() {
+        QTcpSocket socket;
+        socket.connectToHost("127.0.0.1", 9999);
+        if (socket.waitForConnected(1000)) {
+            socket.write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
+            socket.waitForBytesWritten(1000);
+            socket.disconnectFromHost();
+        }
+        });
+}
 
 MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     : QWidget(parent), ui(new Ui::MainWidget), m_loginName(loginName), m_role(role)
 {
     ui->setupUi(this);
-    initDatabase();
+    // initDatabase(); // 彻底剥离本地数据库连接
 
-    if (m_role == "普通员工") {
+    // 🚀 核心改造 1：向服务器请求本人的部门信息
+    QJsonObject uReq;
+    uReq["type"] = "query_user_dept";
+    uReq["name"] = m_loginName;
+    QJsonObject uRes = requestDataFromServer(uReq);
+
+    QString dept = uRes["department"].toString();
+    if (uRes.contains("real_name")) m_loginName = uRes["real_name"].toString();
+
+    if (dept != "人力资源部") {
+        if (ui->listWidget_Nav->item(4)) {
+            ui->listWidget_Nav->item(4)->setHidden(true);
+        }
+    }
+
+    if (m_role == "普通登录") {
         ui->listWidget_Nav->item(4)->setHidden(true);
     }
 
     recordModule = new RecordModule(ui->tableView_Records, ui->calendarWidget_Attendance, ui->label_SummaryData, ui->label_DetailDate, ui->lineEdit_SearchName, ui->btn_FilterDate, ui->btn_Export, m_loginName, m_role, this);
     punchModule = new PunchModule(ui->label_Camera_Punch, ui->btn_manualPunch, ui->label_MorningTime, ui->label_MorningStatus, ui->label_EveningTime, ui->label_EveningStatus, ui->btn_RuleSettings, ui->btn_LeaveRequest, ui->btn_LeaveApprove, ui->btn_AppealRequest, ui->btn_AppealApprove, ui->label_CurrentTime, m_role, m_loginName, this);
     userModule = new UserModule(ui->tableView_Users, ui->comboBox_FilterDept, ui->btn_FilterDept, this);
-    registerModule = new RegisterModule(this);
+    registerModule = new RegisterModule(ui->label_Camera_Register, this);
+    m_aiModule = new AIAssistantModule(ui->textBrowser_AI, ui->lineEdit_AIInput, ui->btn_SendAI, ui->btn_ClearAIHistory, m_loginName, this);
+    homeModule = new HomeModule(ui->verticalLayout_Home, m_role, m_loginName, this);
+    chatModule = new ChatModule(ui->listWidget_Contacts, ui->textBrowser_Chat, ui->lineEdit_ChatMessage, ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
+    chatModule->connectToServer("127.0.0.1", 9999, m_loginName);
 
-    // ==========================================
-    // 🚀 核心升级：动态注入“修改资料”按钮
-    // ==========================================
     QPushButton* btnEditProfile = new QPushButton("✏️ 修改性别与电话", this);
-    btnEditProfile->setMinimumSize(120, 36);
-    btnEditProfile->setCursor(Qt::PointingHandCursor);
-    btnEditProfile->setStyleSheet("QPushButton { background-color: #3370FF; color: white; border: none; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #4E83FF; }");
-    ui->formLayout_Profile->addRow("", btnEditProfile);
+    if (ui->formLayout_Profile) {
+        ui->formLayout_Profile->addRow("", btnEditProfile);
+    }
 
-    // 修改资料的弹窗逻辑（避开ODBC绑值Bug，直接拼SQL）
-    connect(btnEditProfile, &QPushButton::clicked, this, [=]() {
-        QDialog dialog(this); dialog.setWindowTitle("修改个人资料"); dialog.resize(300, 150);
-        QFormLayout form(&dialog);
-        QComboBox* genderCombo = new QComboBox(&dialog); genderCombo->addItems({ "男", "女", "保密" });
-        if (ui->label_ProfileGender) genderCombo->setCurrentText(ui->label_ProfileGender->text());
-        QLineEdit* phoneEdit = new QLineEdit(&dialog); phoneEdit->setPlaceholderText("请输入新的联系电话");
-        if (ui->label_ProfilePhone && ui->label_ProfilePhone->text() != "未设置" && ui->label_ProfilePhone->text() != "-") {
-            phoneEdit->setText(ui->label_ProfilePhone->text());
-        }
-        form.addRow("性别:", genderCombo); form.addRow("联系电话:", phoneEdit);
-        QDialogButtonBox buttonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-        form.addRow(&buttonBox);
+    profileModule = new ProfileModule(ui->label_Avatar, ui->label_ProfileName, ui->label_ProfileDept, ui->label_ProfileGender, ui->label_ProfilePhone, ui->btn_ChangeAvatar, btnEditProfile, this);
+
+    QPushButton* btnBroadcast = new QPushButton("📢 发布系统广播", this);
+    btnBroadcast->setMinimumSize(130, 35);
+    btnBroadcast->setCursor(Qt::PointingHandCursor);
+    btnBroadcast->setStyleSheet("QPushButton { background-color: #F56C6C; color: white; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #F78989; }");
+
+    if (m_role != "管理员登录" && m_role != "超级管理员") {
+        btnBroadcast->hide();
+    }
+
+    if (ui->verticalLayout_Home && ui->label_HomeTitle) {
+        QHBoxLayout* topHomeLayout = new QHBoxLayout();
+        topHomeLayout->addWidget(ui->label_HomeTitle);
+        topHomeLayout->addStretch();
+        topHomeLayout->addWidget(btnBroadcast);
+        QLayoutItem* oldTitleItem = ui->verticalLayout_Home->takeAt(0);
+        if (oldTitleItem) delete oldTitleItem;
+        ui->verticalLayout_Home->insertLayout(0, topHomeLayout);
+    }
+
+    // 🚀 核心改造 2：发布系统公告不再写入数据库，交由服务器记录
+    connect(btnBroadcast, &QPushButton::clicked, this, [=]() {
+        QDialog dialog(this);
+        dialog.setWindowTitle("起草全局系统广播");
+        dialog.resize(450, 300);
+        QVBoxLayout layout(&dialog);
+        QLabel* tipLabel = new QLabel("广播内容将同步至首页公告板，并向在线员工弹窗：", &dialog);
+        tipLabel->setStyleSheet("color: #909399; font-size: 12px;");
+        layout.addWidget(tipLabel);
+        QTextEdit* textEdit = new QTextEdit(&dialog);
+        textEdit->setPlaceholderText("请输入放假通知、新员工欢迎等内容...");
+        textEdit->setStyleSheet("border: 1px solid #DCDFE6; border-radius: 4px; padding: 10px; font-size: 14px;");
+        layout.addWidget(textEdit);
+        QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+        buttonBox.button(QDialogButtonBox::Ok)->setText("立即发送");
+        buttonBox.button(QDialogButtonBox::Ok)->setStyleSheet("background-color: #F56C6C; color: white;");
+        layout.addWidget(&buttonBox);
         connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
         if (dialog.exec() == QDialog::Accepted) {
-            // 精准打击：同时匹配 account 或 name，直接拼装SQL
-            QString sql = QString("UPDATE users SET gender = '%1', phone = '%2' WHERE account = '%3' OR name = '%3'")
-                .arg(genderCombo->currentText(), phoneEdit->text().trimmed(), m_loginName);
-            QSqlQuery query;
-            if (query.exec(sql)) {
-                QMessageBox::information(this, "成功", "资料修改成功！");
-                this->loadProfileInfo(); // 立即刷新界面
-            }
-            else {
-                QMessageBox::critical(this, "失败", "数据库更新失败：" + query.lastError().text());
+            QString msg = textEdit->toPlainText().trimmed();
+            if (!msg.isEmpty()) {
+                chatModule->sendBroadcast(msg);
+
+                QJsonObject req;
+                req["type"] = "publish_announcement";
+                req["publisher"] = m_loginName;
+                req["content"] = msg;
+                sendLogicCommandToServer(req);
+
+                QMessageBox::information(this, "发送成功", "全员广播已下发，并已同步至首页系统公告看板！");
+                if (homeModule) homeModule->refreshDashboard();
             }
         }
         });
 
-    profileModule = new ProfileModule(ui->label_Avatar, ui->label_ProfileName, ui->label_ProfileDept, ui->label_ProfileGender, ui->label_ProfilePhone, ui->btn_ChangeAvatar, btnEditProfile, this);
-    chatModule = new ChatModule(ui->listWidget_Contacts, ui->textBrowser_Chat, ui->lineEdit_ChatMessage, ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
-    m_aiModule = new AIAssistantModule(ui->textBrowser_AI, ui->lineEdit_AIInput, ui->btn_SendAI, ui->btn_ClearAIHistory, m_loginName, this);
-    homeModule = new HomeModule(ui->vL_Pie, ui->vL_Bar, ui->vL_Line, this);
-    chatModule->connectToServer("127.0.0.1", 9999, m_loginName);
-    aiThread = new FaceProcessThread(this);
+    connect(chatModule, &ChatModule::broadcastReceived, this, [=](QString from, QString msg) {
+        NoticePopup* popup = new NoticePopup(QString("系统公告 (发布者: %1)").arg(from), msg);
+        popup->showAnimation();
+        });
 
+    aiThread = new FaceProcessThread(this);
+    aiThread->setCurrentUser(m_loginName);
     connect(ui->btn_deleteUser, &QPushButton::clicked, userModule, &UserModule::deleteSelectedUser);
     connect(ui->btn_Register, &QPushButton::clicked, registerModule, &RegisterModule::triggerRegistration);
     connect(ui->btn_SendChat, &QPushButton::clicked, chatModule, &ChatModule::sendMessage);
     connect(ui->lineEdit_ChatMessage, &QLineEdit::returnPressed, chatModule, &ChatModule::sendMessage);
-    connect(punchModule, &PunchModule::requestSendChat, chatModule, &ChatModule::sendSystemMessage);
+    connect(punchModule, &PunchModule::requestSendChat, this, [this](QString msg) {chatModule->sendSystemMessage(m_loginName, msg); });
     connect(registerModule, &RegisterModule::startRegistration, aiThread, &FaceProcessThread::requestRegister);
     connect(aiThread, &FaceProcessThread::registerFeatureReady, registerModule, &RegisterModule::onFeatureReady);
     connect(aiThread, &FaceProcessThread::registerFailed, registerModule, &RegisterModule::onRegisterFailed);
+
+    connect(registerModule, &RegisterModule::dataChanged, this, [this]() {
+        QTimer::singleShot(2000, this, &MainWidget::loadRegisteredUsers);
+        });
     connect(userModule, &UserModule::dataChanged, this, &MainWidget::loadRegisteredUsers);
-    connect(registerModule, &RegisterModule::dataChanged, this, &MainWidget::loadRegisteredUsers);
+
+    connect(homeModule, &HomeModule::requestQuickLeave, punchModule, &PunchModule::onLeaveRequestClicked);
+    connect(homeModule, &HomeModule::requestQuickAppeal, punchModule, &PunchModule::onAppealRequestClicked);
+    connect(homeModule, &HomeModule::requestApproveLeave, punchModule, &PunchModule::onLeaveApproveClicked);
+    connect(homeModule, &HomeModule::requestApproveAppeal, punchModule, &PunchModule::onAppealApproveClicked);
+
+    connect(profileModule, &ProfileModule::requestFaceReRegister, this, [=](QString currentName) {
+        ui->listWidget_Nav->setCurrentRow(2);
+        ui->stackedWidget->setCurrentIndex(2);
+        QMessageBox::information(this, "准备就绪", "请在右侧输入框核对名字后，点击【开始录入】进行人脸特征覆写！\n(名字已自动填入)");
+        if (ui->lineEdit_RegisterName) ui->lineEdit_RegisterName->setText(currentName);
+        });
 
     connect(ui->listWidget_Nav, &QListWidget::currentRowChanged, this, [=](int row) {
         ui->stackedWidget->setCurrentIndex(row);
-        if (aiThread) aiThread->setPage(row);
-        if (row == 0) { homeModule->refreshDashboard(); }
-        else if (row == 3) { recordModule->refreshData(); }
-        else if (row == 4) {
-            if (m_role == "管理员" || m_role == "超级管理员") { userModule->refreshTable(); }
-            else { QMessageBox::warning(this, "越权拦截", "您没有权限访问员工管理！"); }
+        if (aiThread) {
+            if (row == 1) aiThread->setPage(0);
+            else if (row == 2) aiThread->setPage(1);
+            else aiThread->setPage(-1);
         }
-        else if (row == 7) { loadProfileInfo(); }
+
+        if (row == 0) homeModule->refreshDashboard();
+        else if (row == 3) {
+            recordModule->refreshData();
+        }
+        else if (row == 4) {
+            if (m_role == "管理员登录" || m_role == "超级管理员" || m_role == "经理") userModule->refreshTable();
+            else QMessageBox::warning(this, "越权拦截", "您没有权限访问员工管理！");
+        }
+        else if (row == 7) {
+            profileModule->loadUserProfile(m_loginName);
+        }
         });
 
     connect(aiThread, &FaceProcessThread::frameReady, this, [=](QImage img, QStringList names) {
-        int page = ui->stackedWidget->currentIndex();
-        if (page == 1) {
+        int currentPage = ui->stackedWidget->currentIndex();
+        if (currentPage == 1) {
             punchModule->renderFrame(img);
             QDateTime now = QDateTime::currentDateTime();
             for (const QString& name : names) {
                 punchModule->updateRecognizedName(name);
+                if (name == "未知访客" || name == "非本人" || name != m_loginName) continue;
+
                 PunchState& state = m_punchStates[name];
                 if (state.punchCount >= 3) {
                     if (state.lastPunchTime.isValid() && state.lastPunchTime.secsTo(now) < 120) continue;
                     else state.punchCount = 0;
                 }
                 if (state.lastPunchTime.isValid() && state.lastPunchTime.secsTo(now) < 5) continue;
-                QString autoStatus = punchModule->calculatePunchStatus(now.time());
-                QSqlQuery insertQuery;
-                insertQuery.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (:name, :time, :status)");
-                insertQuery.bindValue(":name", name); insertQuery.bindValue(":time", now.toString("yyyy-MM-dd HH:mm:ss")); insertQuery.bindValue(":status", autoStatus);
-                if (insertQuery.exec()) {
-                    state.lastPunchTime = now; state.punchCount++;
-                    if (name == m_loginName) { punchModule->loadTodayPunchStatus(); }
+
+                QJsonObject req;
+                req["type"] = "punch_request";
+                req["name"] = name;
+                sendLogicCommandToServer(req);
+
+                state.lastPunchTime = now;
+                state.punchCount++;
+
+                if (name == m_loginName) {
+                    QTimer::singleShot(500, punchModule, &PunchModule::loadTodayPunchStatus);
                 }
             }
         }
-        else if (page == 2) {
-            ui->label_Camera_Register->setPixmap(QPixmap::fromImage(img).scaled(ui->label_Camera_Register->size(), Qt::KeepAspectRatio));
+        else if (currentPage == 2) {
+            if (ui->label_Camera_Register) {
+                ui->label_Camera_Register->setPixmap(QPixmap::fromImage(img).scaled(
+                    ui->label_Camera_Register->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            }
         }
         });
 
-    QSqlQuery alterQ;
-    alterQ.exec("ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT '未设置'");
-    alterQ.exec("ALTER TABLE users ADD COLUMN gender VARCHAR(10) DEFAULT '未知'");
-    alterQ.exec("ALTER TABLE users ADD COLUMN avatar LONGTEXT");
-    alterQ.exec("ALTER TABLE users ADD COLUMN status_icon VARCHAR(50) DEFAULT '🟢 在线'");
+    connect(ui->comboBox_Status, &QComboBox::currentTextChanged, this, &MainWidget::onStatusChanged);
+
     m_netManager = new QNetworkAccessManager(this);
 
-    ui->btn_ChangeAvatar->disconnect();
-    connect(ui->btn_ChangeAvatar, &QPushButton::clicked, this, &MainWidget::onBtnChangeAvatarClicked);
-    connect(ui->comboBox_Status, &QComboBox::currentTextChanged, this, &MainWidget::onStatusChanged);
-    connect(ui->btn_ChangePassword, &QPushButton::clicked, this, &MainWidget::onChangePasswordClicked);
-
+    if (aiThread) aiThread->start();
     loadRegisteredUsers();
-    aiThread->start();
-    loadProfileInfo();
-    homeModule->refreshDashboard();
+    if (profileModule) profileModule->loadUserProfile(m_loginName);
+    if (homeModule) homeModule->refreshDashboard();
 }
 
 MainWidget::~MainWidget() {
-    aiThread->stop();
+    if (aiThread) aiThread->stop();
     delete ui;
 }
 
 void MainWidget::initDatabase() {
-    if (!QSqlDatabase::contains("qt_sql_default_connection")) {
-        QSqlDatabase db = QSqlDatabase::addDatabase("QODBC");
-        QString dsn = QString("DRIVER={MySQL ODBC 8.0 Unicode Driver};SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;UID=root;PWD=root;");
-        db.setDatabaseName(dsn);
-        if (!db.open()) QMessageBox::critical(this, "数据库连接失败", "ODBC 无法连接到 MySQL！\n" + db.lastError().text());
-    }
+    // 已经彻底废弃，防止外部直接引用
 }
 
+// 🚀 核心改造 3：通过 TCP 从服务器下载人脸特征库（防止多线程崩溃）
 void MainWidget::loadRegisteredUsers() {
-    std::map<QString, cv::Mat> users;
-    QSqlQuery query("SELECT name, feature FROM users");
-    while (query.next()) {
-        QString dbName = query.value(0).toString();
-        QByteArray dbFeatureBytes = query.value(1).toByteArray();
-        if (dbFeatureBytes.isEmpty() || dbFeatureBytes.isNull()) continue;
-        cv::Mat featureMat(1, 512, CV_32F);
-        memcpy(featureMat.data, dbFeatureBytes.constData(), dbFeatureBytes.size());
-        users[dbName] = featureMat;
-    }
-    aiThread->updateRegisteredUsers(users);
-}
+    QJsonObject req;
+    req["type"] = "query_face_features";
+    QJsonObject res = requestDataFromServer(req);
 
-// 加载当前登录用户的个人资料信息
-void MainWidget::loadProfileInfo() {
-    // 新增查询 job_title 字段
-    QString sql = QString("SELECT id, department, role, gender, phone, avatar, name, job_title FROM users WHERE account = '%1' OR name = '%1'").arg(m_loginName);
-    QSqlQuery query(sql);
+    if (res["status"].toString() == "success") {
+        std::map<QString, cv::Mat> users;
+        QJsonArray arr = res["data"].toArray();
+        for (int i = 0; i < arr.size(); ++i) {
+            QJsonObject o = arr[i].toObject();
+            QString dbName = o["name"].toString();
+            QByteArray dbFeatureBytes = QByteArray::fromBase64(o["feature"].toString().toUtf8());
 
-    if (query.next()) {
-        QString formattedId = QString("%1").arg(query.value(0).toInt(), 3, 10, QChar('0'));
-        QString realName = query.value(6).toString();
-        QString jobTitle = query.value(7).toString(); // 取出企业职务
-        QString role = query.value(2).toString();
+            if (dbFeatureBytes.isEmpty() || dbFeatureBytes.isNull()) continue;
 
-        ui->label_ProfileName->setText(realName);
-        ui->label_ProfileEmpId->setText(formattedId);
-        ui->label_ProfileDept->setText(query.value(1).toString());
-
-        // 如果该员工没有配置具体的职务，则降级显示他的权限角色
-        ui->label_ProfileRole->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
-
-        QString gender = query.value(3).toString();
-        QString phone = query.value(4).toString();
-        ui->label_ProfileGender->setText(gender.isEmpty() ? "未知" : gender);
-        ui->label_ProfilePhone->setText(phone.isEmpty() ? "未设置" : phone);
-
-        QString avatarBase64 = query.value(5).toString();
-        if (!avatarBase64.isEmpty()) {
-            QByteArray imgData = QByteArray::fromBase64(avatarBase64.toUtf8());
-            QImage img; img.loadFromData(imgData);
-            ui->label_Avatar->setPixmap(QPixmap::fromImage(makeCircularAvatar(img, 120)));
-        }
-        else {
-            ui->label_Avatar->setText("暂无头像");
+            int floatCount = dbFeatureBytes.size() / sizeof(float);
+            cv::Mat featureMat(1, floatCount, CV_32F);
+            memcpy(featureMat.data, dbFeatureBytes.constData(), dbFeatureBytes.size());
+            users[dbName] = featureMat.clone();
         }
 
-        QString cardData = QString("【员工电子名片】\n姓名: %1\n工号: %2\n部门: %3\n职务: %4").arg(realName, formattedId, query.value(1).toString(), jobTitle);
-        generateQRCode(cardData);
-    }
-}
-
-QImage MainWidget::makeCircularAvatar(const QImage& src, int size) {
-    QImage scaledImg = src.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-    int cropX = (scaledImg.width() - size) / 2; int cropY = (scaledImg.height() - size) / 2;
-    QImage squareImg = scaledImg.copy(cropX, cropY, size, size);
-    QImage result(size, size, QImage::Format_ARGB32_Premultiplied); result.fill(Qt::transparent);
-    QPainter painter(&result);
-    painter.setRenderHint(QPainter::Antialiasing); painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    QPainterPath path; path.addEllipse(0, 0, size, size);
-    painter.setClipPath(path); painter.drawImage(0, 0, squareImg);
-    return result;
-}
-
-// ★ 核心修复：更改头像SQL拼装
-void MainWidget::onBtnChangeAvatarClicked() {
-    QString filePath = QFileDialog::getOpenFileName(this, "选择新头像", "", "图片文件 (*.png *.jpg *.jpeg)");
-    if (filePath.isEmpty()) return;
-    QImage img(filePath);
-    if (img.isNull()) { QMessageBox::warning(this, "错误", "无法读取该图片！"); return; }
-
-    QImage circleImg = makeCircularAvatar(img, 120);
-    ui->label_Avatar->setPixmap(QPixmap::fromImage(circleImg));
-    QByteArray ba; QBuffer buffer(&ba); buffer.open(QIODevice::WriteOnly); circleImg.save(&buffer, "PNG");
-
-    QString sql = QString("UPDATE users SET avatar = '%1' WHERE account = '%2' OR name = '%2'").arg(QString(ba.toBase64()), m_loginName);
-    QSqlQuery updateQuery;
-    if (updateQuery.exec(sql)) {
-        QMessageBox::information(this, "成功", "圆形头像已智能裁剪并更新！");
+        if (aiThread) {
+            aiThread->updateRegisteredUsers(users);
+            qDebug() << "✅ 安全同步完成：人脸特征库已加载，当前总人数：" << users.size();
+        }
     }
 }
 
 void MainWidget::onStatusChanged(const QString& status) {
     if (status.isEmpty()) return;
-    QString sql = QString("UPDATE users SET status_icon = '%1' WHERE account = '%2' OR name = '%2'").arg(status, m_loginName);
-    QSqlQuery query(sql);
+
+    QJsonObject req;
+    req["type"] = "status_update";
+    req["name"] = m_loginName;
+    req["status"] = status;
+    sendLogicCommandToServer(req);
 }
 
-// ★ 核心修复：更改密码SQL拼装
-void MainWidget::onChangePasswordClicked() {
-    QDialog dialog(this); dialog.setWindowTitle("修改登录密码"); dialog.resize(300, 200);
-    QFormLayout form(&dialog);
-    QLineEdit* oldPwdEdit = new QLineEdit(&dialog); oldPwdEdit->setEchoMode(QLineEdit::Password);
-    QLineEdit* newPwdEdit = new QLineEdit(&dialog); newPwdEdit->setEchoMode(QLineEdit::Password);
-    QLineEdit* confirmPwdEdit = new QLineEdit(&dialog); confirmPwdEdit->setEchoMode(QLineEdit::Password);
-
-    form.addRow("旧密码:", oldPwdEdit); form.addRow("新密码:", newPwdEdit); form.addRow("确认新密码:", confirmPwdEdit);
-    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-    form.addRow(&buttonBox);
-    connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        if (newPwdEdit->text() != confirmPwdEdit->text()) { QMessageBox::warning(this, "错误", "两次输入的新密码不一致！"); return; }
-
-        QString sql = QString("SELECT password FROM users WHERE account = '%1' OR name = '%1'").arg(m_loginName);
-        QSqlQuery query(sql);
-
-        if (query.next()) {
-            if (query.value(0).toString() != oldPwdEdit->text()) {
-                QMessageBox::warning(this, "错误", "旧密码输入错误！"); return;
-            }
-            QString updateSql = QString("UPDATE users SET password = '%1' WHERE account = '%2' OR name = '%2'").arg(newPwdEdit->text(), m_loginName);
-            QSqlQuery updateQ;
-            if (updateQ.exec(updateSql)) QMessageBox::information(this, "成功", "密码修改成功！");
-        }
+void MainWidget::closeEvent(QCloseEvent* event) {
+    event->accept();
+    this->hide();
+    if (aiThread) {
+        aiThread->forceReleaseCamera();
+        aiThread->terminate();
+        aiThread->wait(100);
     }
-}
-
-void MainWidget::generateQRCode(const QString& dataStr) {
-    QUrl url("https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" + QUrl::toPercentEncoding(dataStr));
-    QNetworkReply* reply = m_netManager->get(QNetworkRequest(url));
-    connect(reply, &QNetworkReply::finished, this, [=]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap; pixmap.loadFromData(reply->readAll());
-            ui->label_QRCode->setPixmap(pixmap);
-        }
-        reply->deleteLater();
-        });
+    HANDLE hProcess = GetCurrentProcess();
+    TerminateProcess(hProcess, 0);
 }

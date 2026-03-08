@@ -2,13 +2,11 @@
 #include <QDateTime>
 #include <QMessageBox>
 #include <QTimer> 
-#include <QSqlQuery>
-#include <QSqlError>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QAction>
 #include <QScrollBar>
-#include <QDesktopServices> // 新增：用于调用系统软件打开文件
+#include <QDesktopServices> 
 #include <QUrl>
 #include <QDir>
 #include <QDialog>
@@ -17,8 +15,35 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QCoreApplication> 
+#include <QTcpSocket>
 
-// 构造函数：绑定聊天界面相关的UI组件与事件
+// 🚀 核心通讯组件：通过短连接获取联系人列表和用户资料
+static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
+    QTcpSocket socket;
+    socket.connectToHost("127.0.0.1", 9999);
+    QJsonObject responseJson;
+    if (socket.waitForConnected(2000)) {
+        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
+        socket.write(block);
+        socket.waitForBytesWritten(1000);
+        if (socket.waitForReadyRead(5000)) {
+            QByteArray responseData;
+            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
+                responseData += socket.readAll();
+                if (responseData.endsWith("\n")) break;
+            }
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isNull()) responseJson = doc.object();
+        }
+        socket.disconnectFromHost();
+    }
+    return responseJson;
+}
+
 ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     QLineEdit* lineEdit, QLabel* targetLabel,
     QPushButton* btnEmoji, QPushButton* btnFolder,
@@ -31,27 +56,19 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
 {
     m_tcpSocket = new QTcpSocket(this);
 
-    // ==========================================
-    // 🚀 核心修复：防止文件变乱码的终极方案
-    // ==========================================
-    // 1. 彻底禁止文本框自己去加载本地文件（防止把PDF源码印在聊天框里）
     m_textBrowser->setOpenLinks(false);
     m_textBrowser->setOpenExternalLinks(false);
 
-    // 2. 拦截点击事件，强行抛给 Windows 操作系统处理
     connect(m_textBrowser, &QTextBrowser::anchorClicked, this, [](const QUrl& url) {
-        QDesktopServices::openUrl(url); // 操作系统会自动用对应的软件打开该文件
+        QDesktopServices::openUrl(url);
         });
 
-    // 网络信号绑定
     connect(m_tcpSocket, &QTcpSocket::connected, this, &ChatModule::onConnected);
     connect(m_tcpSocket, &QTcpSocket::disconnected, this, &ChatModule::onDisconnected);
     connect(m_tcpSocket, &QTcpSocket::readyRead, this, &ChatModule::onReadyRead);
 
-    // 列表切换绑定
     connect(m_contactsList, &QListWidget::currentRowChanged, this, &ChatModule::onContactSwitched);
 
-    // 辅助功能按钮绑定
     if (m_btnEmoji) connect(m_btnEmoji, &QPushButton::clicked, this, &ChatModule::onBtnEmojiClicked);
     if (m_btnFolder) connect(m_btnFolder, &QPushButton::clicked, this, &ChatModule::onBtnFolderClicked);
     if (m_btnHistory) connect(m_btnHistory, &QPushButton::clicked, this, &ChatModule::onBtnHistoryClicked);
@@ -60,70 +77,56 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     m_targetLabel->setText("请在左侧选择联系人开始聊天");
 }
 
-// 连接服务器：保存个人信息并触发联系人列表加载
 void ChatModule::connectToServer(const QString& ip, quint16 port, const QString& myName) {
     m_myName = myName;
     loadContactsFromDatabase();
     m_tcpSocket->connectToHost(ip, port);
 }
 
-// 载入联系人：部门群权限隔离与加载
+// 🚀 核心改造 1：向服务器拉取联系人列表
 void ChatModule::loadContactsFromDatabase() {
     m_contactsList->clear();
 
-    QString myDept;
-    QString mySql = QString("SELECT id, department FROM users WHERE name = '%1'").arg(m_myName);
-    QSqlQuery myQuery(mySql);
-    if (myQuery.next()) {
-        m_myEmpId = myQuery.value(0).toString();
-        myDept = myQuery.value(1).toString();
-    }
+    QJsonObject req;
+    req["type"] = "query_chat_contacts";
+    req["name"] = m_myName;
+    QJsonObject res = requestDataFromServer(req);
 
-    // 1. 固定添加【公司总群】到列表顶部
+    if (res["status"].toString() != "success") return;
+
+    QString myDept = res["my_dept"].toString();
+    QString myLocalFolder = res["my_folder"].toString();
+    this->setProperty("localFolder", myLocalFolder);
+
     QListWidgetItem* allGroupItem = new QListWidgetItem("📢 【公司总群】");
     allGroupItem->setData(Qt::UserRole, "GROUP_公司总群");
     m_contactsList->addItem(allGroupItem);
 
-    // 2. 部门群权限逻辑：总裁办可以看到所有部门的群，其他部门只能看自己的群
-    QString deptSql;
-    if (myDept == "总裁办") {
-        deptSql = "SELECT DISTINCT department FROM users WHERE department != '' AND department IS NOT NULL";
-    }
-    else {
-        deptSql = QString("SELECT DISTINCT department FROM users WHERE department = '%1'").arg(myDept);
-    }
-
-    QSqlQuery deptQuery(deptSql);
-    while (deptQuery.next()) {
-        QString dept = deptQuery.value(0).toString();
+    QJsonArray deptArr = res["departments"].toArray();
+    for (int i = 0; i < deptArr.size(); ++i) {
+        QString dept = deptArr[i].toString();
         QListWidgetItem* item = new QListWidgetItem(QString("👨‍👩‍👧‍👦 【部门群】%1").arg(dept));
         item->setData(Qt::UserRole, "GROUP_" + dept);
         m_contactsList->addItem(item);
     }
 
-    // 3. 加载个人联系人列表，严格屏蔽超级管理员账号（注意 QString.arg 中 % 要用 %% 转义）
-    QString sql = QString("SELECT id, name, department, role FROM users WHERE name != '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(m_myName);
-    QSqlQuery query(sql);
-
-    while (query.next()) {
-        int id = query.value(0).toInt();
-        QString name = query.value(1).toString().trimmed();
-        QString dept = query.value(2).toString().trimmed();
-        QString role = query.value(3).toString().trimmed();
-
-        QString formattedId = QString("%1").arg(id, 3, 10, QChar('0'));
+    QJsonArray userArr = res["users"].toArray();
+    for (int i = 0; i < userArr.size(); ++i) {
+        QJsonObject u = userArr[i].toObject();
+        QString name = u["name"].toString();
+        QString dept = u["department"].toString();
+        QString role = u["role"].toString();
+        QString formattedId = QString("%1").arg(u["id"].toInt(), 3, 10, QChar('0'));
         QString icon = (role == "管理员") ? "👨‍💼" : "👨‍💻";
-        QListWidgetItem* item = new QListWidgetItem(QString("%1 %2 [%3] (%4)").arg(icon, name, formattedId, dept));
 
+        QListWidgetItem* item = new QListWidgetItem(QString("%1 %2 [%3] (%4)").arg(icon, name, formattedId, dept));
         item->setData(Qt::UserRole, name);
         m_contactsList->addItem(item);
     }
 }
 
-// 切换联系人槽函数
 void ChatModule::onContactSwitched(int currentRow) {
     if (currentRow < 0) return;
-
     QString targetData = m_contactsList->item(currentRow)->data(Qt::UserRole).toString();
 
     if (targetData.startsWith("GROUP_")) {
@@ -144,12 +147,10 @@ void ChatModule::onContactSwitched(int currentRow) {
             m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
         }
     }
-
     m_textBrowser->setHtml(m_chatHistories.value(m_currentTarget, ""));
     m_textBrowser->moveCursor(QTextCursor::End);
 }
 
-// 发送文本消息
 void ChatModule::sendMessage() {
     QString msg = m_lineEdit->text().trimmed();
     if (msg.isEmpty() || m_currentTarget.isEmpty()) return;
@@ -182,12 +183,10 @@ void ChatModule::sendMessage() {
             json["type"] = "chat";
             json["to"] = m_currentTarget;
         }
-
         m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
     }
 }
 
-// 文件/图片发送逻辑
 void ChatModule::onBtnFolderClicked() {
     if (m_currentTarget.isEmpty()) {
         QMessageBox::warning(nullptr, "提示", "请选择聊天对象！");
@@ -207,9 +206,19 @@ void ChatModule::onBtnFolderClicked() {
         return;
     }
 
+    QString myLocalFolder = this->property("localFolder").toString();
+    if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
+
+    QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
+    QDir dir(clientDirPath);
+    if (!dir.exists()) dir.mkpath(".");
+
+    QString localFileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_") + fi.fileName();
+    QString copiedFilePath = clientDirPath + "/" + localFileName;
+    QFile::copy(filePath, copiedFilePath);
+
     if (file.open(QIODevice::ReadOnly)) {
         QByteArray fileData;
-
         if (isImage) {
             QImage img(filePath);
             img = img.scaled(400, 400, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -224,9 +233,7 @@ void ChatModule::onBtnFolderClicked() {
         QString base64Data = QString(fileData.toBase64());
         QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
         QString displayContent;
-
-        // 生成发件人本机的可点击 URL 链接
-        QString fileUrl = QUrl::fromLocalFile(filePath).toString();
+        QString fileUrl = QUrl::fromLocalFile(copiedFilePath).toString();
 
         if (isImage) {
             displayContent = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, base64Data);
@@ -258,13 +265,11 @@ void ChatModule::onBtnFolderClicked() {
                 json["type"] = isImage ? "image" : "file";
                 json["to"] = m_currentTarget;
             }
-
             m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
         }
     }
 }
 
-// 接收逻辑处理
 void ChatModule::onReadyRead() {
     while (m_tcpSocket->canReadLine()) {
         QByteArray data = m_tcpSocket->readLine();
@@ -274,6 +279,23 @@ void ChatModule::onReadyRead() {
         QJsonObject json = doc.object();
         QString type = json["type"].toString();
         QString fromUser = json["from"].toString();
+
+        if (type == "broadcast") {
+            QString content = json["msg"].toString();
+            emit broadcastReceived(fromUser, content);
+
+            QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
+            QString receiveHtml = "<div style='text-align:center; margin-bottom:10px;'>"
+                "<span style='background-color:#F56C6C; color:#FFF; padding:6px 12px; border-radius:6px; font-size:12px;'>"
+                "📢 <b>全局系统广播</b> [" + fromUser + "] " + timeStr + "<br><br>" + content + "</span></div>";
+
+            m_chatHistories["公司总群"] += receiveHtml;
+            if (m_currentTarget == "公司总群") {
+                m_textBrowser->setHtml(m_chatHistories["公司总群"]);
+                m_textBrowser->moveCursor(QTextCursor::End);
+            }
+            continue;
+        }
 
         if (type == "read_receipt") {
             m_chatHistories[fromUser].replace("color:#AAAAAA; font-size:12px;'> (未读)</span>", "color:#409EFF; font-size:12px;'> (已读)</span>");
@@ -297,12 +319,14 @@ void ChatModule::onReadyRead() {
             QString suffix = originalFileName.split(".").last().toLower();
             if (suffix.isEmpty()) suffix = "png";
 
-            // 在本地缓存目录下自动保存收到的文件
-            QDir dir("ChatFiles");
+            QString myLocalFolder = this->property("localFolder").toString();
+            if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
+            QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
+            QDir dir(clientDirPath);
             if (!dir.exists()) dir.mkpath(".");
 
             QString localFileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_") + originalFileName;
-            QString localFilePath = QDir::currentPath() + "/ChatFiles/" + localFileName;
+            QString localFilePath = clientDirPath + "/" + localFileName;
 
             QFile localFile(localFilePath);
             if (localFile.open(QIODevice::WriteOnly)) {
@@ -310,7 +334,6 @@ void ChatModule::onReadyRead() {
                 localFile.close();
             }
 
-            // 生成本地安全外链 URL
             QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
 
             if (type.contains("image")) {
@@ -343,7 +366,6 @@ void ChatModule::onReadyRead() {
     }
 }
 
-// 弹出表情选择菜单
 void ChatModule::onBtnEmojiClicked() {
     QMenu emojiMenu;
     QStringList emojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉" };
@@ -357,9 +379,7 @@ void ChatModule::onBtnEmojiClicked() {
 
 void ChatModule::onBtnHistoryClicked() { QMessageBox::information(nullptr, "提示", "历史表情面板。"); }
 
-// ==========================================
-// 🚀 核心升级：实现“...”按钮的功能，区分群聊与私聊展示
-// ==========================================
+// 🚀 核心改造 2：向服务器拉取群成员名单或个人名片资料
 void ChatModule::onBtnMoreOptClicked() {
     if (m_currentTarget.isEmpty()) {
         QMessageBox::warning(nullptr, "提示", "请先选择聊天对象！");
@@ -370,42 +390,34 @@ void ChatModule::onBtnMoreOptClicked() {
     dialog.setMinimumSize(320, 450);
 
     if (m_isCurrentGroup) {
-        // --- 逻辑分支 1：群聊，展示群成员列表 ---
         QVBoxLayout* layout = new QVBoxLayout(&dialog);
         QListWidget* listWidget = new QListWidget(&dialog);
         listWidget->setStyleSheet("QListWidget::item { height: 40px; font-size: 14px; border-bottom: 1px solid #F0F0F0; }");
         layout->addWidget(listWidget);
 
-        QString sql;
-        if (m_currentTarget == "公司总群") {
-            sql = "SELECT name, department, job_title FROM users WHERE account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'";
-        }
-        else {
-            sql = QString("SELECT name, department, job_title FROM users WHERE department = '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(m_currentTarget);
-        }
+        QJsonObject req;
+        req["type"] = "query_group_members";
+        req["department"] = m_currentTarget;
+        QJsonObject res = requestDataFromServer(req);
 
-        QSqlQuery query(sql);
         int count = 0;
-        while (query.next()) {
-            QString n = query.value(0).toString();
-            QString d = query.value(1).toString();
-            QString j = query.value(2).toString();
-            if (j.isEmpty() || j == "未分配") j = "员工";
-            listWidget->addItem(QString("👤 %1 (%2 - %3)").arg(n, d, j));
-            count++;
+        if (res["status"].toString() == "success") {
+            QJsonArray arr = res["data"].toArray();
+            for (int i = 0; i < arr.size(); ++i) {
+                QJsonObject u = arr[i].toObject();
+                listWidget->addItem(QString("👤 %1 (%2 - %3)").arg(u["name"].toString(), u["dept"].toString(), u["job"].toString()));
+                count++;
+            }
         }
-
         dialog.setWindowTitle(QString("群成员列表 - %1 (%2人)").arg(m_currentTarget).arg(count));
 
         QPushButton* closeBtn = new QPushButton("关闭", &dialog);
         closeBtn->setMinimumHeight(35);
         layout->addWidget(closeBtn);
         connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-
         dialog.exec();
     }
     else {
-        // --- 逻辑分支 2：私聊，展示对方的个人名片信息 ---
         dialog.setWindowTitle("个人资料名片");
         QVBoxLayout* layout = new QVBoxLayout(&dialog);
         layout->setSpacing(20);
@@ -422,16 +434,18 @@ void ChatModule::onBtnMoreOptClicked() {
         form->setHorizontalSpacing(20);
         form->setVerticalSpacing(15);
 
-        QString sql = QString("SELECT department, job_title, gender, phone, avatar FROM users WHERE name = '%1'").arg(m_currentTarget);
-        QSqlQuery query(sql);
-        if (query.next()) {
-            QString d = query.value(0).toString();
-            QString j = query.value(1).toString();
-            QString g = query.value(2).toString();
-            QString p = query.value(3).toString();
-            QString avatarBase64 = query.value(4).toString();
+        QJsonObject req;
+        req["type"] = "query_user_profile"; // 复用之前写好的接口
+        req["name"] = m_currentTarget;
+        QJsonObject res = requestDataFromServer(req);
 
-            // 解析对方的 Base64 头像，如果有的话裁剪为圆形
+        if (res["status"].toString() == "success") {
+            QString d = res["department"].toString();
+            QString j = res["job_title"].toString();
+            QString g = res["gender"].toString();
+            QString p = res["phone"].toString();
+            QString avatarBase64 = res["avatar_base64"].toString();
+
             if (!avatarBase64.isEmpty()) {
                 QImage img;
                 img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
@@ -476,7 +490,6 @@ void ChatModule::onBtnMoreOptClicked() {
     }
 }
 
-// 系统通知
 void ChatModule::sendSystemMessage(const QString& to, const QString& msg) {
     if (m_tcpSocket->state() == QAbstractSocket::ConnectedState) {
         QJsonObject json;
@@ -498,3 +511,13 @@ void ChatModule::onConnected() {
 }
 
 void ChatModule::onDisconnected() { m_targetLabel->setText("网络已断开"); }
+
+void ChatModule::sendBroadcast(const QString& msg) {
+    if (m_tcpSocket->state() == QAbstractSocket::ConnectedState) {
+        QJsonObject json;
+        json["type"] = "broadcast";
+        json["from"] = m_myName;
+        json["msg"] = msg;
+        m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
+    }
+}

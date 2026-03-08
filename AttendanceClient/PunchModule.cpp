@@ -8,8 +8,6 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QMessageBox>
-#include <QSqlQuery>
-#include <QSqlError>
 #include <QDateTime>
 #include <QTimeEdit>
 #include <QSpinBox>
@@ -19,6 +17,40 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QProcess>
+#include <QCheckBox>
+#include <QTimer>
+#include <QTcpSocket>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QThread>
+
+// 同步请求函数
+static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
+    QTcpSocket socket;
+    socket.connectToHost("127.0.0.1", 9999);
+    QJsonObject responseJson;
+    if (socket.waitForConnected(2000)) {
+        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
+        socket.write(block);
+        socket.waitForBytesWritten(1000);
+        if (socket.waitForReadyRead(5000)) {
+            QByteArray responseData;
+            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
+                responseData += socket.readAll();
+                if (responseData.endsWith("\n")) break;
+            }
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isNull()) responseJson = doc.object();
+        }
+        socket.disconnectFromHost();
+    }
+    return responseJson;
+}
+
+static void sendCommandToServer(const QJsonObject& json) {
+    requestDataFromServer(json);
+}
 
 PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     QLabel* morningTime, QLabel* morningStatus,
@@ -34,8 +66,25 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     m_btnAppealRequest(appealReqBtn), m_btnAppealApprove(appealApprBtn),
     m_lblCurrentTime(currentTimeLabel), m_role(role), m_loginName(loginName), m_cheatCount(0)
 {
-    initRulesTable();
-    loadRules();
+    QJsonObject uReq;
+    uReq["type"] = "query_user_dept";
+    uReq["name"] = m_loginName;
+    QJsonObject uRes = requestDataFromServer(uReq);
+    QString myDept = uRes["department"].toString();
+
+    if (myDept != "人力资源部") {
+        if (m_btnRuleSettings) m_btnRuleSettings->setHidden(true);
+    }
+    else {
+        if (m_btnRuleSettings) connect(m_btnRuleSettings, &QPushButton::clicked, this, &PunchModule::onRuleSettingsClicked);
+    }
+
+    if (m_role != "管理员登录" && m_role != "超级管理员" && m_role != "经理") {
+        if (m_btnLeaveApprove) m_btnLeaveApprove->setHidden(true);
+        if (m_btnAppealApprove) m_btnAppealApprove->setHidden(true);
+    }
+
+    loadRules(myDept);
     loadTodayPunchStatus();
 
     if (m_manualBtn) connect(m_manualBtn, &QPushButton::clicked, this, &PunchModule::onManualPunchClicked);
@@ -43,15 +92,6 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     if (m_btnLeaveApprove) connect(m_btnLeaveApprove, &QPushButton::clicked, this, &PunchModule::onLeaveApproveClicked);
     if (m_btnAppealRequest) connect(m_btnAppealRequest, &QPushButton::clicked, this, &PunchModule::onAppealRequestClicked);
     if (m_btnAppealApprove) connect(m_btnAppealApprove, &QPushButton::clicked, this, &PunchModule::onAppealApproveClicked);
-
-    if (m_role != "管理员" && m_role != "超级管理员") {
-        if (m_btnRuleSettings) m_btnRuleSettings->setHidden(true);
-        if (m_btnLeaveApprove) m_btnLeaveApprove->setHidden(true);
-        if (m_btnAppealApprove) m_btnAppealApprove->setHidden(true);
-    }
-    else {
-        if (m_btnRuleSettings) connect(m_btnRuleSettings, &QPushButton::clicked, this, &PunchModule::onRuleSettingsClicked);
-    }
 
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &PunchModule::onTimeUpdate);
@@ -64,64 +104,56 @@ void PunchModule::speakText(const QString& text) {
     QProcess::startDetached("powershell", QStringList() << "-WindowStyle" << "Hidden" << "-Command" << command);
 }
 
-void PunchModule::initRulesTable() {
-    QSqlQuery query;
-    query.exec("CREATE TABLE IF NOT EXISTS shifts (name VARCHAR(50) PRIMARY KEY, start_time TIME, end_time TIME, late_mins INT, absent_mins INT)");
-    query.exec("INSERT IGNORE INTO shifts (name, start_time, end_time, late_mins, absent_mins) VALUES ('常规班', '09:00:00', '18:00:00', 30, 120)");
-    query.exec("INSERT IGNORE INTO shifts (name, start_time, end_time, late_mins, absent_mins) VALUES ('早班', '08:00:00', '17:00:00', 30, 120)");
-    query.exec("INSERT IGNORE INTO shifts (name, start_time, end_time, late_mins, absent_mins) VALUES ('晚班', '13:00:00', '22:00:00', 30, 120)");
-    query.exec("ALTER TABLE users ADD COLUMN shift_name VARCHAR(50) DEFAULT '常规班'");
-    query.exec("CREATE TABLE IF NOT EXISTS appeals (id INT AUTO_INCREMENT PRIMARY KEY, applicant VARCHAR(50), abnormal_time DATETIME, original_status VARCHAR(50), reason TEXT, approver VARCHAR(50), status VARCHAR(20))");
-    query.exec("CREATE TABLE IF NOT EXISTS leave_requests (id INT AUTO_INCREMENT PRIMARY KEY, applicant VARCHAR(50), leave_type VARCHAR(50), start_time DATETIME, end_time DATETIME, duration VARCHAR(20), reason TEXT, approver VARCHAR(50), cc VARCHAR(50), status VARCHAR(20))");
-}
+void PunchModule::initRulesTable() {}
 
-void PunchModule::loadRules() {
-    QString sql = QString("SELECT shift_name FROM users WHERE name = '%1'").arg(m_loginName);
-    QSqlQuery query(sql);
-    if (query.next()) {
-        m_shiftName = query.value(0).toString();
-        if (m_shiftName.isEmpty()) m_shiftName = "常规班";
-    }
-    else { m_shiftName = "常规班"; }
-
-    QString shiftSql = QString("SELECT start_time, end_time, late_mins, absent_mins FROM shifts WHERE name = '%1'").arg(m_shiftName);
-    QSqlQuery shiftQuery(shiftSql);
-    if (shiftQuery.next()) {
-        m_startTime = shiftQuery.value(0).toTime();
-        m_endTime = shiftQuery.value(1).toTime();
-        m_lateMins = shiftQuery.value(2).toInt();
-        m_absentMins = shiftQuery.value(3).toInt();
-        if (m_lblMorningTime) m_lblMorningTime->setText(QString("[%1] 上班 %2").arg(m_shiftName, m_startTime.toString("HH:mm")));
-        if (m_lblEveningTime) m_lblEveningTime->setText(QString("[%1] 下班 %2").arg(m_shiftName, m_endTime.toString("HH:mm")));
+void PunchModule::loadRules(QString myDept) {
+    QJsonObject req;
+    req["type"] = "query_shift_rule";
+    req["dept"] = myDept;
+    QJsonObject res = requestDataFromServer(req);
+    if (res["status"].toString() == "success") {
+        m_shiftName = res["rule_name"].toString();
+        m_startTime = QTime::fromString(res["start_time"].toString(), "HH:mm:ss");
+        m_endTime = QTime::fromString(res["end_time"].toString(), "HH:mm:ss");
+        m_lateMins = res["late_mins"].toInt();
+        m_absentMins = res["absent_mins"].toInt();
+        if (m_lblMorningTime) m_lblMorningTime->setText(QString("<div style='text-align:center;'><span style='font-size:12px; color:#888;'>[%1]</span><br><span style='font-size:16px; font-weight:bold;'>上班 %2</span></div>").arg(m_shiftName, m_startTime.toString("HH:mm")));
+        if (m_lblEveningTime) m_lblEveningTime->setText(QString("<div style='text-align:center;'><span style='font-size:12px; color:#888;'>[%1]</span><br><span style='font-size:16px; font-weight:bold;'>下班 %2</span></div>").arg(m_shiftName, m_endTime.toString("HH:mm")));
     }
 }
 
 void PunchModule::loadTodayPunchStatus() {
     if (m_loginName.isEmpty()) return;
-
-    m_lblMorningStatus->setText("未打卡");
-    m_lblMorningStatus->setStyleSheet("color: #909399;");
-    m_lblEveningStatus->setText("未打卡");
-    m_lblEveningStatus->setStyleSheet("color: #909399;");
-
-    QString sql = QString("SELECT punch_time, status FROM attendance_records WHERE name = '%1' AND DATE(punch_time) = CURDATE() ORDER BY punch_time ASC").arg(m_loginName);
-    QSqlQuery query(sql);
-
+    QJsonObject req;
+    req["type"] = "query_today_status";
+    req["name"] = m_loginName;
+    QJsonObject res = requestDataFromServer(req);
+    if (res["status"].toString() != "success") return;
+    bool isOnLeave = res["is_on_leave"].toBool();
+    QJsonArray punches = res["punches"].toArray();
     bool hasMorning = false;
-    while (query.next()) {
-        QTime pTime = query.value(0).toDateTime().time();
-        QString status = query.value(1).toString();
-        QString displayTxt = QString("🔵 %1 %2").arg(pTime.toString("HH:mm")).arg(status);
-
+    for (int i = 0; i < punches.size(); ++i) {
+        QJsonObject p = punches[i].toObject();
+        QTime pTime = QTime::fromString(p["time"].toString(), "HH:mm:ss");
+        QString statusStr = p["status"].toString();
+        QString displayTxt = QString("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>%1</span><br><span style='font-size:12px;'>%2</span></div>").arg(pTime.toString("HH:mm"), statusStr);
         if (pTime < QTime(12, 0) && !hasMorning) {
             m_lblMorningStatus->setText(displayTxt);
-            m_lblMorningStatus->setStyleSheet(status.contains("迟到") || status.contains("旷工") ? "color: #F56C6C;" : "color: #67C23A;");
+            m_lblMorningStatus->setStyleSheet(statusStr.contains("正常") ? "color: #67C23A;" : "color: #F56C6C;");
             hasMorning = true;
         }
-        else {
-            m_lblEveningStatus->setText(displayTxt + " (更新打卡)");
-            m_lblEveningStatus->setStyleSheet(status.contains("早退") ? "color: #E6A23C;" : "color: #409EFF;");
+        else if (pTime >= QTime(12, 0)) {
+            m_lblEveningStatus->setText(displayTxt);
+            m_lblEveningStatus->setStyleSheet(statusStr.contains("正常") ? "color: #409EFF;" : "color: #E6A23C;");
         }
+    }
+    if (punches.isEmpty() && !isOnLeave) {
+        m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>缺卡</span><br><span style='font-size:12px;'>旷工</span></div>");
+        m_lblMorningStatus->setStyleSheet("color: #F56C6C;");
+    }
+    else if (punches.isEmpty() && isOnLeave) {
+        m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>请假</span><br><span style='font-size:12px;'>已准假</span></div>");
+        m_lblMorningStatus->setStyleSheet("color: #E6A23C;");
     }
 }
 
@@ -129,337 +161,425 @@ QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
     if (punchTime < QTime(12, 0)) {
         int secsLate = m_startTime.secsTo(punchTime);
         if (secsLate <= 0) return "正常打卡";
-        if (secsLate > m_absentMins * 60) return "旷工";
-        if (secsLate > m_lateMins * 60) return "严重迟到";
-        return "迟到";
+        return (secsLate > m_absentMins * 60) ? "旷工" : "迟到";
     }
-    else {
-        int secsEarly = punchTime.secsTo(m_endTime);
-        if (secsEarly <= 0) return "正常下班";
-        return "早退";
-    }
+    return (punchTime < m_endTime) ? "早退" : "正常下班";
 }
 
 void PunchModule::onRuleSettingsClicked() {
     QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("多套排班制设置");
-    QFormLayout form(&dialog);
-
-    QComboBox* shiftCombo = new QComboBox(&dialog);
-    shiftCombo->addItems({ "常规班", "早班", "晚班" });
-    QTimeEdit* startEdit = new QTimeEdit(&dialog);
-    QTimeEdit* endEdit = new QTimeEdit(&dialog);
-    QSpinBox* lateEdit = new QSpinBox(&dialog); lateEdit->setRange(0, 300); lateEdit->setSuffix(" 分钟");
-    QSpinBox* absentEdit = new QSpinBox(&dialog); absentEdit->setRange(0, 600); absentEdit->setSuffix(" 分钟");
-
-    auto loadShiftData = [&](const QString& shift) {
-        QSqlQuery q(QString("SELECT start_time, end_time, late_mins, absent_mins FROM shifts WHERE name='%1'").arg(shift));
-        if (q.next()) {
-            startEdit->setTime(q.value(0).toTime()); endEdit->setTime(q.value(1).toTime());
-            lateEdit->setValue(q.value(2).toInt()); absentEdit->setValue(q.value(3).toInt());
-        }
-        };
-    loadShiftData("常规班");
-    connect(shiftCombo, &QComboBox::currentTextChanged, loadShiftData);
-
-    form.addRow("选择排班:", shiftCombo);
-    form.addRow("上班时间:", startEdit);
-    form.addRow("下班时间:", endEdit);
-    form.addRow("判定迟到(超):", lateEdit);
-    form.addRow("判定旷工(超):", absentEdit);
-
-    QDialogButtonBox buttonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-    form.addRow(&buttonBox);
-    connect(&buttonBox, SIGNAL(accepted()), &dialog, SLOT(accept()));
-    connect(&buttonBox, SIGNAL(rejected()), &dialog, SLOT(reject()));
-
+    dialog.setWindowTitle("排班规则设置");
+    QFormLayout* form = new QFormLayout(&dialog);
+    QComboBox* shiftCombo = new QComboBox(&dialog); shiftCombo->addItems({ "常规班", "早班", "晚班" });
+    QComboBox* deptCombo = new QComboBox(&dialog); deptCombo->addItems({ "全部", "总经办", "人力资源部", "财务部", "研发部", "市场部", "销售部", "客户服务部" });
+    QTimeEdit* startEdit = new QTimeEdit(QTime(9, 0), &dialog);
+    QTimeEdit* endEdit = new QTimeEdit(QTime(18, 0), &dialog);
+    QSpinBox* lateEdit = new QSpinBox(&dialog); lateEdit->setSuffix(" 分钟"); lateEdit->setValue(30);
+    QSpinBox* absentEdit = new QSpinBox(&dialog); absentEdit->setSuffix(" 分钟"); absentEdit->setValue(120);
+    form->addRow("排班名称:", shiftCombo); form->addRow("适用部门:", deptCombo);
+    form->addRow("上班时间:", startEdit); form->addRow("下班时间:", endEdit);
+    form->addRow("迟到判定:", lateEdit); form->addRow("旷工判定:", absentEdit);
+    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    form->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
-        QString sql = QString("UPDATE shifts SET start_time='%1', end_time='%2', late_mins=%3, absent_mins=%4 WHERE name='%5'")
-            .arg(startEdit->time().toString("HH:mm:ss")).arg(endEdit->time().toString("HH:mm:ss"))
-            .arg(lateEdit->value()).arg(absentEdit->value()).arg(shiftCombo->currentText());
-        QSqlQuery query;
-        if (query.exec(sql)) {
-            QMessageBox::information(nullptr, "成功", shiftCombo->currentText() + " 规则已更新！");
-            loadRules();
-            loadTodayPunchStatus();
-        }
+        QJsonObject req; req["type"] = "rule_settings";
+        req["dept"] = deptCombo->currentText(); req["rule_name"] = shiftCombo->currentText();
+        req["start_time"] = startEdit->time().toString("HH:mm:ss"); req["end_time"] = endEdit->time().toString("HH:mm:ss");
+        req["late_mins"] = lateEdit->value(); req["absent_mins"] = absentEdit->value();
+        sendCommandToServer(req);
+        QMessageBox::information(nullptr, "成功", "排班规则已提交！");
+        QTimer::singleShot(500, this, [=]() { loadRules(deptCombo->currentText()); loadTodayPunchStatus(); });
     }
-}
-
-void PunchModule::onTimeUpdate() {
-    if (m_lblCurrentTime) {
-        m_lblCurrentTime->setText("当前时间: " + QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-    }
-}
-
-void PunchModule::renderFrame(const QImage& img) {
-    if (m_cameraLabel) m_cameraLabel->setPixmap(QPixmap::fromImage(img).scaled(m_cameraLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-}
-
-void PunchModule::updateRecognizedName(const QString& name) {
-    m_currentFaceName = name;
 }
 
 void PunchModule::onManualPunchClicked() {
     QDialog dialog((QWidget*)this->parent());
-    QFormLayout form(&dialog);
-    QLineEdit nameEdit(&dialog); QComboBox deptCombo(&dialog);
-    deptCombo.addItems({ "总办", "研发部", "财务部", "人事行政部" });
-    form.addRow("自报姓名:", &nameEdit); form.addRow("自报部门:", &deptCombo);
-    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-    form.addRow(&buttonBox);
-    connect(&buttonBox, SIGNAL(accepted()), &dialog, SLOT(accept()));
-    connect(&buttonBox, SIGNAL(rejected()), &dialog, SLOT(reject()));
-
+    dialog.setWindowTitle("手动打卡辅助");
+    QFormLayout* form = new QFormLayout(&dialog);
+    QLineEdit* nameEdit = new QLineEdit(&dialog);
+    QDialogButtonBox* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    form->addRow("姓名:", nameEdit); form->addRow(buttonBox);
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
-        QString claimName = nameEdit.text().trimmed();
-        if (claimName == m_currentFaceName && !m_currentFaceName.isEmpty()) {
-            m_cheatCount = 0;
-            QDateTime now = QDateTime::currentDateTime();
-            QString autoStatus = calculatePunchStatus(now.time());
-
-            QString sql = QString("INSERT INTO attendance_records (name, punch_time, status) VALUES ('%1', '%2', '%3')")
-                .arg(claimName).arg(now.toString("yyyy-MM-dd HH:mm:ss")).arg(autoStatus);
-            QSqlQuery query;
-            if (query.exec(sql)) {
-                QString greeting = (now.time() < QTime(12, 0)) ? "早上好" : "下午好";
-                speakText(QString("打卡成功！%1，%2！当前状态：%3").arg(claimName, greeting, autoStatus));
-                QMessageBox::information(nullptr, "打卡成功", "记录已生成！状态：" + autoStatus);
-                loadTodayPunchStatus();
-            }
+        QString claimName = nameEdit->text().trimmed();
+        if (claimName != m_loginName) { QMessageBox::warning(nullptr, "拒绝", "只能为本人打卡！"); return; }
+        if (claimName == m_currentFaceName && !m_currentFaceName.isEmpty() && m_currentFaceName != "未知访客") {
+            QJsonObject req; req["type"] = "punch_request"; req["name"] = claimName;
+            sendCommandToServer(req);
+            speakText("考勤指令已下发");
+            QTimer::singleShot(500, this, &PunchModule::loadTodayPunchStatus);
         }
         else {
             m_cheatCount++;
             if (m_cheatCount >= 3) {
-                QString sql = QString("INSERT INTO attendance_records (name, punch_time, status) VALUES ('%1', NOW(), '作弊打卡')").arg(claimName);
-                QSqlQuery query(sql);
-                speakText("警告！人脸核验不符，已记录异常！");
-                QMessageBox::critical(nullptr, "警告", "连续3次核验不符，已记为作弊！");
+                QJsonObject req; req["type"] = "punch_cheat"; req["name"] = claimName;
+                sendCommandToServer(req);
                 m_cheatCount = 0;
-                loadTodayPunchStatus();
             }
-            else QMessageBox::warning(nullptr, "核验失败", "人脸与自报姓名不符！");
+            else { QMessageBox::warning(nullptr, "失败", "人脸核验不匹配！"); }
         }
     }
 }
-
 void PunchModule::onAppealRequestClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
+    QJsonObject initReq; initReq["type"] = "query_approval_candidates"; initReq["name"] = m_loginName;
+    QJsonObject initRes = requestDataFromServer(initReq);
+
     QDialog formDlg(parentWidget);
-    formDlg.setWindowTitle("发起异常考勤申诉");
-    formDlg.resize(450, 400);
+    formDlg.setWindowTitle("发起考勤异常申诉");
     QFormLayout* form = new QFormLayout(&formDlg);
-
     QComboBox* recordCombo = new QComboBox(&formDlg);
-    QTextEdit* reasonEdit = new QTextEdit(&formDlg); reasonEdit->setPlaceholderText("请输入申诉理由（如：拜访客户未打卡）...");
-    QComboBox* approverCombo = new QComboBox(&formDlg);
+    QTextEdit* reasonEdit = new QTextEdit(&formDlg);
+    QComboBox* app1 = new QComboBox(&formDlg);
 
-    QString sqlAppeals = QString("SELECT punch_time, status FROM attendance_records WHERE name='%1' AND "
-        "(status LIKE '%%迟到%%' OR status LIKE '%%早退%%' OR status LIKE '%%旷工%%' OR status LIKE '%%作弊%%') "
-        "ORDER BY punch_time DESC LIMIT 10").arg(m_loginName);
-    QSqlQuery rq(sqlAppeals);
-    while (rq.next()) {
-        QString pTime = rq.value(0).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
-        QString status = rq.value(1).toString();
-        recordCombo->addItem(pTime + " [" + status + "]", pTime + "|" + status);
+    QJsonArray abnArr = initRes["abnormal_records"].toArray();
+    for (int i = 0; i < abnArr.size(); ++i) {
+        QJsonObject rec = abnArr[i].toObject();
+        recordCombo->addItem(rec["display"].toString(), rec["time"].toString());
     }
 
-    if (recordCombo->count() == 0) {
-        QMessageBox::information(parentWidget, "提示", "您最近没有异常考勤记录，无需申诉！"); return;
-    }
+    QJsonArray hrArr = initRes["hr_list"].toArray();
+    QJsonArray gmArr = initRes["gm_list"].toArray();
+    for (int i = 0; i < hrArr.size(); ++i) app1->addItem("人资: " + hrArr[i].toString(), hrArr[i].toString());
+    for (int i = 0; i < gmArr.size(); ++i) app1->addItem("总经理: " + gmArr[i].toString(), gmArr[i].toString());
 
-    // 核心修复：明文过滤超级管理员
-    QString sqlUsers = "SELECT name FROM users WHERE role IN ('管理员', '超级管理员') AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'";
-    QSqlQuery q(sqlUsers);
-    while (q.next()) {
-        if (q.value(0).toString() != m_loginName) {
-            approverCombo->addItem("👨‍💼 " + q.value(0).toString(), q.value(0).toString());
-        }
-    }
-
-    form->addRow("选择异常记录: *", recordCombo);
-    form->addRow("申诉事由: *", reasonEdit);
-    form->addRow("审批人: *", approverCombo);
-
-    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
-    form->addRow(&buttonBox);
-    connect(&buttonBox, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
-    connect(&buttonBox, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
+    form->addRow("异常记录:", recordCombo); form->addRow("申诉理由:", reasonEdit); form->addRow("审批人:", app1);
+    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    form->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
 
     if (formDlg.exec() == QDialog::Accepted) {
-        QString approver = approverCombo->currentData().toString();
-        QString recordData = recordCombo->currentData().toString();
-        QString pTime = recordData.split("|").first();
-        QString pStatus = recordData.split("|").last();
-
-        QString insertSql = QString("INSERT INTO appeals (applicant, abnormal_time, original_status, reason, approver, status) "
-            "VALUES ('%1', '%2', '%3', '%4', '%5', '待审批')")
-            .arg(m_loginName).arg(pTime).arg(pStatus).arg(reasonEdit->toPlainText()).arg(approver);
-        QSqlQuery insertQ;
-        insertQ.exec(insertSql);
-
-        emit requestSendChat(approver, QString("【申诉审批】\n异常时间: %1\n原状态: %2\n事由: %3\n请前往审批。").arg(pTime, pStatus, reasonEdit->toPlainText()));
-        QMessageBox::information(parentWidget, "成功", "申诉已提交！");
+        QJsonObject req; req["type"] = "appeal_request";
+        req["applicant"] = m_loginName; req["abnormal_time"] = recordCombo->currentData().toString();
+        req["reason"] = reasonEdit->toPlainText(); req["approver"] = app1->currentData().toString();
+        sendCommandToServer(req);
+        QMessageBox::information(parentWidget, "成功", "申诉已提交服务器！");
     }
 }
 
-void PunchModule::onAppealApproveClicked() {
-    QWidget* parentWidget = (QWidget*)this->parent();
-    QDialog* apprDlg = new QDialog(parentWidget);
-    apprDlg->setWindowTitle("考勤申诉待办");
-    apprDlg->resize(700, 400);
-    QVBoxLayout* layout = new QVBoxLayout(apprDlg);
+void PunchModule::onLeaveRequestClicked()
+{
+    QWidget* parentWidget = qobject_cast<QWidget*>(this->parent());
 
-    QTableWidget* table = new QTableWidget(apprDlg);
-    table->setColumnCount(6);
-    table->setHorizontalHeaderLabels({ "申请人", "异常时间", "原状态", "事由", "状态", "操作" });
-    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    // ──────────────────────────────────────────────
+    // 1. 向服务器请求审批候选人数据（复用已有协议）
+    // ──────────────────────────────────────────────
+    QJsonObject initReq;
+    initReq["type"] = "query_approval_candidates";
+    initReq["name"] = m_loginName;
+    QJsonObject initRes = requestDataFromServer(initReq);
 
-    QString sqlSelect = QString("SELECT id, applicant, abnormal_time, original_status, reason FROM appeals WHERE approver='%1' AND status='待审批'").arg(m_loginName);
-    QSqlQuery query(sqlSelect);
-    while (query.next()) {
-        int row = table->rowCount(); table->insertRow(row);
-        int reqId = query.value(0).toInt();
-        QString applicant = query.value(1).toString();
-        QString aTime = query.value(2).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
-
-        table->setItem(row, 0, new QTableWidgetItem(applicant));
-        table->setItem(row, 1, new QTableWidgetItem(aTime));
-        table->setItem(row, 2, new QTableWidgetItem(query.value(3).toString()));
-        table->setItem(row, 3, new QTableWidgetItem(query.value(4).toString()));
-        table->setItem(row, 4, new QTableWidgetItem("🔴 待处理"));
-
-        QPushButton* btnPass = new QPushButton("✅ 批准并补卡");
-        btnPass->setStyleSheet("color: white; background-color: #67C23A;");
-        table->setCellWidget(row, 5, btnPass);
-
-        connect(btnPass, &QPushButton::clicked, [=]() {
-            QString updateQ1 = QString("UPDATE appeals SET status='已批准' WHERE id=%1").arg(reqId);
-            QString updateQ2 = QString("UPDATE attendance_records SET status='正常(补卡)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime);
-            QSqlQuery updateQ;
-            updateQ.exec(updateQ1);
-            updateQ.exec(updateQ2);
-
-            emit requestSendChat(applicant, QString("✅ 您 %1 的考勤申诉已通过！异常记录已变为正常(补卡)。").arg(aTime));
-            QMessageBox::information(apprDlg, "成功", "已批准申诉，系统已自动为该员工补卡！");
-            apprDlg->accept();
-            });
+    // ★ 不依赖 status 字段，只检查是否收到了关键数据
+    if (initRes.isEmpty() || !initRes.contains("my_role")) {
+        QMessageBox::critical(parentWidget, "错误",
+            "无法连接服务器获取审批信息，请检查网络连接和服务器状态！");
+        return;
     }
-    layout->addWidget(table);
-    apprDlg->exec();
-    apprDlg->deleteLater();
-}
 
-void PunchModule::onLeaveRequestClicked() {
-    QWidget* parentWidget = (QWidget*)this->parent();
+    // ── 读取服务器返回的字段 ──
+    QString applicantRole = initRes["my_role"].toString();
+    QString applicantDept = initRes["my_dept"].toString();
+    QString applicantJob = initRes["my_job"].toString();
+
+    QJsonArray hrArr = initRes["hr_list"].toArray();
+    QJsonArray gmArr = initRes["gm_list"].toArray();
+    QJsonArray mgrArr = initRes["mgr_list"].toArray();
+
+    // ──────────────────────────────────────────────
+    // 2. 选择请假类型 (✨ UI 升级)
+    // ──────────────────────────────────────────────
     QDialog typeDlg(parentWidget);
     typeDlg.setWindowTitle("请选择请假类型");
-    typeDlg.resize(400, 500);
+    typeDlg.resize(300, 350); // 撑大窗口，让列表更舒展
     QVBoxLayout* typeLayout = new QVBoxLayout(&typeDlg);
     QListWidget* typeList = new QListWidget(&typeDlg);
-    typeList->setStyleSheet("QListWidget::item { height: 50px; border-bottom: 1px solid #EEE; font-size: 16px; }");
-    QStringList types = { "事假 (按小时)", "调休 (按小时)", "病假 (按小时)", "年假 (按半天)", "产假 (按天)" };
-    typeList->addItems(types);
+
+    // 🌟 给列表加上现代风格的 QSS 样式
+    typeList->setStyleSheet(
+        "QListWidget { font-size: 15px; border: 1px solid #E4E7ED; border-radius: 8px; outline: none; background: #FFFFFF; }"
+        "QListWidget::item { padding: 15px; border-bottom: 1px solid #EBEEF5; color: #303133; }"
+        "QListWidget::item:hover { background-color: #F5F7FA; border-radius: 4px; }"
+        "QListWidget::item:selected { background-color: #ECF5FF; color: #409EFF; font-weight: bold; border-radius: 4px; }"
+    );
+    typeList->addItems({ "事假", "调休", "病假", "年假", "产假" });
     typeLayout->addWidget(typeList);
-    QString selectedType = "";
-    connect(typeList, &QListWidget::itemDoubleClicked, [&](QListWidgetItem* item) { selectedType = item->text().split(" ").first(); typeDlg.accept(); });
+
+    QString selectedType;
+    connect(typeList, &QListWidget::itemDoubleClicked, [&](QListWidgetItem* item) {
+        selectedType = item->text();
+        typeDlg.accept();
+        });
     if (typeDlg.exec() != QDialog::Accepted || selectedType.isEmpty()) return;
 
+    // ──────────────────────────────────────────────
+    // 3. 构建请假表单 (✨ UI 升级)
+    // ──────────────────────────────────────────────
     QDialog formDlg(parentWidget);
-    formDlg.setWindowTitle("发起请假提交 - " + selectedType); formDlg.resize(450, 600);
+    formDlg.setWindowTitle("发起请假申请 - " + selectedType);
+    formDlg.resize(500, 450); // 调整窗体大小
     QFormLayout* form = new QFormLayout(&formDlg);
+    form->setContentsMargins(25, 25, 25, 25); // 增加表单内边距，告别拥挤
+    form->setSpacing(15);                     // 增加行间距
+
+    // 🌟 定义一套全局高颜值输入框 CSS
+    QString modernInputStyle =
+        "QDateTimeEdit, QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
+        "QDateTimeEdit:hover, QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
+        "QDateTimeEdit:focus, QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
+        "QDateTimeEdit::drop-down, QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
+        "QDateTimeEdit::down-arrow, QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
+
     QDateTimeEdit* startEdit = new QDateTimeEdit(QDateTime::currentDateTime(), &formDlg);
     QDateTimeEdit* endEdit = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &formDlg);
-    QLineEdit* durationEdit = new QLineEdit(&formDlg);
+
+    // 🚀 核心改动：开启日历弹窗面板，实现时间自由选择！
+    startEdit->setCalendarPopup(true);
+    endEdit->setCalendarPopup(true);
+
+    startEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
+    endEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
+    startEdit->setStyleSheet(modernInputStyle);
+    endEdit->setStyleSheet(modernInputStyle);
+
     QTextEdit* reasonEdit = new QTextEdit(&formDlg);
-    QComboBox* approverCombo = new QComboBox(&formDlg);
-    QComboBox* ccCombo = new QComboBox(&formDlg);
-
-    // 核心修复：明文过滤超级管理员
-    QString sqlUsers = "SELECT name, role FROM users WHERE account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'";
-    QSqlQuery query(sqlUsers);
-    while (query.next()) {
-        QString n = query.value(0).toString();
-        QString r = query.value(1).toString();
-
-        if (n == m_loginName) continue;
-        if (r == "管理员") {
-            approverCombo->addItem("👨‍💼 " + n, n);
-        }
-        ccCombo->addItem("👤 " + n, n);
-    }
+    reasonEdit->setPlaceholderText("请输入请假理由...");
+    reasonEdit->setMaximumHeight(80);
+    reasonEdit->setStyleSheet(modernInputStyle);
 
     form->addRow("开始时间:", startEdit);
     form->addRow("结束时间:", endEdit);
-    form->addRow("时长:", durationEdit);
-    form->addRow("请假事由:", reasonEdit);
-    form->addRow("审批人:", approverCombo);
-    form->addRow("抄送人:", ccCombo);
-    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
-    form->addRow(&buttonBox);
-    connect(&buttonBox, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
-    connect(&buttonBox, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
+    form->addRow("请假理由:", reasonEdit);
 
+    // ── 创建审批人下拉框 ──
+    QComboBox* app1 = new QComboBox(&formDlg);
+    QComboBox* app2 = new QComboBox(&formDlg);
+    QComboBox* app3 = new QComboBox(&formDlg);
+
+    app1->setStyleSheet(modernInputStyle);
+    app2->setStyleSheet(modernInputStyle);
+    app3->setStyleSheet(modernInputStyle);
+
+    // 填充辅助 lambda
+    auto fillFromArray = [](QComboBox* cb, const QJsonArray& arr, const QString& prefix) {
+        cb->clear();
+        for (int i = 0; i < arr.size(); ++i) {
+            QString name = arr[i].toString();
+            cb->addItem(prefix + name, name);  // displayText=带前缀, userData=纯名字
+        }
+        };
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+
+    // ──────────────────────────────────────────────
+    // 4. 审批链逻辑（完全保持你的原逻辑不变）
+    // ──────────────────────────────────────────────
+    bool isGM = (applicantDept == "总经办" && (applicantJob == "总经理" || applicantJob == "总裁"));
+    bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
+    bool isTwoLevel = false;
+
+    if (!isGM && !isHRManager) {
+        if (applicantDept == "人力资源部") isTwoLevel = true;
+        else if (applicantJob == "部门经理") isTwoLevel = true;
+        else if (applicantDept == "总经办") isTwoLevel = true;
+    }
+
+    int approvalLevels = 0;
+
+    if (isGM) {
+        approvalLevels = 1;
+        fillHR(app1);
+        form->addRow("第一审批人(人资经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (isHRManager) {
+        approvalLevels = 1;
+        fillGM(app1);
+        form->addRow("第一审批人(总经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (isTwoLevel) {
+        approvalLevels = 2;
+        fillHR(app1); fillGM(app2);
+        form->addRow("第一审批人(人资经理):", app1);
+        form->addRow("第二审批人(总经理):", app2);
+        app3->setVisible(false);
+    }
+    else {
+        approvalLevels = 3;
+        fillDeptMgr(app1); fillHR(app2); fillGM(app3);
+        form->addRow("第一审批人(部门经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第三审批人(总经理):", app3);
+    }
+
+    // ── 按钮 (✨ UI 升级) ──
+    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
+    bb->button(QDialogButtonBox::Ok)->setText("提交申请");
+    // 给提交按钮加上漂亮的主题蓝色
+    bb->button(QDialogButtonBox::Ok)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #66B1FF; }");
+    bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
+
+    form->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
+
+    // ──────────────────────────────────────────────
+    // 5. 用户点击"提交申请"后，发送到服务器（完全保持原逻辑）
+    // ──────────────────────────────────────────────
     if (formDlg.exec() == QDialog::Accepted) {
-        QString approver = approverCombo->currentData().toString();
-        QString cc = ccCombo->currentData().toString();
+        if (app1->count() == 0) {
+            QMessageBox::critical(parentWidget, "失败", "无有效的第一审批人，请联系管理员！");
+            return;
+        }
 
-        QString insertSql = QString("INSERT INTO leave_requests (applicant, leave_type, start_time, end_time, duration, reason, approver, cc, status) "
-            "VALUES ('%1', '%2', '%3', '%4', '%5', '%6', '%7', '%8', '待审批')")
-            .arg(m_loginName).arg(selectedType).arg(startEdit->dateTime().toString("yyyy-MM-dd HH:mm:ss"))
-            .arg(endEdit->dateTime().toString("yyyy-MM-dd HH:mm:ss")).arg(durationEdit->text())
-            .arg(reasonEdit->toPlainText()).arg(approver).arg(cc);
-        QSqlQuery insertQuery;
-        insertQuery.exec(insertSql);
+        // 🌟 增加一个小逻辑保护：如果结束时间比开始时间还早，提示重新选择
+        if (startEdit->dateTime() >= endEdit->dateTime()) {
+            QMessageBox::warning(parentWidget, "时间填写错误", "结束时间必须晚于开始时间，请重新选择！");
+            return;
+        }
 
-        emit requestSendChat(approver, QString("【请假审批】\n类型: %1\n事由: %2\n请审批。").arg(selectedType, reasonEdit->toPlainText()));
-        QMessageBox::information(parentWidget, "成功", "申请已提交！");
+        QJsonArray approverChain;
+        approverChain.append(app1->currentData().toString());
+        if (approvalLevels >= 2 && app2->count() > 0) approverChain.append(app2->currentData().toString());
+        if (approvalLevels >= 3 && app3->count() > 0) approverChain.append(app3->currentData().toString());
+
+        QStringList chainList;
+        for (int i = 0; i < approverChain.size(); ++i) {
+            chainList << approverChain[i].toString();
+        }
+
+        QJsonObject req;
+        req["type"] = "leave_request";
+        req["applicant"] = m_loginName;
+        req["leave_type"] = selectedType;
+        req["start_time"] = startEdit->dateTime().toString("yyyy-MM-dd HH:mm:ss");
+        req["end_time"] = endEdit->dateTime().toString("yyyy-MM-dd HH:mm:ss");
+        req["reason"] = reasonEdit->toPlainText().trimmed();
+        req["approver"] = chainList.join(",");
+        req["approval_levels"] = approvalLevels;
+        req["approver_chain"] = approverChain;
+
+        sendCommandToServer(req);
+
+        QMessageBox::information(parentWidget, "成功",
+            QString("请假申请已提交，当前进入 %1 级审批流程。\n审批链：%2")
+            .arg(approvalLevels)
+            .arg(chainList.join(" → ")));
+
+        QString notifyMsg = QString("%1 提交了 [%2] 请假申请，请及时审批")
+            .arg(m_loginName, selectedType);
+        emit requestSendChat(notifyMsg);
     }
 }
-
+// 🚀 向服务器拉取待审批的假条列表
 void PunchModule::onLeaveApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
-    QDialog* apprDlg = new QDialog(parentWidget);
-    apprDlg->setWindowTitle("我的审批待办");
-    apprDlg->resize(800, 400);
-    QVBoxLayout* layout = new QVBoxLayout(apprDlg);
-    QTableWidget* table = new QTableWidget(apprDlg);
+    QDialog apprDlg(parentWidget); apprDlg.setWindowTitle("假条审批"); apprDlg.resize(600, 400);
+    QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
+    QTableWidget* table = new QTableWidget(&apprDlg);
     table->setColumnCount(6);
-    table->setHorizontalHeaderLabels({ "申请人", "类型", "开始时间", "事由", "状态", "操作" });
+    table->setHorizontalHeaderLabels({ "申请人", "类型", "开始时间", "理由", "状态", "操作" });
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 
-    QString sqlSelect = QString("SELECT id, applicant, leave_type, start_time, reason FROM leave_requests WHERE approver='%1' AND status='待审批'").arg(m_loginName);
-    QSqlQuery query(sqlSelect);
-    while (query.next()) {
-        int row = table->rowCount(); table->insertRow(row);
-        int reqId = query.value(0).toInt();
-        QString applicant = query.value(1).toString();
-        QString lType = query.value(2).toString();
-        QString sTime = query.value(3).toString();
+    QJsonObject req; req["type"] = "query_pending_leaves"; req["approver"] = m_loginName;
+    QJsonObject res = requestDataFromServer(req);
+    if (res["status"].toString() == "success") {
+        QJsonArray arr = res["data"].toArray();
+        for (int i = 0; i < arr.size(); ++i) {
+            QJsonObject rowObj = arr[i].toObject();
+            int row = table->rowCount(); table->insertRow(row);
+            int reqId = rowObj["id"].toInt(); QString applicant = rowObj["applicant"].toString();
+            QString sTime = rowObj["start"].toString(); QString eTime = rowObj["end"].toString();
+            QString lType = rowObj["type"].toString();
 
-        table->setItem(row, 0, new QTableWidgetItem(applicant));
-        table->setItem(row, 1, new QTableWidgetItem(lType));
-        table->setItem(row, 2, new QTableWidgetItem(sTime));
-        table->setItem(row, 3, new QTableWidgetItem(query.value(4).toString()));
-        table->setItem(row, 4, new QTableWidgetItem("🔴 待处理"));
+            table->setItem(row, 0, new QTableWidgetItem(applicant));
+            table->setItem(row, 1, new QTableWidgetItem(lType));
+            table->setItem(row, 2, new QTableWidgetItem(sTime));
+            table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
+            table->setItem(row, 4, new QTableWidgetItem("待审批"));
+            QPushButton* btnPass = new QPushButton("批准");
+            btnPass->setStyleSheet("background-color: #67C23A; color: white;");
+            table->setCellWidget(row, 5, btnPass);
 
-        QPushButton* btnPass = new QPushButton("✅ 批准并记录考勤");
-        btnPass->setStyleSheet("color: white; background-color: #67C23A;");
-        table->setCellWidget(row, 5, btnPass);
+            connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {
+                QJsonObject passReq; passReq["type"] = "leave_approve";
+                passReq["reqId"] = reqId; passReq["applicant"] = applicant;
+                passReq["start_time"] = sTime; passReq["end_time"] = eTime; passReq["leave_type"] = lType;
+                sendCommandToServer(passReq);
+                apprDlg.accept();
+                });
+        }
+    }
+    layout->addWidget(table); apprDlg.exec();
+}
+// 🚀 向服务器拉取待审批的申诉列表
+void PunchModule::onAppealApproveClicked() {
+    QWidget* parentWidget = (QWidget*)this->parent();
+    QDialog apprDlg(parentWidget);
+    apprDlg.setWindowTitle("申诉审批中心");
+    apprDlg.resize(750, 400);
+    QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
+    QTableWidget* table = new QTableWidget(&apprDlg);
+    table->setColumnCount(6);
+    table->setHorizontalHeaderLabels({ "申请人", "异常时间/日期", "申诉类型", "理由", "状态", "操作" });
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 
-        connect(btnPass, &QPushButton::clicked, [=]() {
-            QString updateQ1 = QString("UPDATE leave_requests SET status='已批准' WHERE id=%1").arg(reqId);
-            QString updateQ2 = QString("INSERT INTO attendance_records (name, punch_time, status) VALUES ('%1', '%2', '📝 %3')").arg(applicant, sTime, lType);
-            QSqlQuery updateQ;
-            updateQ.exec(updateQ1);
-            updateQ.exec(updateQ2);
+    QJsonObject req;
+    req["type"] = "query_pending_appeals";
+    req["approver"] = m_loginName;
+    QJsonObject res = requestDataFromServer(req);
 
-            emit requestSendChat(applicant, QString("✅ 您的【%1】申请已通过！").arg(lType));
-            QMessageBox::information(apprDlg, "成功", "已批准！");
-            apprDlg->accept();
-            });
+    if (res["status"].toString() == "success") {
+        QJsonArray arr = res["data"].toArray();
+        for (int i = 0; i < arr.size(); ++i) {
+            QJsonObject rowObj = arr[i].toObject();
+            int row = table->rowCount(); table->insertRow(row);
+            int reqId = rowObj["id"].toInt();
+            QString applicant = rowObj["applicant"].toString();
+            QString aTime = rowObj["time"].toString();
+            QString aType = rowObj["type"].toString();
+
+            table->setItem(row, 0, new QTableWidgetItem(applicant));
+            table->setItem(row, 1, new QTableWidgetItem(aTime));
+            table->setItem(row, 2, new QTableWidgetItem(aType));
+            table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
+            table->setItem(row, 4, new QTableWidgetItem("待审批"));
+
+            QPushButton* btnPass = new QPushButton("修正记录");
+            btnPass->setStyleSheet("background-color: #409EFF; color: white;");
+            table->setCellWidget(row, 5, btnPass);
+
+            connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {
+                QJsonObject passReq;
+                passReq["type"] = "appeal_approve";
+                passReq["reqId"] = reqId;
+                passReq["applicant"] = applicant;
+                passReq["abnormal_time"] = aTime;
+                passReq["appeal_type"] = aType;
+                sendCommandToServer(passReq);
+
+                QMessageBox::information(&apprDlg, "已处理", "指令已下发，服务器将完美修正记录！");
+                apprDlg.accept();
+                });
+        }
     }
     layout->addWidget(table);
-    apprDlg->exec();
-    apprDlg->deleteLater();
+    apprDlg.exec();
+}
+
+void PunchModule::onTimeUpdate() {
+    if (m_lblCurrentTime) m_lblCurrentTime->setText("当前时间: " + QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+}
+
+void PunchModule::renderFrame(const QImage& img) {
+    if (m_cameraLabel && !img.isNull()) m_cameraLabel->setPixmap(QPixmap::fromImage(img).scaled(m_cameraLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void PunchModule::updateRecognizedName(const QString& name) {
+    m_currentFaceName = name;
 }

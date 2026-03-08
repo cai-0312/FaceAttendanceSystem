@@ -2,27 +2,27 @@
 #include <QObject>
 #include <QWidget>
 #include <QByteArray>
+#include <QLabel> // ★ 新增
+#include <QImage> // ★ 新增
 
 class RegisterModule : public QObject {
     Q_OBJECT
 public:
-    explicit RegisterModule(QWidget* parentWidget);
-
-signals:
-    // 开始注册信号：通知后台 AI 线程启动摄像头并进行特征提取
-    void startRegistration(QString name);
-    // 数据变动信号：通知主界面或其他模块数据库中的人脸特征已更新
-    void dataChanged();
+    // ★ 核心修改：在构造函数中加入 QLabel* cameraLabel
+    RegisterModule(QLabel* cameraLabel, QWidget* parentWidget = nullptr);
+    void triggerRegistration();
 
 public slots:
-    // 触发注册逻辑：处理按钮点击事件，执行身份核验并弹出录入确认表单
-    void triggerRegistration();
-    // 特征就绪回调：接收由 AI 线程提取完成的二进制人脸特征数据并写入数据库
     void onFeatureReady(QString name, QByteArray featureBytes);
-    // 注册失败回调：接收并处理 AI 线程返回的录入异常错误信息
     void onRegisterFailed(QString errorMsg);
+    // ★ 核心修改：新增接收每一帧画面的槽函数
+    void renderFrame(const QImage& img);
+
+signals:
+    void startRegistration(QString name);
+    void dataChanged();
 
 private:
-    // 父窗口指针，用于作为各类消息提示框的父对象
+    QLabel* m_cameraLabel; // ★ 新增：保存录入界面的摄像头 Label 指针
     QWidget* m_parentWidget;
 };

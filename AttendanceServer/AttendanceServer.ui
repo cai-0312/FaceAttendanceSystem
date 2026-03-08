@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>850</width>
-    <height>600</height>
+    <width>900</width>
+    <height>650</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -85,11 +85,11 @@
    <item>
     <widget class="QTabWidget" name="tabWidget_Main">
      <property name="currentIndex">
-      <number>0</number>
+      <number>2</number>
      </property>
      <widget class="QWidget" name="tab_Network">
       <attribute name="title">
-       <string>网络监控控制台</string>
+       <string>🌐 网络监控控制台</string>
       </attribute>
       <layout class="QHBoxLayout" name="horizontalLayout_Tab1">
        <item>
@@ -114,29 +114,6 @@
            <property name="selectionBehavior">
             <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
            </property>
-           <attribute name="horizontalHeaderStretchLastSection">
-            <bool>true</bool>
-           </attribute>
-           <column>
-            <property name="text">
-             <string>账号/姓名</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>工作部门</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>IP地址</string>
-            </property>
-           </column>
-           <column>
-            <property name="text">
-             <string>登录时间</string>
-            </property>
-           </column>
           </widget>
          </item>
         </layout>
@@ -168,7 +145,7 @@
      </widget>
      <widget class="QWidget" name="tab_Data">
       <attribute name="title">
-       <string>全局数据中心</string>
+       <string>📊 全局数据中心</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_Tab2">
        <item>
@@ -207,6 +184,30 @@
          <property name="editTriggers">
           <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
          </property>
+         <property name="selectionBehavior">
+          <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_Permissions">
+      <attribute name="title">
+       <string>🛡️ 权限控制中心</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_Tab3">
+       <item>
+        <widget class="QLabel" name="label_PermHint">
+         <property name="styleSheet">
+          <string>color: #E6A23C; font-weight: bold;</string>
+         </property>
+         <property name="text">
+          <string>提示：双击“系统权限角色”列可直接修改员工的系统级别权限（普通登录 / 管理员登录 / 超级管理员）并实时生效。</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTableView" name="tableView_Permissions">
          <property name="selectionBehavior">
           <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
          </property>

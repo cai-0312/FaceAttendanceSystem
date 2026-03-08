@@ -42,7 +42,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
     <QtInstall>Qt 6.8.1 MSVC2022</QtInstall>
-    <QtModules>core;gui;widgets</QtModules>
+    <QtModules>core;gui;network;widgets;concurrent;sql;charts</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
   </PropertyGroup>
   <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') or !Exists('$(QtMsBuild)\qt.props')">
@@ -60,17 +60,26 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <IncludePath>D:\opencv_build\build\install\include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\opencv_build\build\install\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <IncludePath>D:\opencv_build\build\install\include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\opencv_build\build\install\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>D:\Opencv4\opencv\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>Default</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>D:\Opencv4\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>D:\Opencv4\opencv\build\x64\vc16\lib\opencv_world4120d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opencv_core480.lib;opencv_imgproc480.lib;opencv_highgui480.lib;opencv_imgcodecs480.lib;opencv_videoio480.lib;opencv_video480.lib;opencv_dnn480.lib;opencv_calib3d480.lib;opencv_features2d480.lib;opencv_flann480.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Link>
+      <AdditionalDependencies>opencv_core480.lib;opencv_imgproc480.lib;opencv_highgui480.lib;opencv_imgcodecs480.lib;opencv_videoio480.lib;opencv_video480.lib;opencv_dnn480.lib;opencv_calib3d480.lib;opencv_features2d480.lib;opencv_flann480.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">
@@ -107,6 +116,7 @@
     <ClCompile Include="FaceProcessThread.cpp" />
     <ClCompile Include="HomeModule.cpp" />
     <ClCompile Include="MainWidget.cpp" />
+    <ClCompile Include="NoticePopup.cpp" />
     <ClCompile Include="ProfileModule.cpp" />
     <ClCompile Include="PunchModule.cpp" />
     <ClCompile Include="RecordModule.cpp" />
@@ -133,6 +143,7 @@
     <QtMoc Include="ProfileModule.h" />
     <QtMoc Include="AIAssistantModule.h" />
     <QtMoc Include="HomeModule.h" />
+    <QtMoc Include="NoticePopup.h" />
     <ClInclude Include="RetinaFaceDecoder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

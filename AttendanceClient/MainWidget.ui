@@ -11,7 +11,7 @@
 			</rect>
 		</property>
 		<property name="windowTitle">
-			<string>人脸识别考勤系统</string>
+			<string>人脸识别签到考勤系统</string>
 		</property>
 		<property name="styleSheet">
 			<string notr="true">QWidget#MainWidget { background-color: #F5F6F7; }</string>
@@ -521,6 +521,9 @@
 							<property name="margin" stdset="0">
 								<number>20</number>
 							</property>
+							<property name="spacing">
+								<number>20</number>
+							</property>
 							<item>
 								<widget class="QLabel" name="label_Camera_Register">
 									<property name="sizePolicy">
@@ -544,27 +547,59 @@
 								</widget>
 							</item>
 							<item>
-								<widget class="QPushButton" name="btn_Register">
-									<property name="minimumSize">
-										<size>
-											<width>0</width>
-											<height>45</height>
-										</size>
+								<layout class="QHBoxLayout" name="hL_RegisterControls">
+									<property name="spacing">
+										<number>15</number>
 									</property>
-									<property name="font">
-										<font>
-											<family>Microsoft YaHei</family>
-											<pointsize>12</pointsize>
-											<bold>true</bold>
-										</font>
-									</property>
-									<property name="styleSheet">
-										<string notr="true">QPushButton { background-color: #3370FF; color: #FFF; border-radius: 8px; border: none; } QPushButton:hover { background-color: #4E83FF; }</string>
-									</property>
-									<property name="text">
-										<string>📷 开始拍照录入</string>
-									</property>
-								</widget>
+									<item>
+										<widget class="QLineEdit" name="lineEdit_RegisterName">
+											<property name="minimumSize">
+												<size>
+													<width>0</width>
+													<height>45</height>
+												</size>
+											</property>
+											<property name="font">
+												<font>
+													<family>Microsoft YaHei</family>
+													<pointsize>12</pointsize>
+												</font>
+											</property>
+											<property name="styleSheet">
+												<string notr="true">QLineEdit { border: 2px solid #DEE0E3; border-radius: 8px; padding-left: 15px; color: #1F2329; } QLineEdit:focus { border: 2px solid #3370FF; }</string>
+											</property>
+											<property name="placeholderText">
+												<string>📝 请输入要录入的人员姓名...</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_Register">
+											<property name="minimumSize">
+												<size>
+													<width>200</width>
+													<height>45</height>
+												</size>
+											</property>
+											<property name="font">
+												<font>
+													<family>Microsoft YaHei</family>
+													<pointsize>12</pointsize>
+													<bold>true</bold>
+												</font>
+											</property>
+											<property name="cursor">
+												<cursorShape>PointingHandCursor</cursorShape>
+											</property>
+											<property name="styleSheet">
+												<string notr="true">QPushButton { background-color: #3370FF; color: #FFF; border-radius: 8px; border: none; } QPushButton:hover { background-color: #4E83FF; }</string>
+											</property>
+											<property name="text">
+												<string>📷 开始拍照录入</string>
+											</property>
+										</widget>
+									</item>
+								</layout>
 							</item>
 						</layout>
 					</widget>
@@ -1873,7 +1908,7 @@
 																	<string notr="true">color: #8F959E; font-size: 12px; margin-top: 5px;</string>
 																</property>
 																<property name="text">
-																	<string>📱 微信扫一扫 保存联系人</string>
+																	<string>📱 扫一扫 保存联系人</string>
 																</property>
 																<property name="alignment">
 																	<set>Qt::AlignmentFlag::AlignCenter</set>

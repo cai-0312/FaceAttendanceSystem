@@ -31,6 +31,7 @@ public:
     void connectToServer(const QString& ip, quint16 port, const QString& myName);
     // 从数据库中检索并加载员工列表及部门群聊列表
     void loadContactsFromDatabase();
+    void sendBroadcast(const QString& msg);
 
 public slots:
     // 发送消息槽函数：处理文本、图片或文件的外发逻辑
@@ -39,6 +40,9 @@ public slots:
     void onContactSwitched(int currentRow);
     // 发送系统通知：用于在聊天窗口显示系统级别的提示信息
     void sendSystemMessage(const QString& to, const QString& msg);
+
+signals:
+    void broadcastReceived(QString fromUser, QString msg);
 
 private slots:
     // 网络连接成功的回调处理

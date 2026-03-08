@@ -2,12 +2,37 @@
 #include "ui_AttendanceClient.h"
 #include "MainWidget.h"
 #include <QMessageBox>
-#include <QSqlQuery>
-#include <QSqlError>
 #include <QDebug>
-#include <QSqlDatabase>
 #include <QGraphicsDropShadowEffect> 
 #include <QRegularExpression> 
+#include <QTcpSocket>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QStyledItemDelegate> // 🚀 用于渲染高级下拉框
+
+// 🚀 核心通讯组件：登录和注册必须通过服务器网关进行验证 (逻辑完全未动)
+static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
+    QTcpSocket socket;
+    socket.connectToHost("127.0.0.1", 9999);
+    QJsonObject responseJson;
+    if (socket.waitForConnected(2000)) {
+        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
+        socket.write(block);
+        socket.waitForBytesWritten(1000);
+        if (socket.waitForReadyRead(5000)) {
+            QByteArray responseData;
+            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
+                responseData += socket.readAll();
+                if (responseData.endsWith("\n")) break;
+            }
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isNull()) responseJson = doc.object();
+        }
+        socket.disconnectFromHost();
+    }
+    return responseJson;
+}
 
 AttendanceClient::AttendanceClient(QWidget* parent) :
     QWidget(parent),
@@ -36,11 +61,17 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
     connect(m_pwdAction, &QAction::triggered, this, &AttendanceClient::togglePasswordVisibility);
     ui->lineEdit_pwd->setCursor(Qt::IBeamCursor);
 
-    // 绑定部门下拉框和职位下拉框的联动
+    // 🚀 注入高级渲染代理，保证 UI 文件中的 QAbstractItemView QSS 生效！
+    ui->comboBox_Role->setItemDelegate(new QStyledItemDelegate(this));
+    ui->comboBox_RegGender->setItemDelegate(new QStyledItemDelegate(this));
+    ui->comboBox_RegDept->setItemDelegate(new QStyledItemDelegate(this));
+    ui->comboBox_RegJobTitle->setItemDelegate(new QStyledItemDelegate(this));
+
+    // 绑定部门下拉框和职位下拉框的联动 (逻辑未动)
     connect(ui->comboBox_RegDept, &QComboBox::currentTextChanged, this, [=](const QString& dept) {
         ui->comboBox_RegJobTitle->clear();
-        if (dept == "总裁办") {
-            ui->comboBox_RegJobTitle->addItems({ "总裁", "行政助理", "财务总监" });
+        if (dept == "总经办") {
+            ui->comboBox_RegJobTitle->addItems({ "总经理", "行政助理", "财务总监" });
         }
         else if (dept == "人力资源部") {
             ui->comboBox_RegJobTitle->addItems({ "部门经理", "招聘专员", "员工关系专员", "培训与发展专员" });
@@ -64,17 +95,6 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
 
     // 初始化触发一次联动更新
     emit ui->comboBox_RegDept->currentTextChanged(ui->comboBox_RegDept->currentText());
-
-    if (!QSqlDatabase::contains("qt_sql_default_connection")) {
-        QSqlDatabase db = QSqlDatabase::addDatabase("QODBC");
-        QString dsn = QString("DRIVER={MySQL ODBC 8.0 Unicode Driver};"
-            "SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;"
-            "UID=root;PWD=root;");
-        db.setDatabaseName(dsn);
-        if (!db.open()) {
-            QMessageBox::critical(this, "数据库启动失败", "无法连接到 MySQL！\n" + db.lastError().text());
-        }
-    }
 }
 
 AttendanceClient::~AttendanceClient() {
@@ -112,6 +132,7 @@ void AttendanceClient::on_btn_Min_clicked() { this->showMinimized(); }
 void AttendanceClient::on_btn_GoRegister_clicked() { ui->stackedWidget->setCurrentIndex(1); }
 void AttendanceClient::on_btn_BackLogin_clicked() { ui->stackedWidget->setCurrentIndex(0); }
 
+// 🚀 登录验证通过 TCP 转发给服务器 (逻辑未动)
 void AttendanceClient::on_btn_Login_clicked() {
     QString account = ui->lineEdit_Account->text().trimmed();
     QString pwd = ui->lineEdit_pwd->text().trimmed();
@@ -122,12 +143,16 @@ void AttendanceClient::on_btn_Login_clicked() {
         return;
     }
 
-    QString sql = QString("SELECT name, department FROM users WHERE account = '%1' AND password = '%2' AND role = '%3'")
-        .arg(account, pwd, role);
-    QSqlQuery query(sql);
+    QJsonObject req;
+    req["type"] = "client_login_auth";
+    req["account"] = account;
+    req["pwd"] = pwd;
+    req["role"] = role;
 
-    if (query.next()) {
-        QString realName = query.value(0).toString();
+    QJsonObject res = requestDataFromServer(req);
+
+    if (res["status"].toString() == "success") {
+        QString realName = res["real_name"].toString();
         QMessageBox::information(this, "成功", "登录成功！欢迎 " + role + "：" + realName);
 
         mainWindow = new MainWidget(realName, role);
@@ -135,10 +160,16 @@ void AttendanceClient::on_btn_Login_clicked() {
         this->hide();
     }
     else {
-        QMessageBox::critical(this, "失败", "登录失败：工号、密码或角色错误！");
+        if (res.isEmpty()) {
+            QMessageBox::critical(this, "服务器连接失败", "无法连接到考勤总控服务器！\n请检查管理员是否已启动服务端程序。");
+        }
+        else {
+            QMessageBox::critical(this, "失败", "登录失败：工号、密码或角色错误！");
+        }
     }
 }
 
+// 🚀 注册账号通过 TCP 转发给服务器 (逻辑未动)
 void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     QString account = ui->lineEdit_RegAccount->text().trimmed();
     QString name = ui->lineEdit_RegName->text().trimmed();
@@ -148,20 +179,17 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     QString dept = ui->comboBox_RegDept->currentText();
     QString jobTitle = ui->comboBox_RegJobTitle->currentText();
 
-    // 1. 基础非空校验
     if (account.isEmpty() || name.isEmpty() || pwd.isEmpty()) {
         QMessageBox::warning(this, "提示", "工号、姓名、密码为必填项！");
         return;
     }
 
-    // 2. 账号（工号）中文字符拦截校验
     QRegularExpression reChinese("[\\x{4e00}-\\x{9fa5}]");
     if (reChinese.match(account).hasMatch()) {
         QMessageBox::warning(this, "格式错误", "员工账号（工号）不允许包含中文字符，请使用字母或数字！");
         return;
     }
 
-    // 3. 手机号 11 位纯数字校验
     QRegularExpression rePhone("^\\d{11}$");
     if (!phone.isEmpty() && !rePhone.match(phone).hasMatch()) {
         QMessageBox::warning(this, "格式错误", "手机号码格式不正确，必须为11位纯数字！");
@@ -172,19 +200,25 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
         phone = "未设置";
     }
 
-    // 4. 权限自动分配逻辑：总裁办全员、财务部全员、以及其他部门的“部门经理”或高级管理层自动具有管理员权限
-    QString assignRole = "普通员工";
-    if (dept == "总裁办" || dept == "财务部" || jobTitle.contains("部门经理") || jobTitle == "总裁" || jobTitle == "财务总监") {
-        assignRole = "管理员";
+    QString assignRole = "普通登录";
+    if (dept == "总经办" || dept == "财务部" || jobTitle.contains("部门经理") || jobTitle == "总经理" || jobTitle == "财务总监") {
+        assignRole = "管理员登录";
     }
 
-    // 5. 数据入库（规避驱动绑值问题，使用原生拼接）
-    QString sql = QString("INSERT INTO users (account, password, name, role, department, job_title, phone, gender) "
-        "VALUES ('%1', '%2', '%3', '%4', '%5', '%6', '%7', '%8')")
-        .arg(account, pwd, name, assignRole, dept, jobTitle, phone, gender);
+    QJsonObject req;
+    req["type"] = "client_register_account";
+    req["account"] = account;
+    req["pwd"] = pwd;
+    req["name"] = name;
+    req["role"] = assignRole;
+    req["dept"] = dept;
+    req["job_title"] = jobTitle;
+    req["phone"] = phone;
+    req["gender"] = gender;
 
-    QSqlQuery query;
-    if (query.exec(sql)) {
+    QJsonObject res = requestDataFromServer(req);
+
+    if (res["status"].toString() == "success") {
         QString successMsg = QString("账号注册成功！\n系统已根据您的部门及职务自动为您分配 [%1] 权限。\n已为您跳转至登录页。").arg(assignRole);
         QMessageBox::information(this, "注册成功", successMsg);
 
@@ -195,6 +229,11 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
         ui->stackedWidget->setCurrentIndex(0);
     }
     else {
-        QMessageBox::warning(this, "注册失败", "该工号可能已被占用或数据库错误！\n" + query.lastError().text());
+        if (res.isEmpty()) {
+            QMessageBox::critical(this, "服务器错误", "无法连接到服务端，注册失败！");
+        }
+        else {
+            QMessageBox::warning(this, "注册失败", "该工号可能已被占用或数据库错误！\n" + res["msg"].toString());
+        }
     }
 }
