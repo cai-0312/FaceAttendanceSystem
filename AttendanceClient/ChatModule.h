@@ -53,8 +53,8 @@ private slots:
     void onReadyRead();
     // 表情按钮点击处理
     void onBtnEmojiClicked();
-    // 历史表情记录点击处理
-    void onBtnHistoryClicked();
+    //// 历史表情记录点击处理
+    //void onBtnHistoryClicked();
     // 附件/图片选择按钮处理
     void onBtnFolderClicked();
     // 更多选项菜单处理

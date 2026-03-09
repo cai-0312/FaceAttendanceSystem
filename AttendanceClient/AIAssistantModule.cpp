@@ -24,32 +24,63 @@
 #include <QComboBox>
 #include <QTcpSocket>
 #include <QThread>
+#include <QTimer>
 
-// 🚀 核心通讯工具：保证数据同步完整到达
 static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
     QTcpSocket socket;
     socket.connectToHost("127.0.0.1", 9999);
     QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
+
+    QString reqType = jsonRequest["type"].toString();
+
+    if (!socket.waitForConnected(3000)) {
+        qDebug() << "[AI调试] requestDataFromServer 连接失败! type=" << reqType;
+        return responseJson;
     }
+
+    QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
+    socket.write(block);
+    socket.waitForBytesWritten(2000);
+
+    QByteArray responseData;
+    if (socket.waitForReadyRead(8000)) {
+        responseData += socket.readAll();
+        while (!responseData.endsWith("\n")) {
+            if (!socket.waitForReadyRead(3000)) break;
+            responseData += socket.readAll();
+        }
+        QJsonDocument doc = QJsonDocument::fromJson(responseData);
+        if (!doc.isNull()) {
+            responseJson = doc.object();
+            qDebug() << "[AI调试] requestDataFromServer 成功 type=" << reqType
+                << " 响应大小=" << responseData.size() << "bytes"
+                << " status=" << responseJson["status"].toString();
+        }
+        else {
+            qDebug() << "[AI调试] requestDataFromServer JSON解析失败! type=" << reqType
+                << " 原始数据前200字节=" << responseData.left(200);
+        }
+    }
+    else {
+        qDebug() << "[AI调试] requestDataFromServer 等待响应超时! type=" << reqType
+            << " 已收到字节=" << responseData.size();
+    }
+
+    socket.disconnectFromHost();
     return responseJson;
 }
 
 static void sendCommandToServer(const QJsonObject& json) {
-    requestDataFromServer(json);
+    QTcpSocket* socket = new QTcpSocket();
+    QObject::connect(socket, &QTcpSocket::connected, [socket, json]() {
+        QByteArray block = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
+        socket->write(block);
+        socket->flush();
+        QTimer::singleShot(500, socket, &QTcpSocket::disconnectFromHost);
+        QTimer::singleShot(2000, socket, &QObject::deleteLater);
+        });
+    QObject::connect(socket, &QTcpSocket::errorOccurred, socket, &QObject::deleteLater);
+    socket->connectToHost("127.0.0.1", 9999);
 }
 
 AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineEdit,
@@ -61,7 +92,6 @@ AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineE
     m_networkManager = new QNetworkAccessManager(this);
     connect(m_networkManager, &QNetworkAccessManager::finished, this, &AIAssistantModule::onNetworkReply);
 
-    // 默认初始配置设为 DeepSeek-V3
     m_apiUrl = "https://api.deepseek.com/chat/completions";
     m_apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
     m_modelName = "deepseek-chat";
@@ -139,7 +169,7 @@ void AIAssistantModule::rebuildAdvancedUI() {
     inLay->setSpacing(5);
 
     m_inputTextEdit = new QTextEdit();
-    m_inputTextEdit->setPlaceholderText("发消息或输入“/”选择技能... (按 Enter 发送，Shift+Enter 换行)");
+    m_inputTextEdit->setPlaceholderText("发消息或输入 / 选择技能... (Enter发送, Shift+Enter换行)");
     m_inputTextEdit->setStyleSheet("border: none; background: transparent; font-size: 14px;");
     m_inputTextEdit->installEventFilter(this);
     inLay->addWidget(m_inputTextEdit);
@@ -357,7 +387,6 @@ void AIAssistantModule::onSendClicked() {
     connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError>& errors) { reply->ignoreSslErrors(errors); });
 }
 
-// 🚀 核心改造 1：智能意图（今日考勤查询）通过 TCP 发给服务端查询
 bool AIAssistantModule::handleLocalIntent(const QString& inputText) {
     if (inputText.contains("今日考勤") || inputText.contains("今天打卡")) {
         QJsonObject req;
@@ -411,15 +440,19 @@ void AIAssistantModule::onNetworkReply(QNetworkReply* reply) {
             }
         }
 
-        m_sessionList->blockSignals(true);
-        loadSessionsFromDB();
-        m_sessionList->blockSignals(false);
+        // 🔧 延迟刷新列表
+        QTimer::singleShot(600, this, [this]() {
+            m_sessionList->blockSignals(true);
+            loadSessionsFromDB();
+            m_sessionList->blockSignals(false);
+            });
     }
     else {
         appendMessage("ai", "❌ 网络异常或接口拦截: " + reply->errorString(), false);
     }
     reply->deleteLater();
 }
+
 
 void AIAssistantModule::sendAuditFileToServer(const QString& sessionId, const QString& fileName, const QByteArray& fileData) {
     QJsonObject json;
@@ -441,14 +474,13 @@ void AIAssistantModule::sendAuditToServer(const QString& sessionId, const QStrin
     sendCommandToServer(json);
 }
 
-// 🚀 核心改造 2：聊天记录落库必须走 TCP
 void AIAssistantModule::saveMessageToDB(const QString& sessionId, const QString& role, const QString& content) {
     QJsonObject req;
     req["type"] = "ai_save_message";
     req["session_id"] = sessionId;
     req["role"] = role;
     req["content"] = content;
-    req["name"] = m_userName; // 附加用户名用于审计
+    req["name"] = m_userName;
     sendCommandToServer(req);
 }
 
@@ -456,8 +488,15 @@ void AIAssistantModule::appendMessage(const QString& role, const QString& msg, b
     if (saveToDb) saveMessageToDB(m_currentSessionId, role, msg);
 
     QString timeStr = QDateTime::currentDateTime().toString("HH:mm");
-    QString formattedMsg = (role == "ai") ? parseMarkdown(msg) : msg;
-    if (role == "user") formattedMsg.replace("\n", "<br>");
+    QString formattedMsg;
+
+    if (role == "user") {
+        formattedMsg = msg.toHtmlEscaped();
+        formattedMsg.replace("\n", "<br>");
+    }
+    else {
+        formattedMsg = parseMarkdown(msg);
+    }
 
     QString bubble;
     if (role == "user") {
@@ -493,7 +532,6 @@ void AIAssistantModule::toggleSidebar() {
     m_toggleSidebarBtn->setText(m_leftWidget->isVisible() ? "☰ 收起列表" : "☰ 展开列表");
 }
 
-// 🚀 核心改造 3：新建对话走 TCP
 void AIAssistantModule::onNewSessionClicked() {
     m_currentSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString title = "新对话 " + QDateTime::currentDateTime().toString("MM-dd HH:mm");
@@ -505,13 +543,13 @@ void AIAssistantModule::onNewSessionClicked() {
     req["title"] = title;
     sendCommandToServer(req);
 
-    m_sessionList->blockSignals(true);
-    loadSessionsFromDB();
-    m_sessionList->blockSignals(false);
-    initializeContext();
+    QTimer::singleShot(300, this, [this]() {
+        m_sessionList->blockSignals(true);
+        loadSessionsFromDB();
+        m_sessionList->blockSignals(false);
+        initializeContext();
+        });
 }
-
-// 🚀 核心改造 4：加载会话列表走 TCP
 void AIAssistantModule::loadSessionsFromDB() {
     m_sessionList->clear();
     QJsonObject req;
@@ -535,16 +573,21 @@ void AIAssistantModule::loadSessionsFromDB() {
         }
     }
 
+    bool shouldLoadHistory = !m_sessionList->signalsBlocked();
+
     if (targetRow >= 0) {
         m_sessionList->setCurrentRow(targetRow);
+        if (shouldLoadHistory) loadChatHistoryFromDB(m_currentSessionId);
     }
     else if (m_sessionList->count() > 0) {
         m_sessionList->setCurrentRow(0);
-        m_currentSessionId = m_sessionList->item(0)->data(Qt::UserRole).toString();
-        loadChatHistoryFromDB(m_currentSessionId);
+        if (shouldLoadHistory) {
+            m_currentSessionId = m_sessionList->item(0)->data(Qt::UserRole).toString();
+            loadChatHistoryFromDB(m_currentSessionId);
+        }
     }
     else {
-        onNewSessionClicked();
+        if (shouldLoadHistory) onNewSessionClicked();
     }
 }
 
@@ -553,11 +596,10 @@ void AIAssistantModule::onSessionSelected(QListWidgetItem* item) {
     loadChatHistoryFromDB(m_currentSessionId);
 }
 
-// 🚀 核心改造 5：重命名与隐藏会话走 TCP
 void AIAssistantModule::onSessionContextMenu(const QPoint& pos) {
     QListWidgetItem* item = m_sessionList->itemAt(pos);
     if (!item) return;
-    QMenu menu; QAction* actRename = menu.addAction("✏️ 重命名对话"); QAction* actDelete = menu.addAction("🗑️ 隐藏/删除对话");
+    QMenu menu; QAction* actRename = menu.addAction("✏️ 重命名对话"); QAction* actDelete = menu.addAction("🗑️ 删除对话");
     QAction* selected = menu.exec(m_sessionList->mapToGlobal(pos));
     QString sid = item->data(Qt::UserRole).toString();
 
@@ -567,19 +609,22 @@ void AIAssistantModule::onSessionContextMenu(const QPoint& pos) {
         if (ok && !newName.isEmpty()) {
             QJsonObject req; req["type"] = "rename_ai_session"; req["session_id"] = sid; req["title"] = newName;
             sendCommandToServer(req);
-            m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+            QTimer::singleShot(200, this, [this]() {
+                m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+                });
         }
     }
     else if (selected == actDelete) {
         if (QMessageBox::question(nullptr, "确认隐藏", "确定要在列表中隐藏该对话吗？") == QMessageBox::Yes) {
             QJsonObject req; req["type"] = "delete_ai_session"; req["session_id"] = sid;
             sendCommandToServer(req);
-            m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+            QTimer::singleShot(200, this, [this]() {
+                m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+                });
         }
     }
 }
 
-// 🚀 核心改造 6：搜索历史记录走 TCP
 void AIAssistantModule::onSearchHistory() {
     QString keyword = m_searchBox->text().trimmed();
     if (keyword.isEmpty()) { loadSessionsFromDB(); return; }
@@ -611,7 +656,11 @@ void AIAssistantModule::initializeContext() {
     m_textBrowser->setHtml(m_currentHtmlDisplay);
 }
 
-// 🚀 核心改造 7：加载会话详情走 TCP
+// ============================================================================
+// 🔧 [修复4] loadChatHistoryFromDB - 加入重试机制，解决偶发查询返回空的问题
+//    原因：服务端 QtConcurrent + ODBC连接创建 + QueuedConnection写回
+//    可能导致客户端 waitForReadyRead 超时前数据还没到达
+// ============================================================================
 void AIAssistantModule::loadChatHistoryFromDB(const QString& sessionId) {
     initializeContext();
     QJsonObject req;
@@ -625,14 +674,17 @@ void AIAssistantModule::loadChatHistoryFromDB(const QString& sessionId) {
             QJsonObject o = arr[i].toObject();
             QString role = o["role"].toString();
             QString content = o["content"].toString();
-            QJsonObject msg; msg["role"] = role; msg["content"] = content; m_messageHistory.append(msg);
+
+            QString apiRole = (role == "ai") ? "assistant" : role;
+            QJsonObject msg; msg["role"] = apiRole; msg["content"] = content; m_messageHistory.append(msg);
+
             appendMessage(role, content, false);
         }
     }
 }
 
 QString AIAssistantModule::parseMarkdown(const QString& md) {
-    QString html = md;
+    QString html = md.toHtmlEscaped();
     html.replace(QRegularExpression("\\*\\*(.*?)\\*\\*"), "<b>\\1</b>");
     html.replace(QRegularExpression("`([^`]+)`"), "<code style='background-color:#E8F3FF; color:#165DFF; padding:2px 6px; border-radius:4px;'>\\1</code>");
     html.replace(QRegularExpression("### (.*)"), "<h3 style='margin:10px 0 5px 0; color:#1D2129;'>\\1</h3>");

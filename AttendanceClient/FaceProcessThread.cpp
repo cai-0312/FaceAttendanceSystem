@@ -2,6 +2,7 @@
 #include <QPainter>
 #include <QDebug>
 #include <QDateTime>
+#include <QThread>
 
 FaceProcessThread::FaceProcessThread(QObject* parent) : QThread(parent), isRunning(false), currentPage(0) {
     QString detectModel = "D:/models/retinaface_static.onnx";
@@ -49,25 +50,54 @@ void FaceProcessThread::requestRegister(QString name) {
 void FaceProcessThread::run() {
     bool cameraOpened = false;
 
+    // 尝试遍历 0 到 9 号的所有摄像头资源
     for (int camId = 0; camId < 10; ++camId) {
-        if (capture.open(camId, cv::CAP_DSHOW)) {
+        // 🚀 终极修复 1：抛弃老旧且容易死锁的 DSHOW，改用现代的 MSMF 后端！
+        // Microsoft Media Foundation 对多进程和 USB 拓展坞的并发支持极其稳定
+        if (capture.open(camId, cv::CAP_MSMF)) {
+
+            // 依然保持 MJPEG 压缩，拯救拓展坞的带宽
+            capture.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
             capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
             capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
             capture.set(cv::CAP_PROP_FPS, 30);
 
-            bool gotFrame = false;
+            bool gotValidFrame = false;
             cv::Mat testFrame;
-            for (int i = 0; i < 15; ++i) {
+
+            // 🚀 终极修复 2：增加“黑屏假死”雷达检测！
+            // 读 30 帧（约1.5秒的热机时间），不仅要求矩阵非空，还要求不能是纯黑！
+            for (int i = 0; i < 30; ++i) {
                 capture.read(testFrame);
-                if (!testFrame.empty()) { gotFrame = true; break; }
+                if (!testFrame.empty()) {
+                    // 计算画面的平均亮度 (BGR三个通道)
+                    cv::Scalar meanVal = cv::mean(testFrame);
+                    // 纯黑画面的亮度接近 0，只要有任何光线或噪点，均值都会大于 1.0
+                    if (meanVal[0] > 1.0 || meanVal[1] > 1.0 || meanVal[2] > 1.0) {
+                        gotValidFrame = true; // 画面有真实内容，抢占成功！
+                        break;
+                    }
+                }
                 QThread::msleep(50);
             }
-            if (gotFrame) { cameraOpened = true; break; }
-            else { capture.release(); }
+
+            if (gotValidFrame) {
+                cameraOpened = true;
+                qDebug() << "🚀 客户端成功独占摄像头 ID:" << camId << " (画面正常)";
+                break; // 当前客户端成功抢到一个真正有画面的摄像头，退出遍历
+            }
+            else {
+                // 💡 极其重要：如果是黑屏或空帧，必须无情释放它！让程序去尝试下一个 ID！
+                qDebug() << "⚠️ 摄像头 ID:" << camId << " 黑屏或被占用，立即释放并尝试下一个...";
+                capture.release();
+            }
         }
     }
 
-    if (!cameraOpened) return;
+    if (!cameraOpened) {
+        qDebug() << "❌ 致命错误：所有摄像头均被占用或带宽不足，打开失败！";
+        return;
+    }
 
     isRunning = true;
     qint64 lastDetectTime = 0;
@@ -78,7 +108,12 @@ void FaceProcessThread::run() {
     while (isRunning) {
         cv::Mat frame;
         capture >> frame;
-        if (frame.empty()) continue;
+
+        // 🚀 修复 3：如果遇到瞬间的网络或驱动丢帧，不要死循环空转 CPU，给它喘息时间
+        if (frame.empty()) {
+            QThread::msleep(10);
+            continue;
+        }
 
         int page;
         QString regName;
@@ -104,7 +139,7 @@ void FaceProcessThread::run() {
         // =====================================
         if (!regName.isEmpty() && faceEngine && !arcfaceNet.empty()) {
             std::vector<FaceDetectInfo> faces = faceEngine->detect(frame);
-            if (faces.size() == 1) { // 必须稳定捕捉到一张脸
+            if (faces.size() == 1) {
                 float ref_pts[5][2] = { {38.2946f, 51.6963f}, {73.5318f, 51.5014f}, {56.0252f, 71.7366f}, {41.5493f, 92.3655f}, {70.7299f, 92.2041f} };
                 std::vector<cv::Point2f> src_pts, dst_pts;
                 for (int i = 0; i < 5; ++i) { src_pts.push_back(faces[0].pts[i]); dst_pts.push_back(cv::Point2f(ref_pts[i][0], ref_pts[i][1])); }
@@ -116,7 +151,6 @@ void FaceProcessThread::run() {
                 arcfaceNet.setInput(blob);
                 cv::Mat feature = arcfaceNet.forward();
 
-                // 🚀 核心物理修复：压平多维矩阵，并使用深拷贝保证内存绝对连续！
                 feature = feature.reshape(1, 1).clone();
                 cv::normalize(feature, feature, 1.0, 0.0, cv::NORM_L2);
 
@@ -156,38 +190,32 @@ void FaceProcessThread::run() {
                         arcfaceNet.setInput(blob);
                         cv::Mat currentFeature = arcfaceNet.forward();
 
-                        // 🚀 核心物理修复：压平比对矩阵！
                         currentFeature = currentFeature.reshape(1, 1).clone();
                         cv::normalize(currentFeature, currentFeature, 1.0, 0.0, cv::NORM_L2);
 
                         QString bestName = "未知访客";
                         double maxSim = 0.0;
 
-                        // 遍历库中所有已注册的人脸特征
                         for (auto it = usersCopy.begin(); it != usersCopy.end(); ++it) {
                             double sim = currentFeature.dot(it->second);
                             if (sim > maxSim) {
                                 maxSim = sim;
-                                if (sim > 0.40) bestName = it->first; // 相似度阈值调整为 0.40 增加宽容度
+                                if (sim > 0.40) bestName = it->first;
                             }
                         }
 
-                        // 🎯 核心防伪与状态判定
                         QString displayText;
                         if (usersCopy.empty()) {
-                            displayText = "特征库为空"; // 如果内存没读到库，直接告诉你！
+                            displayText = "特征库为空";
                         }
                         else if (bestName == "未知访客") {
-                            // 没找到人，直接把最大相似度打印在屏幕上！
                             displayText = QString("未知访客").arg(maxSim, 0, 'f', 2);
                         }
                         else if (bestName != m_currentUser) {
-                            // 查到脸了，但是和当前登录的账号不匹配
                             displayText = QString("非本人").arg(bestName);
-                            bestName = "非本人"; // 篡改名字，阻断写入
+                            bestName = "非本人";
                         }
                         else {
-                            // 是本人！
                             displayText = bestName;
                             currentRecognizedNames.append(bestName);
                             QDateTime currentTime = QDateTime::currentDateTime();
@@ -218,7 +246,6 @@ void FaceProcessThread::run() {
         if (page == 0) {
             painter.setFont(QFont("Microsoft YaHei", 18, QFont::Bold));
             for (const auto& res : cachedResults) {
-                // 🎨 视觉优化：未知访客、非本人、空库 一律画红框！本人画绿框！
                 if (res.name.contains("未知访客") || res.name.contains("非本人") || res.name.contains("特征库为空")) {
                     painter.setPen(QPen(Qt::red, 3));
                 }
@@ -236,7 +263,7 @@ void FaceProcessThread::run() {
         painter.end();
 
         emit frameReady(finalImg, currentRecognizedNames);
-        QThread::msleep(33);
+        QThread::msleep(33); // 锁定约 30 FPS 刷新率
     }
     capture.release();
 }

@@ -54,7 +54,7 @@ private:
     void loadSessionsFromDB();
     void loadChatHistoryFromDB(const QString& sessionId);
     void saveMessageToDB(const QString& sessionId, const QString& role, const QString& content);
-
+    void saveMessageToDBSync(const QString& sessionId, const QString& role, const QString& content);
     // 🚀 服务端探针
     void sendAuditToServer(const QString& sessionId, const QString& role, const QString& content);
     void sendAuditFileToServer(const QString& sessionId, const QString& fileName, const QByteArray& fileData); // 🚀 新增：拦截原文件探针

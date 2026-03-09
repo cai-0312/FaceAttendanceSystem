@@ -20,8 +20,14 @@
 #include <QJsonArray>
 #include <QCoreApplication> 
 #include <QTcpSocket>
+#include <QUuid>
+#include <QSettings> 
+#include <QSplitter> 
+#include <QMenu>
+#include <QClipboard>
+#include <QApplication>
 
-// 🚀 核心通讯组件：通过短连接获取联系人列表和用户资料
+// 🚀 核心通讯组件：通过短连接获取联系人列表和历史消息
 static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
     QTcpSocket socket;
     socket.connectToHost("127.0.0.1", 9999);
@@ -32,7 +38,7 @@ static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
         socket.waitForBytesWritten(1000);
         if (socket.waitForReadyRead(5000)) {
             QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
+            while (socket.waitForReadyRead(100) || socket.bytesAvailable() > 0) {
                 responseData += socket.readAll();
                 if (responseData.endsWith("\n")) break;
             }
@@ -56,12 +62,86 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
 {
     m_tcpSocket = new QTcpSocket(this);
 
+    // 允许文本选择和链接点击
     m_textBrowser->setOpenLinks(false);
     m_textBrowser->setOpenExternalLinks(false);
+    m_textBrowser->setTextInteractionFlags(Qt::TextBrowserInteraction | Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
 
-    connect(m_textBrowser, &QTextBrowser::anchorClicked, this, [](const QUrl& url) {
-        QDesktopServices::openUrl(url);
+    // 🚀 核心拦截器：处理文件打开 与 单条记录删除的链接点击
+    connect(m_textBrowser, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
+        QString urlStr = url.toString();
+        if (urlStr.startsWith("del:")) {
+            QString hash = urlStr.mid(4);
+            int ret = QMessageBox::question(nullptr, "删除确认", "确定要删除这条记录吗？", QMessageBox::Yes | QMessageBox::No);
+            if (ret == QMessageBox::Yes) {
+                QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
+                QStringList hidden = settings.value("HiddenMessages").toStringList();
+                if (!hidden.contains(hash)) {
+                    hidden.append(hash);
+                    settings.setValue("HiddenMessages", hidden);
+                }
+                // 瞬间重绘画布，隐藏该记录
+                int row = m_contactsList->currentRow();
+                if (row >= 0) onContactSwitched(row);
+            }
+        }
+        else {
+            QDesktopServices::openUrl(url); // 打开附件或原图
+        }
         });
+
+    // ==============================================================================
+    // 🚀 高级右键菜单：支持“复制”、“单条消息删除”
+    // ==============================================================================
+    m_textBrowser->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_textBrowser, &QTextBrowser::customContextMenuRequested, this, [this](const QPoint& pos) {
+        if (m_currentTarget.isEmpty()) return;
+
+        QMenu menu;
+        menu.setStyleSheet(
+            "QMenu { background-color: #FFFFFF; border: 1px solid #DCDFE6; border-radius: 6px; padding: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }"
+            "QMenu::item { padding: 8px 25px 8px 15px; font-size: 14px; color: #303133; border-radius: 4px; margin: 2px 4px; }"
+            "QMenu::item:selected { background-color: #165DFF; color: white; font-weight: bold; }"
+            "QMenu::item:disabled { color: #C0C4CC; background-color: transparent; }"
+            "QMenu::separator { height: 1px; background: #EBEEF5; margin: 4px 8px; }"
+        );
+
+        QAction* actCopy = menu.addAction("📄 复制选中文本");
+        actCopy->setEnabled(m_textBrowser->textCursor().hasSelection());
+        connect(actCopy, &QAction::triggered, m_textBrowser, &QTextBrowser::copy);
+
+        QString anchor = m_textBrowser->anchorAt(pos);
+        if (!anchor.isEmpty() && !anchor.startsWith("del:")) {
+            QAction* actCopyPath = menu.addAction("📁 复制附件路径");
+            connect(actCopyPath, &QAction::triggered, [anchor]() {
+                QApplication::clipboard()->setText(QUrl(anchor).toLocalFile());
+                });
+        }
+
+        // 如果右键正好点击在了消息自带的 [删除] 锚点区域，提供快捷删除菜单
+        if (anchor.startsWith("del:")) {
+            menu.addSeparator();
+            QAction* actDelMsg = menu.addAction("🗑️ 删除该条记录 (仅本地)");
+            connect(actDelMsg, &QAction::triggered, [this, anchor]() {
+                QString hash = anchor.mid(4);
+                QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
+                QStringList hidden = settings.value("HiddenMessages").toStringList();
+                if (!hidden.contains(hash)) {
+                    hidden.append(hash);
+                    settings.setValue("HiddenMessages", hidden);
+                }
+                int row = m_contactsList->currentRow();
+                if (row >= 0) onContactSwitched(row);
+                });
+        }
+
+        menu.addSeparator();
+        QAction* actSelectAll = menu.addAction("🔳 全选所有内容");
+        connect(actSelectAll, &QAction::triggered, m_textBrowser, &QTextBrowser::selectAll);
+
+        menu.exec(m_textBrowser->mapToGlobal(pos));
+        });
+    // ==============================================================================
 
     connect(m_tcpSocket, &QTcpSocket::connected, this, &ChatModule::onConnected);
     connect(m_tcpSocket, &QTcpSocket::disconnected, this, &ChatModule::onDisconnected);
@@ -71,10 +151,59 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
 
     if (m_btnEmoji) connect(m_btnEmoji, &QPushButton::clicked, this, &ChatModule::onBtnEmojiClicked);
     if (m_btnFolder) connect(m_btnFolder, &QPushButton::clicked, this, &ChatModule::onBtnFolderClicked);
-    if (m_btnHistory) connect(m_btnHistory, &QPushButton::clicked, this, &ChatModule::onBtnHistoryClicked);
+
+    // 🚀 彻底删除原先的清屏按钮逻辑及UI元素
+    if (m_btnHistory) {
+        m_btnHistory->hide();
+        m_btnHistory->deleteLater();
+        m_btnHistory = nullptr;
+    }
+
     if (m_btnMoreOpt) connect(m_btnMoreOpt, &QPushButton::clicked, this, &ChatModule::onBtnMoreOptClicked);
 
     m_targetLabel->setText("请在左侧选择联系人开始聊天");
+
+    if (m_searchEdit) {
+        m_searchEdit->setPlaceholderText("🔍 搜索联系人...");
+        connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString& keyword) {
+            QString kw = keyword.trimmed().toLower();
+            for (int i = 0; i < m_contactsList->count(); ++i) {
+                QListWidgetItem* item = m_contactsList->item(i);
+                if (kw.isEmpty()) {
+                    item->setHidden(false);
+                }
+                else {
+                    bool match = item->text().toLower().contains(kw);
+                    item->setHidden(!match);
+                }
+            }
+            });
+    }
+
+    // 🚀 让聊天展示区与输入区能够自由上下拉伸调整大小
+    QWidget* rightPanel = m_textBrowser->parentWidget();
+    if (rightPanel) {
+        QLayout* oldLayout = rightPanel->layout();
+        if (oldLayout && oldLayout->inherits("QVBoxLayout")) {
+            QVBoxLayout* vLayout = qobject_cast<QVBoxLayout*>(oldLayout);
+            if (vLayout) {
+                QSplitter* vSplitter = new QSplitter(Qt::Vertical, rightPanel);
+                vSplitter->addWidget(m_textBrowser);
+                QWidget* inputContainer = m_lineEdit->parentWidget();
+                if (inputContainer && inputContainer != rightPanel) {
+                    vSplitter->addWidget(inputContainer);
+                }
+                else {
+                    vSplitter->addWidget(m_lineEdit);
+                }
+                vSplitter->setStretchFactor(0, 8);
+                vSplitter->setStretchFactor(1, 2);
+                vLayout->insertWidget(vLayout->indexOf(m_textBrowser), vSplitter);
+                vSplitter->setStyleSheet("QSplitter::handle { background-color: #E5E6EB; height: 3px; } "
+                    "QSplitter::handle:hover { background-color: #165DFF; }");
+            }
+        }
+    }
 }
 
 void ChatModule::connectToServer(const QString& ip, quint16 port, const QString& myName) {
@@ -83,7 +212,6 @@ void ChatModule::connectToServer(const QString& ip, quint16 port, const QString&
     m_tcpSocket->connectToHost(ip, port);
 }
 
-// 🚀 核心改造 1：向服务器拉取联系人列表
 void ChatModule::loadContactsFromDatabase() {
     m_contactsList->clear();
 
@@ -117,7 +245,7 @@ void ChatModule::loadContactsFromDatabase() {
         QString dept = u["department"].toString();
         QString role = u["role"].toString();
         QString formattedId = QString("%1").arg(u["id"].toInt(), 3, 10, QChar('0'));
-        QString icon = (role == "管理员") ? "👨‍💼" : "👨‍💻";
+        QString icon = (role.contains("管理员")) ? "👨‍💼" : "👨‍💻";
 
         QListWidgetItem* item = new QListWidgetItem(QString("%1 %2 [%3] (%4)").arg(icon, name, formattedId, dept));
         item->setData(Qt::UserRole, name);
@@ -147,7 +275,103 @@ void ChatModule::onContactSwitched(int currentRow) {
             m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
         }
     }
-    m_textBrowser->setHtml(m_chatHistories.value(m_currentTarget, ""));
+
+    QJsonObject histReq;
+    histReq["type"] = "query_chat_history";
+    histReq["me"] = m_myName;
+    histReq["target"] = m_currentTarget;
+    histReq["is_group"] = m_isCurrentGroup;
+    QJsonObject histRes = requestDataFromServer(histReq);
+
+    m_chatHistories[m_currentTarget] = "";
+
+    // 获取隐形的 Hash 列表
+    QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
+    QStringList hiddenHashes = settings.value("HiddenMessages").toStringList();
+
+    if (histRes["status"].toString() == "success") {
+        QJsonArray dataArr = histRes["data"].toArray();
+        for (int i = 0; i < dataArr.size(); ++i) {
+            QJsonObject o = dataArr[i].toObject();
+            QString sender = o["sender"].toString();
+            QString content = o["content"].toString();
+            QString timeStr = o["time"].toString();
+            QString mType = o["msg_type"].toString();
+            QString fName = o["filename"].toString();
+
+            // 🚀 生成当前消息的唯一身份指纹 (Hash)
+            QString msgHash = QString::number(qHash(timeStr + sender + content));
+
+            // 如果该指纹在隐藏列表中，直接跳过不渲染！
+            if (hiddenHashes.contains(msgHash)) continue;
+
+            QString bubbleHtml;
+            QString displayMsg;
+
+            if (mType.contains("image") || mType.contains("file")) {
+                QString suffix = fName.split(".").last().toLower();
+                if (suffix.isEmpty()) suffix = "png";
+
+                QString myLocalFolder = this->property("localFolder").toString();
+                if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
+                QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
+                QDir dir(clientDirPath);
+                if (!dir.exists()) dir.mkpath(".");
+
+                QString localFileName = "hist_" + fName;
+                QString localFilePath = clientDirPath + "/" + localFileName;
+
+                if (!QFile::exists(localFilePath) && !content.isEmpty()) {
+                    QFile localFile(localFilePath);
+                    if (localFile.open(QIODevice::WriteOnly)) {
+                        localFile.write(QByteArray::fromBase64(content.toUtf8()));
+                        localFile.close();
+                    }
+                }
+
+                QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
+                if (mType.contains("image")) {
+                    displayMsg = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, content);
+                }
+                else {
+                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 历史附件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fName);
+                }
+            }
+            else {
+                displayMsg = content.toHtmlEscaped();
+            }
+
+            // 🚀 在渲染时，给每一条消息的头部附带一个隐形的 Hash 专属删除按钮
+            if (sender == m_myName) {
+                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
+                    "<span style='color:#999999; font-size:12px;'>%2 [我]</span>").arg(msgHash, timeStr);
+                bubbleHtml = QString(
+                    "<div style='text-align:right; margin-bottom:10px;'>"
+                    "%1<br>"
+                    "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000;'>%2</span>"
+                    "</div>"
+                ).arg(header, displayMsg);
+            }
+            else {
+                QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2</span>"
+                    "<a href='del:%3' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'>[删除]</a>").arg(sender, timeStr, msgHash);
+                bubbleHtml = QString(
+                    "<div style='text-align:left; margin-bottom:10px;'>"
+                    "%1<br>"
+                    "<span style='background-color:#FFFFFF; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; border:1px solid #EAEAEA; color:#000;'>%2</span>"
+                    "</div>"
+                ).arg(header, displayMsg);
+            }
+            m_chatHistories[m_currentTarget] += bubbleHtml;
+        }
+    }
+
+    if (m_chatHistories[m_currentTarget].isEmpty()) {
+        m_textBrowser->setHtml("<div style='text-align:center; color:#AAAAAA; margin-top:10px;'>暂无聊天记录</div>");
+    }
+    else {
+        m_textBrowser->setHtml(m_chatHistories.value(m_currentTarget, ""));
+    }
     m_textBrowser->moveCursor(QTextCursor::End);
 }
 
@@ -159,10 +383,15 @@ void ChatModule::sendMessage() {
     QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString readStatus = m_isCurrentGroup ? "" : QString("<span style='color:#AAAAAA; font-size:12px;'> (未读)</span>");
 
+    // 刚发出去的消息同样生成指纹，允许实时删除
+    QString msgHash = QString::number(qHash(timeStr + m_myName + msg));
+    QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
+        "<span style='color:#999999; font-size:12px;'>%2 [我] </span> %3").arg(msgHash, timeStr, readStatus);
+
     QString myMsgHtml = "<div style='text-align:right; margin-bottom:10px;'>"
-        "<span style='color:#999999; font-size:12px;'>" + timeStr + " [我] </span>" + readStatus + "<br>"
+        + header + "<br>"
         "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000000;'>"
-        + msg + "</span></div>";
+        + msg.toHtmlEscaped() + "</span></div>";
 
     m_chatHistories[m_currentTarget] += myMsgHtml;
     m_textBrowser->setHtml(m_chatHistories[m_currentTarget]);
@@ -201,8 +430,9 @@ void ChatModule::onBtnFolderClicked() {
     bool isImage = (suffix == "png" || suffix == "jpg" || suffix == "jpeg");
 
     QFile file(filePath);
-    if (file.size() > 5 * 1024 * 1024) {
-        QMessageBox::warning(nullptr, "超限", "限制发送5MB内文件！");
+    // 🚀 解除限制：提升到 100MB 允许绝大多数文件传输
+    if (file.size() > 100 * 1024 * 1024) {
+        QMessageBox::warning(nullptr, "超限", "为保证网络和内存稳定，单次限制发送 100MB 内的文件！");
         return;
     }
 
@@ -215,6 +445,7 @@ void ChatModule::onBtnFolderClicked() {
 
     QString localFileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_") + fi.fileName();
     QString copiedFilePath = clientDirPath + "/" + localFileName;
+
     QFile::copy(filePath, copiedFilePath);
 
     if (file.open(QIODevice::ReadOnly)) {
@@ -242,8 +473,12 @@ void ChatModule::onBtnFolderClicked() {
             displayContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 已发送文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fi.fileName());
         }
 
+        QString msgHash = QString::number(qHash(timeStr + m_myName + base64Data));
+        QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
+            "<span style='color:#999999; font-size:12px;'>%2 [我] </span>").arg(msgHash, timeStr);
+
         QString myMsgHtml = "<div style='text-align:right; margin-bottom:10px;'>"
-            "<span style='color:#999999; font-size:12px;'>" + timeStr + " [我] </span><br>"
+            + header + "<br>"
             "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px;'>"
             + displayContent + "</span></div>";
 
@@ -287,7 +522,7 @@ void ChatModule::onReadyRead() {
             QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
             QString receiveHtml = "<div style='text-align:center; margin-bottom:10px;'>"
                 "<span style='background-color:#F56C6C; color:#FFF; padding:6px 12px; border-radius:6px; font-size:12px;'>"
-                "📢 <b>全局系统广播</b> [" + fromUser + "] " + timeStr + "<br><br>" + content + "</span></div>";
+                "📢 <b>全局系统广播</b> [" + fromUser + "] " + timeStr + "<br><br>" + content.toHtmlEscaped() + "</span></div>";
 
             m_chatHistories["公司总群"] += receiveHtml;
             if (m_currentTarget == "公司总群") {
@@ -312,7 +547,7 @@ void ChatModule::onReadyRead() {
 
         QString htmlContent;
         if (type == "chat" || type == "group_chat") {
-            htmlContent = content;
+            htmlContent = content.toHtmlEscaped(); // 保护表情包
         }
         else if (type == "image" || type == "group_image" || type == "file" || type == "group_file") {
             QString originalFileName = json["filename"].toString();
@@ -344,8 +579,12 @@ void ChatModule::onReadyRead() {
             }
         }
 
+        QString msgHash = QString::number(qHash(timeStr + fromUser + content));
+        QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2 %3</span>"
+            "<a href='del:%4' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'>[删除]</a>").arg(fromUser, timeStr, offlineTag, msgHash);
+
         QString receiveHtml = "<div style='text-align:left; margin-bottom:10px;'>"
-            "<span style='color:#999999; font-size:12px;'> [" + fromUser + "] " + timeStr + " " + offlineTag + "</span><br>"
+            + header + "<br>"
             "<span style='background-color:#FFFFFF; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; border:1px solid #EAEAEA; color:#000000;'>"
             + htmlContent + "</span></div>";
 
@@ -368,18 +607,15 @@ void ChatModule::onReadyRead() {
 
 void ChatModule::onBtnEmojiClicked() {
     QMenu emojiMenu;
-    QStringList emojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉" };
+    QStringList emojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉", "🔥", "💼", "🏢", "☕", "❌", "✔️" };
     for (const auto& em : emojis) {
         QAction* act = emojiMenu.addAction(em);
         connect(act, &QAction::triggered, this, [=]() { m_lineEdit->insert(em); });
     }
-    emojiMenu.setStyleSheet("QMenu { font-size: 20px; }");
+    emojiMenu.setStyleSheet("QMenu { font-size: 20px; padding: 5px; } QMenu::item { padding: 8px; }");
     emojiMenu.exec(QCursor::pos());
 }
 
-void ChatModule::onBtnHistoryClicked() { QMessageBox::information(nullptr, "提示", "历史表情面板。"); }
-
-// 🚀 核心改造 2：向服务器拉取群成员名单或个人名片资料
 void ChatModule::onBtnMoreOptClicked() {
     if (m_currentTarget.isEmpty()) {
         QMessageBox::warning(nullptr, "提示", "请先选择聊天对象！");
@@ -435,7 +671,7 @@ void ChatModule::onBtnMoreOptClicked() {
         form->setVerticalSpacing(15);
 
         QJsonObject req;
-        req["type"] = "query_user_profile"; // 复用之前写好的接口
+        req["type"] = "query_user_profile";
         req["name"] = m_currentTarget;
         QJsonObject res = requestDataFromServer(req);
 
@@ -498,7 +734,7 @@ void ChatModule::sendSystemMessage(const QString& to, const QString& msg) {
         json["to"] = to;
         json["msg"] = msg;
         m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
-        m_chatHistories[to] += "<div style='text-align:right; margin-bottom:10px;'><span style='background-color:#95EC69; padding:8px; border-radius:6px; color:#000;'>系统提示: " + msg + "</span></div>";
+        m_chatHistories[to] += "<div style='text-align:right; margin-bottom:10px;'><span style='background-color:#95EC69; padding:8px; border-radius:6px; color:#000;'>系统提示: " + msg.toHtmlEscaped() + "</span></div>";
         if (m_currentTarget == to) m_textBrowser->setHtml(m_chatHistories[to]);
     }
 }

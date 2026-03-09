@@ -166,23 +166,73 @@ QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
     return (punchTime < m_endTime) ? "早退" : "正常下班";
 }
 
+// 🚀 核心改造：排班规则设置 UI 美化
 void PunchModule::onRuleSettingsClicked() {
     QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("排班规则设置");
+    dialog.setWindowTitle("⚙️ 排班规则设置");
+    dialog.resize(400, 360); // 适度撑大窗口，避免拥挤
+
     QFormLayout* form = new QFormLayout(&dialog);
-    QComboBox* shiftCombo = new QComboBox(&dialog); shiftCombo->addItems({ "常规班", "早班", "晚班" });
-    QComboBox* deptCombo = new QComboBox(&dialog); deptCombo->addItems({ "全部", "总经办", "人力资源部", "财务部", "研发部", "市场部", "销售部", "客户服务部" });
+    form->setContentsMargins(30, 25, 30, 25); // 增加四周内边距
+    form->setSpacing(18);                     // 增加行间距
+
+    // 🌟 全局高颜值输入框 CSS 样式
+    QString modernInputStyle =
+        "QComboBox, QTimeEdit, QSpinBox { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
+        "QComboBox:hover, QTimeEdit:hover, QSpinBox:hover { border-color: #C0C4CC; }"
+        "QComboBox:focus, QTimeEdit:focus, QSpinBox:focus { border-color: #409EFF; }"
+        "QComboBox::drop-down, QTimeEdit::drop-down, QSpinBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
+        "QComboBox::down-arrow, QTimeEdit::down-arrow, QSpinBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
+
+    QComboBox* shiftCombo = new QComboBox(&dialog);
+    shiftCombo->addItems({ "常规班", "早班", "晚班" });
+    shiftCombo->setStyleSheet(modernInputStyle);
+
+    QComboBox* deptCombo = new QComboBox(&dialog);
+    deptCombo->addItems({ "全部", "总经办", "人力资源部", "财务部", "研发部", "市场部", "销售部", "客户服务部" });
+    deptCombo->setStyleSheet(modernInputStyle);
+
     QTimeEdit* startEdit = new QTimeEdit(QTime(9, 0), &dialog);
+    startEdit->setDisplayFormat("HH:mm");
+    startEdit->setStyleSheet(modernInputStyle);
+
     QTimeEdit* endEdit = new QTimeEdit(QTime(18, 0), &dialog);
-    QSpinBox* lateEdit = new QSpinBox(&dialog); lateEdit->setSuffix(" 分钟"); lateEdit->setValue(30);
-    QSpinBox* absentEdit = new QSpinBox(&dialog); absentEdit->setSuffix(" 分钟"); absentEdit->setValue(120);
-    form->addRow("排班名称:", shiftCombo); form->addRow("适用部门:", deptCombo);
-    form->addRow("上班时间:", startEdit); form->addRow("下班时间:", endEdit);
-    form->addRow("迟到判定:", lateEdit); form->addRow("旷工判定:", absentEdit);
+    endEdit->setDisplayFormat("HH:mm");
+    endEdit->setStyleSheet(modernInputStyle);
+
+    QSpinBox* lateEdit = new QSpinBox(&dialog);
+    lateEdit->setSuffix(" 分钟");
+    lateEdit->setValue(30);
+    lateEdit->setMaximum(300);
+    lateEdit->setStyleSheet(modernInputStyle);
+
+    QSpinBox* absentEdit = new QSpinBox(&dialog);
+    absentEdit->setSuffix(" 分钟");
+    absentEdit->setValue(120);
+    absentEdit->setMaximum(600);
+    absentEdit->setStyleSheet(modernInputStyle);
+
+    form->addRow("排班名称:", shiftCombo);
+    form->addRow("适用部门:", deptCombo);
+    form->addRow("上班时间:", startEdit);
+    form->addRow("下班时间:", endEdit);
+    form->addRow("迟到判定:", lateEdit);
+    form->addRow("旷工判定:", absentEdit);
+
+    // ── 按钮 (✨ UI 升级) ──
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    bb->button(QDialogButtonBox::Save)->setText("保存设置");
+    bb->button(QDialogButtonBox::Cancel)->setText("取消");
+
+    // 给保存按钮加上主题蓝，取消按钮加上悬浮效果
+    bb->button(QDialogButtonBox::Save)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #66B1FF; }");
+    bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
+
     form->addRow(bb);
     connect(bb, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    // 绝对不改服务端逻辑
     if (dialog.exec() == QDialog::Accepted) {
         QJsonObject req; req["type"] = "rule_settings";
         req["dept"] = deptCombo->currentText(); req["rule_name"] = shiftCombo->currentText();
@@ -223,138 +273,63 @@ void PunchModule::onManualPunchClicked() {
         }
     }
 }
+
 void PunchModule::onAppealRequestClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
-    QJsonObject initReq; initReq["type"] = "query_approval_candidates"; initReq["name"] = m_loginName;
-    QJsonObject initRes = requestDataFromServer(initReq);
 
-    QDialog formDlg(parentWidget);
-    formDlg.setWindowTitle("发起考勤异常申诉");
-    QFormLayout* form = new QFormLayout(&formDlg);
-    QComboBox* recordCombo = new QComboBox(&formDlg);
-    QTextEdit* reasonEdit = new QTextEdit(&formDlg);
-    QComboBox* app1 = new QComboBox(&formDlg);
-
-    QJsonArray abnArr = initRes["abnormal_records"].toArray();
-    for (int i = 0; i < abnArr.size(); ++i) {
-        QJsonObject rec = abnArr[i].toObject();
-        recordCombo->addItem(rec["display"].toString(), rec["time"].toString());
-    }
-
-    QJsonArray hrArr = initRes["hr_list"].toArray();
-    QJsonArray gmArr = initRes["gm_list"].toArray();
-    for (int i = 0; i < hrArr.size(); ++i) app1->addItem("人资: " + hrArr[i].toString(), hrArr[i].toString());
-    for (int i = 0; i < gmArr.size(); ++i) app1->addItem("总经理: " + gmArr[i].toString(), gmArr[i].toString());
-
-    form->addRow("异常记录:", recordCombo); form->addRow("申诉理由:", reasonEdit); form->addRow("审批人:", app1);
-    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    form->addRow(bb);
-    connect(bb, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
-    connect(bb, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
-
-    if (formDlg.exec() == QDialog::Accepted) {
-        QJsonObject req; req["type"] = "appeal_request";
-        req["applicant"] = m_loginName; req["abnormal_time"] = recordCombo->currentData().toString();
-        req["reason"] = reasonEdit->toPlainText(); req["approver"] = app1->currentData().toString();
-        sendCommandToServer(req);
-        QMessageBox::information(parentWidget, "成功", "申诉已提交服务器！");
-    }
-}
-
-void PunchModule::onLeaveRequestClicked()
-{
-    QWidget* parentWidget = qobject_cast<QWidget*>(this->parent());
-
-    // ──────────────────────────────────────────────
-    // 1. 向服务器请求审批候选人数据（复用已有协议）
-    // ──────────────────────────────────────────────
     QJsonObject initReq;
     initReq["type"] = "query_approval_candidates";
     initReq["name"] = m_loginName;
     QJsonObject initRes = requestDataFromServer(initReq);
 
-    // ★ 不依赖 status 字段，只检查是否收到了关键数据
     if (initRes.isEmpty() || !initRes.contains("my_role")) {
-        QMessageBox::critical(parentWidget, "错误",
-            "无法连接服务器获取审批信息，请检查网络连接和服务器状态！");
+        QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络！");
         return;
     }
 
-    // ── 读取服务器返回的字段 ──
     QString applicantRole = initRes["my_role"].toString();
     QString applicantDept = initRes["my_dept"].toString();
     QString applicantJob = initRes["my_job"].toString();
 
+    QJsonArray abnArr = initRes["abnormal_records"].toArray();
     QJsonArray hrArr = initRes["hr_list"].toArray();
     QJsonArray gmArr = initRes["gm_list"].toArray();
     QJsonArray mgrArr = initRes["mgr_list"].toArray();
 
-    // ──────────────────────────────────────────────
-    // 2. 选择请假类型 (✨ UI 升级)
-    // ──────────────────────────────────────────────
-    QDialog typeDlg(parentWidget);
-    typeDlg.setWindowTitle("请选择请假类型");
-    typeDlg.resize(300, 350); // 撑大窗口，让列表更舒展
-    QVBoxLayout* typeLayout = new QVBoxLayout(&typeDlg);
-    QListWidget* typeList = new QListWidget(&typeDlg);
+    if (abnArr.isEmpty()) {
+        QMessageBox::information(parentWidget, "无异常", "您最近10天内没有异常考勤记录，无需申诉！");
+        return;
+    }
 
-    // 🌟 给列表加上现代风格的 QSS 样式
-    typeList->setStyleSheet(
-        "QListWidget { font-size: 15px; border: 1px solid #E4E7ED; border-radius: 8px; outline: none; background: #FFFFFF; }"
-        "QListWidget::item { padding: 15px; border-bottom: 1px solid #EBEEF5; color: #303133; }"
-        "QListWidget::item:hover { background-color: #F5F7FA; border-radius: 4px; }"
-        "QListWidget::item:selected { background-color: #ECF5FF; color: #409EFF; font-weight: bold; border-radius: 4px; }"
-    );
-    typeList->addItems({ "事假", "调休", "病假", "年假", "产假" });
-    typeLayout->addWidget(typeList);
-
-    QString selectedType;
-    connect(typeList, &QListWidget::itemDoubleClicked, [&](QListWidgetItem* item) {
-        selectedType = item->text();
-        typeDlg.accept();
-        });
-    if (typeDlg.exec() != QDialog::Accepted || selectedType.isEmpty()) return;
-
-    // ──────────────────────────────────────────────
-    // 3. 构建请假表单 (✨ UI 升级)
-    // ──────────────────────────────────────────────
     QDialog formDlg(parentWidget);
-    formDlg.setWindowTitle("发起请假申请 - " + selectedType);
-    formDlg.resize(500, 450); // 调整窗体大小
+    formDlg.setWindowTitle("发起考勤异常申诉");
+    formDlg.resize(500, 450);
     QFormLayout* form = new QFormLayout(&formDlg);
-    form->setContentsMargins(25, 25, 25, 25); // 增加表单内边距，告别拥挤
-    form->setSpacing(15);                     // 增加行间距
+    form->setContentsMargins(25, 25, 25, 25);
+    form->setSpacing(15);
 
-    // 🌟 定义一套全局高颜值输入框 CSS
     QString modernInputStyle =
-        "QDateTimeEdit, QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
-        "QDateTimeEdit:hover, QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
-        "QDateTimeEdit:focus, QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
-        "QDateTimeEdit::drop-down, QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
-        "QDateTimeEdit::down-arrow, QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
+        "QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
+        "QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
+        "QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
+        "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
+        "QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
 
-    QDateTimeEdit* startEdit = new QDateTimeEdit(QDateTime::currentDateTime(), &formDlg);
-    QDateTimeEdit* endEdit = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &formDlg);
-
-    // 🚀 核心改动：开启日历弹窗面板，实现时间自由选择！
-    startEdit->setCalendarPopup(true);
-    endEdit->setCalendarPopup(true);
-
-    startEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
-    endEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
-    startEdit->setStyleSheet(modernInputStyle);
-    endEdit->setStyleSheet(modernInputStyle);
+    QComboBox* recordCombo = new QComboBox(&formDlg);
+    recordCombo->setStyleSheet(modernInputStyle);
+    for (int i = 0; i < abnArr.size(); ++i) {
+        QJsonObject rec = abnArr[i].toObject();
+        recordCombo->addItem(rec["display"].toString(), rec["time"].toString());
+    }
 
     QTextEdit* reasonEdit = new QTextEdit(&formDlg);
-    reasonEdit->setPlaceholderText("请输入请假理由...");
+    reasonEdit->setPlaceholderText("请输入您申诉的详细理由（如：因见客户未能及时打卡...）");
     reasonEdit->setMaximumHeight(80);
     reasonEdit->setStyleSheet(modernInputStyle);
 
-    form->addRow("开始时间:", startEdit);
-    form->addRow("结束时间:", endEdit);
-    form->addRow("请假理由:", reasonEdit);
+    form->addRow("异常记录:", recordCombo);
+    form->addRow("申诉理由:", reasonEdit);
 
-    // ── 创建审批人下拉框 ──
     QComboBox* app1 = new QComboBox(&formDlg);
     QComboBox* app2 = new QComboBox(&formDlg);
     QComboBox* app3 = new QComboBox(&formDlg);
@@ -363,21 +338,17 @@ void PunchModule::onLeaveRequestClicked()
     app2->setStyleSheet(modernInputStyle);
     app3->setStyleSheet(modernInputStyle);
 
-    // 填充辅助 lambda
     auto fillFromArray = [](QComboBox* cb, const QJsonArray& arr, const QString& prefix) {
         cb->clear();
         for (int i = 0; i < arr.size(); ++i) {
             QString name = arr[i].toString();
-            cb->addItem(prefix + name, name);  // displayText=带前缀, userData=纯名字
+            cb->addItem(prefix + name, name);
         }
         };
     auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
 
-    // ──────────────────────────────────────────────
-    // 4. 审批链逻辑（完全保持你的原逻辑不变）
-    // ──────────────────────────────────────────────
     bool isGM = (applicantDept == "总经办" && (applicantJob == "总经理" || applicantJob == "总裁"));
     bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
     bool isTwoLevel = false;
@@ -417,10 +388,8 @@ void PunchModule::onLeaveRequestClicked()
         form->addRow("第三审批人(总经理):", app3);
     }
 
-    // ── 按钮 (✨ UI 升级) ──
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
-    bb->button(QDialogButtonBox::Ok)->setText("提交申请");
-    // 给提交按钮加上漂亮的主题蓝色
+    bb->button(QDialogButtonBox::Ok)->setText("提交申诉");
     bb->button(QDialogButtonBox::Ok)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #66B1FF; }");
     bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
 
@@ -428,16 +397,207 @@ void PunchModule::onLeaveRequestClicked()
     connect(bb, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
 
-    // ──────────────────────────────────────────────
-    // 5. 用户点击"提交申请"后，发送到服务器（完全保持原逻辑）
-    // ──────────────────────────────────────────────
     if (formDlg.exec() == QDialog::Accepted) {
         if (app1->count() == 0) {
             QMessageBox::critical(parentWidget, "失败", "无有效的第一审批人，请联系管理员！");
             return;
         }
 
-        // 🌟 增加一个小逻辑保护：如果结束时间比开始时间还早，提示重新选择
+        QString reasonText = reasonEdit->toPlainText().trimmed();
+        if (reasonText.isEmpty()) {
+            QMessageBox::warning(parentWidget, "提示", "必须填写申诉理由！");
+            return;
+        }
+
+        QJsonArray approverChain;
+        approverChain.append(app1->currentData().toString());
+        if (approvalLevels >= 2 && app2->count() > 0) approverChain.append(app2->currentData().toString());
+        if (approvalLevels >= 3 && app3->count() > 0) approverChain.append(app3->currentData().toString());
+
+        QStringList chainList;
+        for (int i = 0; i < approverChain.size(); ++i) {
+            chainList << approverChain[i].toString();
+        }
+
+        QJsonObject req;
+        req["type"] = "appeal_request";
+        req["applicant"] = m_loginName;
+        req["abnormal_time"] = recordCombo->currentData().toString();
+
+        QString displayStr = recordCombo->currentText();
+        int bracketIndex = displayStr.indexOf('[');
+        if (bracketIndex != -1) {
+            req["original_status"] = displayStr.mid(bracketIndex + 1).remove(']');
+        }
+        else {
+            req["original_status"] = "异常";
+        }
+
+        req["reason"] = reasonText;
+        req["approver"] = chainList.join(",");
+
+        sendCommandToServer(req);
+
+        QMessageBox::information(parentWidget, "成功",
+            QString("异常申诉已提交，当前进入 %1 级审批流程。\n审批链：%2")
+            .arg(approvalLevels)
+            .arg(chainList.join(" → ")));
+
+        QString notifyMsg = QString("%1 提交了考勤异常申诉，请及时审批").arg(m_loginName);
+        emit requestSendChat(notifyMsg);
+    }
+}
+
+void PunchModule::onLeaveRequestClicked()
+{
+    QWidget* parentWidget = qobject_cast<QWidget*>(this->parent());
+
+    QJsonObject initReq;
+    initReq["type"] = "query_approval_candidates";
+    initReq["name"] = m_loginName;
+    QJsonObject initRes = requestDataFromServer(initReq);
+
+    if (initRes.isEmpty() || !initRes.contains("my_role")) {
+        QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络连接和服务器状态！");
+        return;
+    }
+
+    QString applicantRole = initRes["my_role"].toString();
+    QString applicantDept = initRes["my_dept"].toString();
+    QString applicantJob = initRes["my_job"].toString();
+
+    QJsonArray hrArr = initRes["hr_list"].toArray();
+    QJsonArray gmArr = initRes["gm_list"].toArray();
+    QJsonArray mgrArr = initRes["mgr_list"].toArray();
+
+    QDialog typeDlg(parentWidget);
+    typeDlg.setWindowTitle("请选择请假类型");
+    typeDlg.resize(300, 350);
+    QVBoxLayout* typeLayout = new QVBoxLayout(&typeDlg);
+    QListWidget* typeList = new QListWidget(&typeDlg);
+
+    typeList->setStyleSheet(
+        "QListWidget { font-size: 15px; border: 1px solid #E4E7ED; border-radius: 8px; outline: none; background: #FFFFFF; }"
+        "QListWidget::item { padding: 15px; border-bottom: 1px solid #EBEEF5; color: #303133; }"
+        "QListWidget::item:hover { background-color: #F5F7FA; border-radius: 4px; }"
+        "QListWidget::item:selected { background-color: #ECF5FF; color: #409EFF; font-weight: bold; border-radius: 4px; }"
+    );
+    typeList->addItems({ "事假", "调休", "病假", "年假", "产假" });
+    typeLayout->addWidget(typeList);
+
+    QString selectedType;
+    connect(typeList, &QListWidget::itemDoubleClicked, [&](QListWidgetItem* item) {
+        selectedType = item->text();
+        typeDlg.accept();
+        });
+    if (typeDlg.exec() != QDialog::Accepted || selectedType.isEmpty()) return;
+
+    QDialog formDlg(parentWidget);
+    formDlg.setWindowTitle("发起请假申请 - " + selectedType);
+    formDlg.resize(500, 450);
+    QFormLayout* form = new QFormLayout(&formDlg);
+    form->setContentsMargins(25, 25, 25, 25);
+    form->setSpacing(15);
+
+    QString modernInputStyle =
+        "QDateTimeEdit, QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
+        "QDateTimeEdit:hover, QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
+        "QDateTimeEdit:focus, QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
+        "QDateTimeEdit::drop-down, QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
+        "QDateTimeEdit::down-arrow, QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
+
+    QDateTimeEdit* startEdit = new QDateTimeEdit(QDateTime::currentDateTime(), &formDlg);
+    QDateTimeEdit* endEdit = new QDateTimeEdit(QDateTime::currentDateTime().addDays(1), &formDlg);
+
+    startEdit->setCalendarPopup(true);
+    endEdit->setCalendarPopup(true);
+    startEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
+    endEdit->setDisplayFormat("yyyy-MM-dd HH:mm");
+    startEdit->setStyleSheet(modernInputStyle);
+    endEdit->setStyleSheet(modernInputStyle);
+
+    QTextEdit* reasonEdit = new QTextEdit(&formDlg);
+    reasonEdit->setPlaceholderText("请输入请假理由...");
+    reasonEdit->setMaximumHeight(80);
+    reasonEdit->setStyleSheet(modernInputStyle);
+
+    form->addRow("开始时间:", startEdit);
+    form->addRow("结束时间:", endEdit);
+    form->addRow("请假理由:", reasonEdit);
+
+    QComboBox* app1 = new QComboBox(&formDlg);
+    QComboBox* app2 = new QComboBox(&formDlg);
+    QComboBox* app3 = new QComboBox(&formDlg);
+
+    app1->setStyleSheet(modernInputStyle);
+    app2->setStyleSheet(modernInputStyle);
+    app3->setStyleSheet(modernInputStyle);
+
+    auto fillFromArray = [](QComboBox* cb, const QJsonArray& arr, const QString& prefix) {
+        cb->clear();
+        for (int i = 0; i < arr.size(); ++i) {
+            QString name = arr[i].toString();
+            cb->addItem(prefix + name, name);
+        }
+        };
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+
+    bool isGM = (applicantDept == "总经办" && (applicantJob == "总经理" || applicantJob == "总裁"));
+    bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
+    bool isTwoLevel = false;
+
+    if (!isGM && !isHRManager) {
+        if (applicantDept == "人力资源部") isTwoLevel = true;
+        else if (applicantJob == "部门经理") isTwoLevel = true;
+        else if (applicantDept == "总经办") isTwoLevel = true;
+    }
+
+    int approvalLevels = 0;
+
+    if (isGM) {
+        approvalLevels = 1;
+        fillHR(app1);
+        form->addRow("第一审批人(人资经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (isHRManager) {
+        approvalLevels = 1;
+        fillGM(app1);
+        form->addRow("第一审批人(总经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (isTwoLevel) {
+        approvalLevels = 2;
+        fillHR(app1); fillGM(app2);
+        form->addRow("第一审批人(人资经理):", app1);
+        form->addRow("第二审批人(总经理):", app2);
+        app3->setVisible(false);
+    }
+    else {
+        approvalLevels = 3;
+        fillDeptMgr(app1); fillHR(app2); fillGM(app3);
+        form->addRow("第一审批人(部门经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第三审批人(总经理):", app3);
+    }
+
+    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
+    bb->button(QDialogButtonBox::Ok)->setText("提交申请");
+    bb->button(QDialogButtonBox::Ok)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #66B1FF; }");
+    bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
+
+    form->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &formDlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &formDlg, &QDialog::reject);
+
+    if (formDlg.exec() == QDialog::Accepted) {
+        if (app1->count() == 0) {
+            QMessageBox::critical(parentWidget, "失败", "无有效的第一审批人，请联系管理员！");
+            return;
+        }
+
         if (startEdit->dateTime() >= endEdit->dateTime()) {
             QMessageBox::warning(parentWidget, "时间填写错误", "结束时间必须晚于开始时间，请重新选择！");
             return;
@@ -476,7 +636,7 @@ void PunchModule::onLeaveRequestClicked()
         emit requestSendChat(notifyMsg);
     }
 }
-// 🚀 向服务器拉取待审批的假条列表
+
 void PunchModule::onLeaveApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget); apprDlg.setWindowTitle("假条审批"); apprDlg.resize(600, 400);
@@ -503,7 +663,7 @@ void PunchModule::onLeaveApproveClicked() {
             table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
             table->setItem(row, 4, new QTableWidgetItem("待审批"));
             QPushButton* btnPass = new QPushButton("批准");
-            btnPass->setStyleSheet("background-color: #67C23A; color: white;");
+            btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px;");
             table->setCellWidget(row, 5, btnPass);
 
             connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {
@@ -517,7 +677,7 @@ void PunchModule::onLeaveApproveClicked() {
     }
     layout->addWidget(table); apprDlg.exec();
 }
-// 🚀 向服务器拉取待审批的申诉列表
+
 void PunchModule::onAppealApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget);
@@ -551,7 +711,7 @@ void PunchModule::onAppealApproveClicked() {
             table->setItem(row, 4, new QTableWidgetItem("待审批"));
 
             QPushButton* btnPass = new QPushButton("修正记录");
-            btnPass->setStyleSheet("background-color: #409EFF; color: white;");
+            btnPass->setStyleSheet("background-color: #409EFF; color: white; border-radius:3px; padding:4px;");
             table->setCellWidget(row, 5, btnPass);
 
             connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {

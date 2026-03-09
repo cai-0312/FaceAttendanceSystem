@@ -19,7 +19,11 @@
 #include <QThread>
 #include <QStyledItemDelegate>
 #include <QComboBox>
+#include <QRegularExpression>
 
+// ==========================================
+// 🎨 UI 辅助代理：用于服务端界面表格渲染
+// ==========================================
 class CenterAndComboDelegate : public QStyledItemDelegate {
 public:
     int comboColumn;
@@ -81,6 +85,9 @@ public:
     }
 };
 
+// ==========================================
+// 核心构造函数：初始化服务器与环境
+// ==========================================
 AttendanceServer::AttendanceServer(QWidget* parent)
     : QWidget(parent), ui(new Ui::AttendanceServerClass)
 {
@@ -120,7 +127,7 @@ AttendanceServer::AttendanceServer(QWidget* parent)
     m_permModel->setHeaderData(m_permModel->fieldIndex("role"), Qt::Horizontal, "系统权限角色(双击修改)");
 
     int roleColIdx = m_permModel->fieldIndex("role");
-    QStringList roleOptions = { "普通登录", "管理员登录", "超级管理员" };
+    QStringList roleOptions = { "普通登录", "管理员登录", "经理", "超级管理员" };
     ui->tableView_Permissions->setItemDelegate(new CenterAndComboDelegate(roleColIdx, roleOptions, this));
 
     m_tcpServer = new QTcpServer(this);
@@ -200,6 +207,9 @@ void AttendanceServer::onClientDisconnected() {
     socket->deleteLater();
 }
 
+// ==========================================
+// 网络核心路由逻辑：处理所有客户端请求
+// ==========================================
 void AttendanceServer::onReadyRead() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
@@ -217,9 +227,14 @@ void AttendanceServer::onReadyRead() {
             QString threadConnName = QString("ServerConn_%1_%2").arg(quintptr(QThread::currentThreadId())).arg(QDateTime::currentMSecsSinceEpoch());
             {
                 QSqlDatabase threadDb = QSqlDatabase::addDatabase("QODBC", threadConnName);
-                threadDb.setDatabaseName("DRIVER={MySQL ODBC 8.0 Unicode Driver};SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;UID=root;PWD=root;");
+                // 🚀 加入 CHARSET=utf8mb4 以配合 ODBC
+                threadDb.setDatabaseName("DRIVER={MySQL ODBC 8.0 Unicode Driver};SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;UID=root;PWD=root;CHARSET=utf8mb4;");
 
                 if (threadDb.open()) {
+
+                    // 🚀 初始化连接防吞字符集设置
+                    QSqlQuery initQ(threadDb);
+                    initQ.exec("SET NAMES utf8mb4");
 
                     if (type == "query_face_features") {
                         QJsonArray arr;
@@ -244,8 +259,7 @@ void AttendanceServer::onReadyRead() {
                         q.addBindValue(publisher); q.addBindValue(content);
                         q.exec();
                     }
-
-                    if (type == "client_login_auth") {
+                    else if (type == "client_login_auth") {
                         QString account = json["account"].toString();
                         QString pwd = json["pwd"].toString();
                         QString role = json["role"].toString();
@@ -278,7 +292,7 @@ void AttendanceServer::onReadyRead() {
                             res["status"] = "success";
                             QMetaObject::invokeMethod(this, [this, name, role]() {
                                 logMessage(QString("<font color='#E6A23C'>新兵入职: [%1] 注册了账号，权限为 [%2]。</font>").arg(name, role));
-                                m_permModel->select(); // 刷新权限表格
+                                m_permModel->select();
                                 }, Qt::QueuedConnection);
                         }
                         else {
@@ -287,8 +301,7 @@ void AttendanceServer::onReadyRead() {
                         QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
                     }
-
-                    if (type == "login") {
+                    else if (type == "login") {
                         QString name = json["name"].toString().trimmed();
                         QString ip = socket->peerAddress().toString().remove("::ffff:");
                         QString dept = "未知部门"; QString jobTitle = "未分配";
@@ -317,10 +330,23 @@ void AttendanceServer::onReadyRead() {
                         if (offlineQ.exec()) {
                             while (offlineQ.next()) {
                                 QJsonObject offMsg;
-                                offMsg["from"] = offlineQ.value(0).toString(); offMsg["type"] = offlineQ.value(1).toString();
-                                offMsg["msg"] = offlineQ.value(2).toString(); offMsg["filename"] = offlineQ.value(3).toString();
+                                offMsg["from"] = offlineQ.value(0).toString();
+                                QString mType = offlineQ.value(1).toString();
+                                offMsg["type"] = mType;
+
+                                // 🚀 解码 Base64 获取被保护的带有表情包的内容
+                                QString rawContent = offlineQ.value(2).toString();
+                                if (rawContent.startsWith("B64:")) {
+                                    offMsg["msg"] = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
+                                }
+                                else {
+                                    offMsg["msg"] = rawContent;
+                                }
+
+                                offMsg["filename"] = offlineQ.value(3).toString();
                                 offMsg["time"] = offlineQ.value(4).toDateTime().toString("HH:mm:ss");
-                                offMsg["department"] = offlineQ.value(5).toString(); offMsg["is_offline"] = true;
+                                offMsg["department"] = offlineQ.value(5).toString();
+                                offMsg["is_offline"] = true;
 
                                 QByteArray outData = QJsonDocument(offMsg).toJson(QJsonDocument::Compact) + "\n";
                                 QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
@@ -336,6 +362,150 @@ void AttendanceServer::onReadyRead() {
                         QSqlQuery deleteOffQ(threadDb);
                         deleteOffQ.prepare("DELETE FROM offline_messages WHERE receiver = :n");
                         deleteOffQ.bindValue(":n", name); deleteOffQ.exec();
+                    }
+
+                    // ==========================================
+                    // 🚀 聊天通讯模块 (终极防吞表情包修复版)
+                    // ==========================================
+                    else if (type == "chat" || type == "image" || type == "file" || type.startsWith("group_")) {
+                        QString fromUser = json["from"].toString();
+                        QString content = json["msg"].toString();
+                        QString fileName = json["filename"].toString();
+                        bool isGroup = type.startsWith("group_");
+                        QString target = isGroup ? json["department"].toString() : json["to"].toString();
+
+                        // 🚀 核心修复：把聊天内容强制转换为 Base64 避开 ODBC 转义 Bug
+                        QString dbContent = content;
+                        if (type == "chat" || type == "group_chat") {
+                            dbContent = "B64:" + QString(content.toUtf8().toBase64());
+                        }
+
+                        QSqlQuery histQ(threadDb);
+                        histQ.prepare("INSERT INTO chat_history (sender, receiver, msg_type, content, filename, send_time, is_group) "
+                            "VALUES (?, ?, ?, ?, ?, NOW(), ?)");
+                        histQ.addBindValue(fromUser);
+                        histQ.addBindValue(target);
+                        histQ.addBindValue(type);
+                        histQ.addBindValue(dbContent); // 存入 Base64
+                        histQ.addBindValue(fileName);
+                        histQ.addBindValue(isGroup ? 1 : 0);
+                        if (!histQ.exec()) {
+                            qDebug() << "❌ 历史记录落库失败:" << histQ.lastError().text();
+                        }
+
+                        // 实时路由，直接发送原始 JSON，不需要 Base64（因为 TCP 直接传 JSON 没问题）
+                        if (!isGroup) {
+                            bool isOnline = false;
+                            QMetaObject::invokeMethod(this, [this, target, &isOnline]() {
+                                isOnline = m_nameToSocket.contains(target);
+                                }, Qt::BlockingQueuedConnection);
+
+                            if (isOnline) {
+                                QTcpSocket* targetSocket = nullptr;
+                                QMetaObject::invokeMethod(this, [this, target, &targetSocket]() {
+                                    targetSocket = m_nameToSocket[target];
+                                    }, Qt::BlockingQueuedConnection);
+
+                                if (targetSocket) {
+                                    QMetaObject::invokeMethod(targetSocket, [targetSocket, data]() {
+                                        targetSocket->write(data);
+                                        }, Qt::QueuedConnection);
+
+                                    QMetaObject::invokeMethod(this, [this, fromUser, target, type]() {
+                                        logMessage(QString("<font color='#E6A23C'>消息转发: [%1] -> [%2] (%3)</font>").arg(fromUser, target, type));
+                                        }, Qt::QueuedConnection);
+                                }
+                            }
+                            else {
+                                // 离线拦截
+                                QSqlQuery offQ(threadDb);
+                                offQ.prepare("INSERT INTO offline_messages (sender, receiver, department, msg_type, content, filename, send_time) "
+                                    "VALUES (:s, :r, '', :t, :c, :f, NOW())");
+                                offQ.bindValue(":s", fromUser);
+                                offQ.bindValue(":r", target);
+                                offQ.bindValue(":t", type);
+                                offQ.bindValue(":c", dbContent); // 这里也要存入 Base64!
+                                offQ.bindValue(":f", fileName);
+
+                                if (offQ.exec()) {
+                                    QMetaObject::invokeMethod(this, [this, target, type]() {
+                                        logMessage(QString("拦截成功: 目标 [%1] 不在线，%2 已转入离线信箱。").arg(target, type));
+                                        }, Qt::QueuedConnection);
+                                }
+                                else {
+                                    qDebug() << "❌ 离线消息落库失败:" << offQ.lastError().text();
+                                }
+                            }
+                        }
+                        else {
+                            QMetaObject::invokeMethod(this, [this, fromUser, target]() {
+                                logMessage(QString("<font color='#9C27B0'>群发路由: [%1] 向 [%2] 发送了群消息。</font>").arg(fromUser, target));
+                                }, Qt::QueuedConnection);
+
+                            QSqlQuery groupQ(threadDb);
+                            if (target == "公司总群") groupQ.exec("SELECT name FROM users WHERE role != '超级管理员' AND account != 'admin'");
+                            else { groupQ.prepare("SELECT name FROM users WHERE department = :d AND role != '超级管理员'"); groupQ.bindValue(":d", target); groupQ.exec(); }
+
+                            while (groupQ.next()) {
+                                QString member = groupQ.value(0).toString().trimmed();
+                                if (member == fromUser) continue;
+
+                                bool isOnline = false;
+                                QMetaObject::invokeMethod(this, [this, member, &isOnline]() { isOnline = m_nameToSocket.contains(member); }, Qt::BlockingQueuedConnection);
+
+                                if (isOnline) {
+                                    QTcpSocket* targetSocket = nullptr;
+                                    QMetaObject::invokeMethod(this, [this, member, &targetSocket]() { targetSocket = m_nameToSocket[member]; }, Qt::BlockingQueuedConnection);
+                                    if (targetSocket) QMetaObject::invokeMethod(targetSocket, [targetSocket, data]() { targetSocket->write(data); }, Qt::QueuedConnection);
+                                }
+                                else {
+                                    QSqlQuery insertQ(threadDb);
+                                    insertQ.prepare("INSERT INTO offline_messages (sender, receiver, department, msg_type, content, filename, send_time) VALUES (:s, :r, :d, :t, :c, :f, NOW())");
+                                    insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", member); insertQ.bindValue(":d", target);
+                                    insertQ.bindValue(":t", type); insertQ.bindValue(":c", dbContent); // 这里也要存入 Base64!
+                                    insertQ.bindValue(":f", fileName); insertQ.exec();
+                                }
+                            }
+                        }
+                    }
+
+                    // =========================================================
+                    // 🚀 拉取聊天历史记录 (带 Base64 解码)
+                    // =========================================================
+                    else if (type == "query_chat_history") {
+                        QJsonObject res; res["status"] = "success"; QJsonArray arr;
+                        QString me = json["me"].toString();
+                        QString target = json["target"].toString();
+                        bool isGroup = json["is_group"].toBool();
+
+                        QString sql = isGroup ? QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') FROM chat_history WHERE receiver = '%1' AND is_group = 1 ORDER BY send_time ASC LIMIT 100").arg(target)
+                            : QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') FROM chat_history WHERE ((sender='%1' AND receiver='%2') OR (sender='%2' AND receiver='%1')) AND is_group = 0 ORDER BY send_time ASC LIMIT 100").arg(me, target);
+
+                        QSqlQuery q(threadDb);
+                        if (q.exec(sql)) {
+                            while (q.next()) {
+                                QJsonObject o;
+                                o["sender"] = q.value(0).toString();
+                                o["msg_type"] = q.value(1).toString();
+
+                                // 🚀 解析可能被 Base64 保护的表情包文本
+                                QString rawContent = q.value(2).toString();
+                                if (rawContent.startsWith("B64:")) {
+                                    o["content"] = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
+                                }
+                                else {
+                                    o["content"] = rawContent;
+                                }
+
+                                o["filename"] = q.value(3).toString();
+                                o["time"] = q.value(4).toString();
+                                arr.append(o);
+                            }
+                        }
+
+                        res["data"] = arr;
+                        QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
                     }
 
                     else if (type == "query_user_profile") {
@@ -360,7 +530,7 @@ void AttendanceServer::onReadyRead() {
                     }
                     else if (type == "update_profile_field") {
                         QString name = json["name"].toString();
-                        QString field = json["field"].toString(); // "gender", "phone", "avatar"
+                        QString field = json["field"].toString();
                         QString value = json["value"].toString();
                         QSqlQuery q(threadDb);
                         QString sql = QString("UPDATE users SET %1 = :v WHERE name = :n OR account = :n").arg(field);
@@ -369,48 +539,19 @@ void AttendanceServer::onReadyRead() {
                         q.bindValue(":n", name);
                         q.exec();
                     }
-                    else if (type == "verify_and_update_password") {
-                        QString name = json["name"].toString();
-                        QString oldPwd = json["old_pwd"].toString();
-                        QString newPwd = json["new_pwd"].toString();
-                        QJsonObject res; res["status"] = "fail";
-
-                        QSqlQuery q(threadDb);
-                        q.prepare("SELECT password FROM users WHERE name = :n OR account = :n");
-                        q.bindValue(":n", name);
-                        if (q.exec() && q.next()) {
-                            if (q.value(0).toString() == oldPwd) {
-                                QSqlQuery uq(threadDb);
-                                uq.prepare("UPDATE users SET password = :newp WHERE name = :n OR account = :n");
-                                uq.bindValue(":newp", newPwd);
-                                uq.bindValue(":n", name);
-                                if (uq.exec()) res["status"] = "success";
-                            }
-                            else {
-                                res["msg"] = "旧密码错误！";
-                            }
-                        }
-                        QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                    }
-
                     else if (type == "verify_user_for_registration") {
                         QString name = json["name"].toString().trimmed();
                         QString dept = json["dept"].toString().trimmed();
-                        QJsonObject res;
-                        res["status"] = "fail";
+                        QJsonObject res; res["status"] = "fail";
 
                         QSqlQuery q(threadDb);
-                        // 防 ODBC 中文绑定 Bug，采用 arg 强行拼接
                         QString sql = QString("SELECT id FROM users WHERE name = '%1' AND department = '%2'").arg(name, dept);
                         if (q.exec(sql) && q.next()) {
                             res["status"] = "success";
                         }
-
                         QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
                     }
-
                     else if (type == "query_chat_contacts") {
                         QString name = json["name"].toString();
                         QJsonObject res; res["status"] = "success";
@@ -443,46 +584,52 @@ void AttendanceServer::onReadyRead() {
 
                         QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                        }
+                    }
                     else if (type == "query_group_members") {
-                            QString dept = json["department"].toString();
-                            QJsonObject res; res["status"] = "success";
-                            QJsonArray arr;
+                        QString dept = json["department"].toString();
+                        QJsonObject res; res["status"] = "success";
+                        QJsonArray arr;
 
-                            QString sql = (dept == "公司总群") ? "SELECT name, department, job_title FROM users WHERE account NOT LIKE '%admin%' AND name NOT LIKE '%超级管理员%'"
-                                : QString("SELECT name, department, job_title FROM users WHERE department = '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(dept);
-                            QSqlQuery q(threadDb); q.exec(sql);
-                            while (q.next()) {
-                                QJsonObject u; u["name"] = q.value(0).toString(); u["dept"] = q.value(1).toString();
-                                QString j = q.value(2).toString(); u["job"] = (j.isEmpty() || j == "未分配") ? "员工" : j;
-                                arr.append(u);
-                            }
-                            res["data"] = arr;
-                            QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                            QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                            }
-
+                        QString sql = (dept == "公司总群") ? "SELECT name, department, job_title FROM users WHERE account NOT LIKE '%admin%' AND name NOT LIKE '%超级管理员%'"
+                            : QString("SELECT name, department, job_title FROM users WHERE department = '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(dept);
+                        QSqlQuery q(threadDb); q.exec(sql);
+                        while (q.next()) {
+                            QJsonObject u; u["name"] = q.value(0).toString(); u["dept"] = q.value(1).toString();
+                            QString j = q.value(2).toString(); u["job"] = (j.isEmpty() || j == "未分配") ? "员工" : j;
+                            arr.append(u);
+                        }
+                        res["data"] = arr;
+                        QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
+                    }
+                    // =========================================================
+                    // 🚀 AI 助手记录持久化：Base64 降维打击彻底解决吞表情包
+                    // =========================================================
                     else if (type == "ai_save_message") {
                         QString sessionId = json["session_id"].toString();
                         QString role = json["role"].toString();
                         QString content = json["content"].toString();
                         QString name = json["name"].toString();
 
+                        QString dbContent = "B64:" + QString(content.toUtf8().toBase64());
+
                         QSqlQuery q(threadDb);
-                        q.prepare("INSERT INTO ai_chat_logs (session_id, role, content, create_time) VALUES (?, ?, ?, NOW())");
-                        q.addBindValue(sessionId); q.addBindValue(role); q.addBindValue(content);
-                        q.exec();
+                        // 🔧 [修复] 改为字符串拼接，避免 QODBC 绑定失效
+                        QString sql = QString("INSERT INTO ai_chat_logs (session_id, role, content, create_time) VALUES ('%1', '%2', '%3', NOW())")
+                            .arg(sessionId, role, dbContent);
+                        q.exec(sql);
 
                         QSqlQuery uq(threadDb);
-                        uq.prepare("UPDATE ai_sessions SET last_message = ? WHERE session_id = ?");
                         QString snippet = content; snippet.remove(QRegularExpression("<[^>]*>")); snippet.replace("\n", " ");
                         if (snippet.length() > 15) snippet = snippet.left(15) + "...";
-                        uq.addBindValue(snippet); uq.addBindValue(sessionId); uq.exec();
+                        snippet.replace("'", "''"); // 防止单引号破坏SQL
+                        QString updSql = QString("UPDATE ai_sessions SET last_message = '%1' WHERE session_id = '%2'").arg(snippet, sessionId);
+                        uq.exec(updSql);
 
-                        // 触发服务器审计系统保存聊天记录文本
                         QString account = "Unk", dept = "Unk", title = "Unk";
-                        QSqlQuery userQ(threadDb); userQ.prepare("SELECT account, department, job_title FROM users WHERE name = :n"); userQ.bindValue(":n", name);
-                        if (userQ.exec() && userQ.next()) { account = userQ.value(0).toString(); dept = userQ.value(1).toString(); title = userQ.value(2).toString(); }
+                        QSqlQuery userQ(threadDb);
+                        userQ.exec(QString("SELECT account, department, job_title FROM users WHERE name = '%1'").arg(name));
+                        if (userQ.next()) { account = userQ.value(0).toString(); dept = userQ.value(1).toString(); title = userQ.value(2).toString(); }
 
                         QString baseDir = QCoreApplication::applicationDirPath() + "/server/AiChat/";
                         QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
@@ -499,80 +646,190 @@ void AttendanceServer::onReadyRead() {
                         }
                         }
                     else if (type == "create_ai_session") {
-                            QSqlQuery q(threadDb);
-                            q.prepare("INSERT INTO ai_sessions (session_id, user_name, title, create_time, is_visible, last_message) VALUES (?, ?, ?, NOW(), 1, '暂无聊天记录...')");
-                            q.addBindValue(json["session_id"].toString());
-                            q.addBindValue(json["name"].toString());
-                            q.addBindValue(json["title"].toString());
-                            q.exec();
-                            }
+                        QSqlQuery q(threadDb);
+                        q.prepare("INSERT INTO ai_sessions (session_id, user_name, title, create_time, is_visible, last_message) VALUES (?, ?, ?, NOW(), 1, '暂无聊天记录...')");
+                        q.addBindValue(json["session_id"].toString());
+                        q.addBindValue(json["name"].toString());
+                        q.addBindValue(json["title"].toString());
+                        q.exec();
+                    }
                     else if (type == "query_ai_sessions") {
-                                QJsonArray arr;
-                                QSqlQuery q(threadDb);
-                                q.exec(QString("SELECT session_id, title, last_message FROM ai_sessions WHERE user_name='%1' AND is_visible=1 ORDER BY create_time DESC").arg(json["name"].toString()));
-                                while (q.next()) {
-                                    QJsonObject o;
-                                    o["session_id"] = q.value(0).toString();
-                                    o["title"] = q.value(1).toString();
-                                    o["last_message"] = q.value(2).toString();
-                                    arr.append(o);
-                                }
-                                QJsonObject res; res["status"] = "success"; res["data"] = arr;
-                                QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                                QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
-                                }
+                        QJsonArray arr;
+                        QSqlQuery q(threadDb);
+                        q.exec(QString("SELECT session_id, title, last_message FROM ai_sessions WHERE user_name='%1' AND is_visible=1 ORDER BY create_time DESC").arg(json["name"].toString()));
+                        while (q.next()) {
+                            QJsonObject o; o["session_id"] = q.value(0).toString(); o["title"] = q.value(1).toString(); o["last_message"] = q.value(2).toString();
+                            arr.append(o);
+                        }
+                        QJsonObject res; res["status"] = "success"; res["data"] = arr;
+                        QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
+                    }
                     else if (type == "rename_ai_session") {
-                                    QSqlQuery q(threadDb); q.prepare("UPDATE ai_sessions SET title=? WHERE session_id=?");
-                                    q.addBindValue(json["title"].toString()); q.addBindValue(json["session_id"].toString()); q.exec();
-                                    }
+                        QSqlQuery q(threadDb); q.prepare("UPDATE ai_sessions SET title=? WHERE session_id=?");
+                        q.addBindValue(json["title"].toString()); q.addBindValue(json["session_id"].toString()); q.exec();
+                    }
                     else if (type == "delete_ai_session") {
-                                        QSqlQuery q(threadDb); q.prepare("UPDATE ai_sessions SET is_visible=0 WHERE session_id=?");
-                                        q.addBindValue(json["session_id"].toString()); q.exec();
-                                        }
+                        QSqlQuery q(threadDb); q.prepare("UPDATE ai_sessions SET is_visible=0 WHERE session_id=?");
+                        q.addBindValue(json["session_id"].toString()); q.exec();
+                    }
                     else if (type == "search_ai_history") {
-                                            QJsonArray arr;
-                                            QSqlQuery q(threadDb);
-                                            q.prepare("SELECT DISTINCT s.session_id, s.title, s.last_message FROM ai_sessions s JOIN ai_chat_logs l ON s.session_id = l.session_id WHERE s.user_name = ? AND s.is_visible=1 AND l.content LIKE ? ORDER BY s.create_time DESC");
-                                            q.addBindValue(json["name"].toString()); q.addBindValue("%" + json["keyword"].toString() + "%");
-                                            if (q.exec()) {
-                                                while (q.next()) {
-                                                    QJsonObject o; o["session_id"] = q.value(0).toString(); o["title"] = q.value(1).toString(); o["last_message"] = q.value(2).toString();
-                                                    arr.append(o);
-                                                }
-                                            }
-                                            QJsonObject res; res["status"] = "success"; res["data"] = arr;
-                                            QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                                            QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
-                                            }
+                        QJsonArray arr;
+                        QString userName = json["name"].toString();
+                        QString keyword = json["keyword"].toString();
+                        userName.replace("'", "''");
+                        keyword.replace("'", "''");
+                        QSqlQuery q(threadDb);
+                        // 搜索 ai_sessions.title 和 last_message（明文），不搜 ai_chat_logs.content（Base64编码）
+                        QString sql = QString(
+                            "SELECT session_id, title, last_message FROM ai_sessions "
+                            "WHERE user_name = '%1' AND is_visible = 1 "
+                            "AND (title LIKE '%%%2%%' OR last_message LIKE '%%%2%%') "
+                            "ORDER BY create_time DESC"
+                        ).arg(userName, keyword);
+                        if (q.exec(sql)) {
+                            while (q.next()) {
+                                QJsonObject o;
+                                o["session_id"] = q.value(0).toString();
+                                o["title"] = q.value(1).toString();
+                                o["last_message"] = q.value(2).toString();
+                                arr.append(o);
+                            }
+                        }
+                        QJsonObject res; res["status"] = "success"; res["data"] = arr;
+                        QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
+                        }
                     else if (type == "query_ai_chat_history") {
-                                                QJsonArray arr;
-                                                QSqlQuery q(threadDb); q.prepare("SELECT role, content FROM ai_chat_logs WHERE session_id = ? ORDER BY create_time ASC");
-                                                q.addBindValue(json["session_id"].toString());
-                                                if (q.exec()) {
-                                                    while (q.next()) {
-                                                        QJsonObject o; o["role"] = q.value(0).toString(); o["content"] = q.value(1).toString();
-                                                        arr.append(o);
-                                                    }
-                                                }
-                                                QJsonObject res; res["status"] = "success"; res["data"] = arr;
-                                                QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                                                QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
-                                                }
-                    else if (type == "query_today_attendance_for_ai") {
-                                                    QJsonArray arr;
-                                                    QSqlQuery q(threadDb); q.prepare("SELECT punch_time, status FROM attendance_records WHERE name = ? AND DATE(punch_time) = CURDATE() ORDER BY punch_time ASC");
-                                                    q.addBindValue(json["name"].toString());
-                                                    if (q.exec()) {
-                                                        while (q.next()) {
-                                                            QJsonObject o; o["time"] = q.value(0).toDateTime().toString("HH:mm:ss"); o["status"] = q.value(1).toString();
-                                                            arr.append(o);
-                                                        }
-                                                    }
-                                                    QJsonObject res; res["status"] = "success"; res["data"] = arr;
-                                                    QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
-                                                    QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
-                                                    }
+                        QJsonArray arr;
+                        QString sid = json["session_id"].toString();
+                        QSqlQuery q(threadDb);
+                        // 🔧 [根因修复] 改为字符串拼接，QODBC 下 prepare+addBindValue 的 ? 占位符绑定不可靠
+                        QString sql = QString("SELECT role, content FROM ai_chat_logs WHERE session_id = '%1' ORDER BY create_time ASC").arg(sid);
+                        if (q.exec(sql)) {
+                            while (q.next()) {
+                                QJsonObject o;
+                                o["role"] = q.value(0).toString();
+                                QString rawContent = q.value(1).toString();
+                                if (rawContent.startsWith("B64:")) {
+                                    o["content"] = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
+                                }
+                                else {
+                                    o["content"] = rawContent;
+                                }
+                                arr.append(o);
+                            }
+                        }
+                        QJsonObject res; res["status"] = "success"; res["data"] = arr;
+                        QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
+                        }
 
+                    else if (type == "query_monthly_status") {
+                        QString name = json["name"].toString();
+                        int year = json["year"].toInt();
+                        int month = json["month"].toInt();
+
+                        // 构造当月的起止日期
+                        QString startDate = QString("%1-%2-01").arg(year).arg(month, 2, 10, QChar('0'));
+                        QDate lastDay(year, month, 1);
+                        lastDay = lastDay.addMonths(1).addDays(-1);
+                        QString endDate = lastDay.toString("yyyy-MM-dd");
+
+                        QJsonObject res;
+                        int normalDays = 0, lateDays = 0, leaveDays = 0, absentDays = 0;
+                        QJsonObject colorMap;
+
+                        QSqlQuery q(threadDb);
+                        QString sql = QString(
+                            "SELECT DATE(punch_time) as d, status FROM attendance_records "
+                            "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' "
+                            "ORDER BY punch_time ASC"
+                        ).arg(name, startDate, endDate);
+
+                        // 用 QMap 按日期聚合，每天取"最严重"的状态
+                        QMap<QString, QString> dayStatus;
+
+                        if (q.exec(sql)) {
+                            while (q.next()) {
+                                QString dateStr = q.value(0).toDate().toString("yyyy-MM-dd");
+                                QString status = q.value(1).toString();
+
+                                // 优先级：旷工 > 迟到/早退 > 请假 > 正常
+                                QString existing = dayStatus.value(dateStr, "");
+                                if (status.contains("旷工")) {
+                                    dayStatus[dateStr] = "absent";
+                                }
+                                else if (status.contains("迟到") || status.contains("早退")) {
+                                    if (existing != "absent")
+                                        dayStatus[dateStr] = "late";
+                                }
+                                else if (status.contains("假")) {
+                                    if (existing != "absent" && existing != "late")
+                                        dayStatus[dateStr] = "leave";
+                                }
+                                else if (status.contains("正常") || status.contains("下班")) {
+                                    if (existing.isEmpty())
+                                        dayStatus[dateStr] = "normal";
+                                }
+                            }
+                        }
+
+                        // 统计各类天数并构造 colorMap
+                        for (auto it = dayStatus.begin(); it != dayStatus.end(); ++it) {
+                            colorMap[it.key()] = it.value();
+                            if (it.value() == "normal") normalDays++;
+                            else if (it.value() == "late") lateDays++;
+                            else if (it.value() == "leave") leaveDays++;
+                            else if (it.value() == "absent") absentDays++;
+                        }
+
+                        res["status"] = "success";
+                        res["normal_days"] = normalDays;
+                        res["late_days"] = lateDays;
+                        res["leave_days"] = leaveDays;
+                        res["absent_days"] = absentDays;
+                        res["color_map"] = colorMap;
+
+                        QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
+                        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    else if (type == "query_today_attendance_for_ai") {
+                        QJsonArray arr;
+                        QSqlQuery q(threadDb); q.prepare("SELECT punch_time, status FROM attendance_records WHERE name = ? AND DATE(punch_time) = CURDATE() ORDER BY punch_time ASC");
+                        q.addBindValue(json["name"].toString());
+                        if (q.exec()) {
+                            while (q.next()) {
+                                QJsonObject o; o["time"] = q.value(0).toDateTime().toString("HH:mm:ss"); o["status"] = q.value(1).toString();
+                                arr.append(o);
+                            }
+                        }
+                        QJsonObject res; res["status"] = "success"; res["data"] = arr;
+                        QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
+                    }
                     else if (type == "query_home_dashboard") {
                         QString role = json["role"].toString();
                         QString name = json["name"].toString();
@@ -643,33 +900,24 @@ void AttendanceServer::onReadyRead() {
 
                         QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                        }
-
+                    }
                     else if (type == "query_user_list") {
                         QString dept = json["dept"].toString();
                         QString keyword = json["keyword"].toString();
 
                         QString sql = "SELECT id, account, name, gender, department, job_title, phone FROM view_users_lite WHERE account NOT LIKE '%admin%' AND name NOT LIKE '%超级管理员%'";
-                        if (dept != "全部" && !dept.isEmpty()) {
-                            sql += QString(" AND department = '%1'").arg(dept);
-                        }
-                        if (!keyword.isEmpty()) {
-                            sql += QString(" AND (name LIKE '%%%1%%' OR id LIKE '%%%1%%')").arg(keyword);
-                        }
+                        if (dept != "全部" && !dept.isEmpty()) sql += QString(" AND department = '%1'").arg(dept);
+                        if (!keyword.isEmpty()) sql += QString(" AND (name LIKE '%%%1%%' OR id LIKE '%%%1%%')").arg(keyword);
 
                         QJsonArray arr;
                         QSqlQuery q(threadDb);
                         if (q.exec(sql)) {
                             while (q.next()) {
                                 QJsonObject o;
-                                o["id"] = q.value(0).toString();
-                                o["account"] = q.value(1).toString();
-                                o["name"] = q.value(2).toString();
-                                o["gender"] = q.value(3).toString();
-                                o["department"] = q.value(4).toString();
-                                o["job_title"] = q.value(5).toString();
-                                o["phone"] = q.value(6).toString();
-                                arr.append(o);
+                                o["id"] = q.value(0).toString(); o["account"] = q.value(1).toString();
+                                o["name"] = q.value(2).toString(); o["gender"] = q.value(3).toString();
+                                o["department"] = q.value(4).toString(); o["job_title"] = q.value(5).toString();
+                                o["phone"] = q.value(6).toString(); arr.append(o);
                             }
                         }
                         QJsonObject res; res["status"] = "success"; res["data"] = arr;
@@ -679,40 +927,29 @@ void AttendanceServer::onReadyRead() {
                     else if (type == "admin_reset_password") {
                         QString account = json["account"].toString();
                         QString empName = json["name"].toString();
-                        QSqlQuery q(threadDb);
-                        q.prepare("UPDATE users SET password = '123456' WHERE account = :acc");
-                        q.bindValue(":acc", account);
+                        QSqlQuery q(threadDb); q.prepare("UPDATE users SET password = '123456' WHERE account = :acc"); q.bindValue(":acc", account);
                         QJsonObject res;
                         if (q.exec()) {
                             res["status"] = "success";
-                            QMetaObject::invokeMethod(this, [this, empName]() {
-                                logMessage(QString("<font color='#E6A23C'>权限操作: 管理员已重置 [%1] 的登录密码。</font>").arg(empName));
-                                }, Qt::QueuedConnection);
+                            QMetaObject::invokeMethod(this, [this, empName]() { logMessage(QString("<font color='#E6A23C'>权限操作: 管理员已重置 [%1] 的登录密码。</font>").arg(empName)); }, Qt::QueuedConnection);
                         }
-                        else {
-                            res["status"] = "fail";
-                        }
+                        else res["status"] = "fail";
                         QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
                     }
                     else if (type == "admin_delete_user") {
                         QString account = json["account"].toString();
                         QString empName = json["name"].toString();
-                        QSqlQuery q(threadDb);
-                        q.prepare("DELETE FROM users WHERE account = :acc");
-                        q.bindValue(":acc", account);
+                        QSqlQuery q(threadDb); q.prepare("DELETE FROM users WHERE account = :acc"); q.bindValue(":acc", account);
                         QJsonObject res;
                         if (q.exec()) {
                             res["status"] = "success";
                             QMetaObject::invokeMethod(this, [this, empName]() {
-                                logMessage(QString("<font color='red'>高危操作: 管理员已将员工 [%1] 彻底踢出系统及人脸库！</font>").arg(empName));
-                                // 刷新一下服务端的权限表格
+                                logMessage(QString("<font color='red'>高危操作: 管理员已将员工 [%1] 彻底踢出系统！</font>").arg(empName));
                                 m_permModel->select();
                                 }, Qt::QueuedConnection);
                         }
-                        else {
-                            res["status"] = "fail";
-                        }
+                        else res["status"] = "fail";
                         QByteArray out = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, out]() { socket->write(out); });
                     }
@@ -798,10 +1035,10 @@ void AttendanceServer::onReadyRead() {
                         res["abnormal_records"] = abnArr;
 
                         QJsonArray hrArr, gmArr, mgrArr;
-                        QSqlQuery hq(threadDb); hq.exec("SELECT name FROM users WHERE department = '人力资源部' AND job_title = '部门经理' AND name NOT LIKE '%超级管理员%'");
+                        QSqlQuery hq(threadDb); hq.exec("SELECT name FROM users WHERE department='人力资源部' AND role IN ('管理员登录','经理') AND name NOT LIKE '%超级管理员%'");
                         while (hq.next()) hrArr.append(hq.value(0).toString());
 
-                        QSqlQuery gq(threadDb); gq.exec("SELECT name FROM users WHERE job_title IN ('总经理', '总裁', '董事长') LIMIT 1");
+                        QSqlQuery gq(threadDb); gq.exec("SELECT name FROM users WHERE job_title IN ('总经理', '总裁', '董事长') OR name='总经理' LIMIT 1");
                         while (gq.next()) gmArr.append(gq.value(0).toString());
 
                         QSqlQuery mq(threadDb); mq.prepare("SELECT name FROM users WHERE department=:d AND role='经理' AND name != :me");
@@ -856,294 +1093,6 @@ void AttendanceServer::onReadyRead() {
                         QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
                         QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
                     }
-                    // ==========================================
-
-                    else if (type == "punch_request") {
-                        QString name = json["name"].toString();
-                        QDateTime serverNow = QDateTime::currentDateTime();
-                        QString timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
-                        QTime currentTime = serverNow.time();
-
-                        QString dept = "全部";
-                        QSqlQuery dq(threadDb);
-                        dq.prepare("SELECT department FROM users WHERE name = :n");
-                        dq.bindValue(":n", name);
-                        if (dq.exec() && dq.next()) dept = dq.value(0).toString();
-
-                        QTime startTime(9, 0), endTime(18, 0);
-                        int absentMins = 120;
-                        QSqlQuery sq(threadDb);
-                        sq.prepare("SELECT start_time, end_time, absent_mins FROM shift_rules WHERE dept = :d OR dept = '全部' ORDER BY (dept = :d) DESC LIMIT 1");
-                        sq.bindValue(":d", dept);
-                        if (sq.exec() && sq.next()) {
-                            startTime = sq.value(0).toTime();
-                            endTime = sq.value(1).toTime();
-                            absentMins = sq.value(2).toInt();
-                        }
-
-                        QString status = "正常打卡";
-                        if (currentTime < QTime(12, 0)) {
-                            int secsLate = startTime.secsTo(currentTime);
-                            if (secsLate > 0) {
-                                status = (secsLate > absentMins * 60) ? "旷工" : "迟到";
-                            }
-                        }
-                        else {
-                            status = (currentTime < endTime) ? "早退" : "正常下班";
-                        }
-
-                        QSqlQuery insertQuery(threadDb);
-                        insertQuery.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (:n, :t, :s)");
-                        insertQuery.bindValue(":n", name);
-                        insertQuery.bindValue(":t", timeStr);
-                        insertQuery.bindValue(":s", status);
-
-                        if (insertQuery.exec()) {
-                            QMetaObject::invokeMethod(this, [this, name, status]() {
-                                logMessage(QString("<font color='#00B42A'>考勤中心: 成功记录 [%1] 的考勤: %2</font>").arg(name, status));
-                                loadGlobalRecords();
-                                }, Qt::QueuedConnection);
-                        }
-                        else {
-                            QString err = insertQuery.lastError().text();
-                            QMetaObject::invokeMethod(this, [this, err]() {
-                                logMessage(QString("<font color='red'>数据库写入失败(考勤表): %1</font>").arg(err));
-                                }, Qt::QueuedConnection);
-                        }
-                    }
-                    else if (type == "rule_settings") {
-                        QSqlQuery q(threadDb);
-                        q.prepare("REPLACE INTO shift_rules (dept, rule_name, start_time, end_time, late_mins, absent_mins) VALUES (?, ?, ?, ?, ?, ?)");
-                        q.addBindValue(json["dept"].toString());
-                        q.addBindValue(json["rule_name"].toString());
-                        q.addBindValue(json["start_time"].toString());
-                        q.addBindValue(json["end_time"].toString());
-                        q.addBindValue(json["late_mins"].toInt());
-                        q.addBindValue(json["absent_mins"].toInt());
-                        q.exec();
-                        QMetaObject::invokeMethod(this, [this]() { logMessage("<font color='#E6A23C'>规则中心: 管理层更新了企业排班规则。</font>"); }, Qt::QueuedConnection);
-                    }
-                    else if (type == "status_update") {
-                        QSqlQuery q(threadDb);
-                        q.prepare("UPDATE users SET status_icon = :s WHERE name = :n");
-                        q.bindValue(":s", json["status"].toString());
-                        q.bindValue(":n", json["name"].toString());
-                        q.exec();
-                    }
-                    else if (type == "punch_cheat") {
-                        QSqlQuery q(threadDb);
-                        q.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, NOW(), '作弊打卡')");
-                        q.addBindValue(json["name"].toString());
-                        q.exec();
-                        QMetaObject::invokeMethod(this, [this, json]() {
-                            logMessage(QString("<font color='red'>安全警报: 员工 [%1] 多次人脸核验失败，强制记为作弊！</font>").arg(json["name"].toString()));
-                            loadGlobalRecords();
-                            }, Qt::QueuedConnection);
-                    }
-                    else if (type == "appeal_request") {
-                        QSqlQuery ins(threadDb);
-                        ins.prepare("INSERT INTO appeals (applicant, abnormal_time, original_status, reason, approver, status) VALUES (?, ?, ?, ?, ?, '待审批')");
-                        ins.addBindValue(json["applicant"].toString());
-                        ins.addBindValue(json["abnormal_time"].toString());
-                        ins.addBindValue(json["original_status"].toString());
-                        ins.addBindValue(json["reason"].toString());
-                        ins.addBindValue(json["approver"].toString());
-
-                        if (!ins.exec()) {
-                            QString err = ins.lastError().text();
-                            QMetaObject::invokeMethod(this, [this, err]() { logMessage(QString("<font color='red'>数据库写入失败(申诉表): %1</font>").arg(err)); }, Qt::QueuedConnection);
-                        }
-                        else {
-                            QMetaObject::invokeMethod(this, [this, json]() { logMessage(QString("<font color='#409EFF'>流程中心: 收到并入库 [%1] 的异常考勤申诉。</font>").arg(json["applicant"].toString())); }, Qt::QueuedConnection);
-                        }
-                    }
-                    else if (type == "leave_request") {
-                        QSqlQuery ins(threadDb);
-                        ins.prepare("INSERT INTO leave_requests (applicant, leave_type, start_time, end_time, reason, approver, status) VALUES (?, ?, ?, ?, ?, ?, '待审批')");
-                        ins.addBindValue(json["applicant"].toString());
-                        ins.addBindValue(json["leave_type"].toString());
-                        ins.addBindValue(json["start_time"].toString());
-                        ins.addBindValue(json["end_time"].toString());
-                        ins.addBindValue(json["reason"].toString());
-                        ins.addBindValue(json["approver"].toString());
-
-                        if (!ins.exec()) {
-                            QString err = ins.lastError().text();
-                            QMetaObject::invokeMethod(this, [this, err]() { logMessage(QString("<font color='red'>数据库写入失败(请假表): %1</font>").arg(err)); }, Qt::QueuedConnection);
-                        }
-                        else {
-                            QMetaObject::invokeMethod(this, [this, json]() { logMessage(QString("<font color='#409EFF'>流程中心: 成功收到并入库 [%1] 的请假申请。</font>").arg(json["applicant"].toString())); }, Qt::QueuedConnection);
-                        }
-                    }
-                    else if (type == "leave_approve") {
-                        int reqId = json["reqId"].toInt();
-                        QString applicant = json["applicant"].toString();
-                        QString sTimeStr = json["start_time"].toString();
-                        QString eTimeStr = json["end_time"].toString();
-                        QString lType = json["leave_type"].toString();
-
-                        QSqlQuery upd(threadDb);
-                        upd.exec(QString("UPDATE leave_requests SET status='已批准' WHERE id=%1").arg(reqId));
-
-                        QString finalStatus = "假-" + lType;
-
-                        QDate sDate = QDate::fromString(sTimeStr.left(10), "yyyy-MM-dd");
-                        QDate eDate = QDate::fromString(eTimeStr.left(10), "yyyy-MM-dd");
-
-                        if (sDate.isValid() && eDate.isValid() && sDate <= eDate) {
-                            for (QDate d = sDate; d <= eDate; d = d.addDays(1)) {
-                                QString punchTime = d.toString("yyyy-MM-dd") + " 09:00:00";
-                                QSqlQuery insertQ(threadDb);
-                                insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
-                                insertQ.addBindValue(applicant);
-                                insertQ.addBindValue(punchTime);
-                                insertQ.addBindValue(finalStatus);
-                                insertQ.exec();
-                            }
-                        }
-                        else {
-                            QSqlQuery insertQ(threadDb);
-                            insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
-                            insertQ.addBindValue(applicant);
-                            insertQ.addBindValue(sTimeStr);
-                            insertQ.addBindValue(finalStatus);
-                            insertQ.exec();
-                        }
-
-                        QMetaObject::invokeMethod(this, [this, applicant]() {
-                            logMessage(QString("<font color='#67C23A'>流程审批: [%1] 的请假已获批准，多天流水已连片入库。</font>").arg(applicant));
-                            loadGlobalRecords();
-                            }, Qt::QueuedConnection);
-                    }
-                    else if (type == "appeal_approve") {
-                        int reqId = json["reqId"].toInt();
-                        QString applicant = json["applicant"].toString();
-                        QString aTime = json["abnormal_time"].toString();
-                        QString aType = json["appeal_type"].toString();
-
-                        QSqlQuery upd(threadDb);
-                        upd.exec(QString("UPDATE appeals SET status='已批准' WHERE id=%1").arg(reqId));
-                        if (aType == "整天申诉") {
-                            upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
-                        }
-                        else {
-                            upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
-                        }
-                        QMetaObject::invokeMethod(this, [this, applicant]() {
-                            logMessage(QString("<font color='#67C23A'>流程审批: [%1] 的异常申诉已通过，后台自动修正。</font>").arg(applicant));
-                            loadGlobalRecords();
-                            }, Qt::QueuedConnection);
-                    }
-                    else if (type == "register_face") {
-                        QString name = json["name"].toString();
-                        QByteArray featureData = QByteArray::fromBase64(json["feature"].toString().toUtf8());
-
-                        QSqlQuery q(threadDb);
-                        q.prepare("UPDATE users SET feature = :f WHERE name = :n");
-                        q.bindValue(":f", featureData);
-                        q.bindValue(":n", name);
-                        if (q.exec()) {
-                            QMetaObject::invokeMethod(this, [this, name]() {
-                                logMessage(QString("<font color='#00B42A'>人脸中心: 成功接收并落盘员工 [%1] 的人脸特征生物模型。</font>").arg(name));
-                                }, Qt::QueuedConnection);
-                        }
-                        else {
-                            QString err = q.lastError().text();
-                            QMetaObject::invokeMethod(this, [this, err]() {
-                                logMessage(QString("<font color='red'>人脸入库致命失败: %1</font>").arg(err));
-                                }, Qt::QueuedConnection);
-                        }
-                    }
-
-                    // ========================================================
-                    // 🚀 终极架构大脑：强制使用 arg() 拼接 SQL，解决 ODBC 中文绑定失效的史诗级 BUG！
-                    // ========================================================
-                    else if (type == "query_my_requests") {
-                        QString name = json["name"].toString().trimmed();
-                        QJsonObject response;
-                        response["status"] = "success";
-
-                        QJsonArray leaveArr;
-                        QSqlQuery lq(threadDb);
-                        // 强制字符串拼接，绕开 bindValue 的中文编码过滤陷阱
-                        QString lqStr = QString("SELECT leave_type, start_time, end_time, reason, approver, status FROM leave_requests WHERE applicant LIKE '%%%1%%' ORDER BY id DESC").arg(name);
-                        if (lq.exec(lqStr)) {
-                            while (lq.next()) {
-                                QJsonObject row;
-                                row["type"] = lq.value(0).toString();
-                                row["start"] = lq.value(1).toDateTime().toString("MM-dd HH:mm");
-                                row["end"] = lq.value(2).toDateTime().toString("MM-dd HH:mm");
-                                row["reason"] = lq.value(3).toString();
-                                row["approver"] = lq.value(4).toString();
-                                row["status"] = lq.value(5).toString();
-                                leaveArr.append(row);
-                            }
-                        }
-                        response["leave_data"] = leaveArr;
-
-                        QJsonArray appealArr;
-                        QSqlQuery aq(threadDb);
-                        QString aqStr = QString("SELECT abnormal_time, original_status, reason, approver, status FROM appeals WHERE applicant LIKE '%%%1%%' ORDER BY id DESC").arg(name);
-                        if (aq.exec(aqStr)) {
-                            while (aq.next()) {
-                                QJsonObject row;
-                                row["time"] = aq.value(0).toDateTime().toString("MM-dd HH:mm");
-                                row["type"] = aq.value(1).toString();
-                                row["reason"] = aq.value(2).toString();
-                                row["approver"] = aq.value(3).toString();
-                                row["status"] = aq.value(4).toString();
-                                appealArr.append(row);
-                            }
-                        }
-                        response["appeal_data"] = appealArr;
-
-                        QByteArray outData = QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n";
-                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                    }
-                    else if (type == "query_monthly_status") {
-                        QString name = json["name"].toString().trimmed();
-                        int year = json["year"].toInt();
-                        int month = json["month"].toInt();
-
-                        QMap<QString, QStringList> dailyStatus;
-
-                        QSqlQuery query(threadDb);
-                        QString qStr = QString("SELECT DATE(punch_time), status FROM attendance_records WHERE name LIKE '%%%1%%' AND YEAR(punch_time) = %2 AND MONTH(punch_time) = %3").arg(name).arg(year).arg(month);
-                        if (query.exec(qStr)) {
-                            while (query.next()) {
-                                dailyStatus[query.value(0).toDate().toString("yyyy-MM-dd")].append(query.value(1).toString());
-                            }
-                        }
-
-                        int normalDays = 0, lateDays = 0, absentDays = 0, leaveDays = 0;
-                        QJsonObject colorMap;
-
-                        for (auto it = dailyStatus.constBegin(); it != dailyStatus.constEnd(); ++it) {
-                            bool hasLeave = false, hasAbsent = false, hasLate = false, hasNormal = false;
-                            for (const QString& s : it.value()) {
-                                if (s.contains("假") || s.contains("调休")) hasLeave = true;
-                                else if (s.contains("旷工") || s.contains("缺")) hasAbsent = true;
-                                else if (s.contains("迟到") || s.contains("早退")) hasLate = true;
-                                else if (s.contains("正常")) hasNormal = true;
-                            }
-
-                            if (hasLeave) { colorMap[it.key()] = "leave"; leaveDays++; }
-                            else if (hasAbsent) { colorMap[it.key()] = "absent"; absentDays++; }
-                            else if (hasLate) { colorMap[it.key()] = "late"; lateDays++; }
-                            else if (hasNormal) { colorMap[it.key()] = "normal"; normalDays++; }
-                        }
-
-                        QJsonObject response;
-                        response["type"] = "monthly_status_reply";
-                        response["normal_days"] = normalDays;
-                        response["late_days"] = lateDays;
-                        response["leave_days"] = leaveDays;
-                        response["absent_days"] = absentDays;
-                        response["color_map"] = colorMap;
-
-                        QByteArray outData = QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n";
-                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
-                    }
                     else if (type == "query_attendance_detail") {
                         QString nameFilter = json["name_filter"].toString().trimmed();
                         QString sDate = json["start_date"].toString();
@@ -1153,7 +1102,7 @@ void AttendanceServer::onReadyRead() {
                         QJsonArray recordsArr;
 
                         QString attSql = QString("SELECT id, name, punch_time, status FROM attendance_records WHERE DATE(punch_time) BETWEEN '%1' AND '%2'").arg(sDate, eDate);
-                        if (!nameFilter.isEmpty()) attSql += QString(" AND name LIKE '%%%1%%'").arg(nameFilter); // 强行拼接
+                        if (!nameFilter.isEmpty()) attSql += QString(" AND name LIKE '%%%1%%'").arg(nameFilter);
 
                         if (statusFilter == "正常") attSql += " AND status LIKE '%正常%' AND status NOT LIKE '%补卡%'";
                         else if (statusFilter == "请假") attSql += " AND (status LIKE '%假%' OR status LIKE '%调休%')";
@@ -1173,7 +1122,6 @@ void AttendanceServer::onReadyRead() {
                                 recordsArr.append(row);
                             }
                         }
-
                         QJsonObject response;
                         response["status"] = "success";
                         response["records"] = recordsArr;
@@ -1239,7 +1187,9 @@ void AttendanceServer::onReadyRead() {
                             else {
                                 QSqlQuery insertQ(threadDb);
                                 insertQ.prepare("INSERT INTO offline_messages (sender, receiver, department, msg_type, content, filename, send_time) VALUES (:s, :r, '', 'broadcast', :c, '', NOW())");
-                                insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", member); insertQ.bindValue(":c", content); insertQ.exec();
+                                insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", member);
+                                insertQ.bindValue(":c", "B64:" + QString(content.toUtf8().toBase64()));
+                                insertQ.exec();
                             }
                         }
                         QMetaObject::invokeMethod(this, [this, pushCount]() { logMessage(QString("   └─ 成功即时推送到 %1 名在线员工。").arg(pushCount)); }, Qt::QueuedConnection);
@@ -1254,29 +1204,201 @@ void AttendanceServer::onReadyRead() {
                             QMetaObject::invokeMethod(targetSocket, [targetSocket, data]() { targetSocket->write(data); }, Qt::QueuedConnection);
                         }
                     }
-                    else if (type == "ai_audit") {
+                    else if (type == "punch_request") {
                         QString name = json["name"].toString();
-                        QString role = json["role"].toString();
-                        QString content = json["content"].toString();
-                        QString sessionId = json["session_id"].toString();
+                        QDateTime serverNow = QDateTime::currentDateTime();
+                        QString timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
+                        QTime currentTime = serverNow.time();
 
-                        QString account = "Unk", dept = "Unk", title = "Unk";
-                        QSqlQuery q(threadDb); q.prepare("SELECT account, department, job_title FROM users WHERE name = :n"); q.bindValue(":n", name);
-                        if (q.exec() && q.next()) { account = q.value(0).toString(); dept = q.value(1).toString(); title = q.value(2).toString(); }
+                        QString dept = "全部";
+                        QSqlQuery dq(threadDb);
+                        dq.prepare("SELECT department FROM users WHERE name = :n");
+                        dq.bindValue(":n", name);
+                        if (dq.exec() && dq.next()) dept = dq.value(0).toString();
 
-                        QString baseDir = QCoreApplication::applicationDirPath() + "/server/AiChat/";
-                        QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
-                        QDir dir; dir.mkpath(baseDir + folderName);
-
-                        QString filePath = baseDir + folderName + "/Session_" + sessionId + ".doc";
-                        QFile file(filePath);
-                        if (file.open(QIODevice::Append | QIODevice::Text)) {
-                            QTextStream out(&file); out.setEncoding(QStringConverter::Utf8);
-                            QString roleName = (role == "user") ? QString("员工本人 (%1)").arg(name) : "AI 管家回复";
-                            QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-                            out << QString("【%1】 %2:\n%3\n\n----------------------------------------------------\n\n").arg(timeStr, roleName, content);
-                            file.close();
+                        QTime startTime(9, 0), endTime(18, 0);
+                        int absentMins = 120;
+                        QSqlQuery sq(threadDb);
+                        sq.prepare("SELECT start_time, end_time, absent_mins FROM shift_rules WHERE dept = :d OR dept = '全部' ORDER BY (dept = :d) DESC LIMIT 1");
+                        sq.bindValue(":d", dept);
+                        if (sq.exec() && sq.next()) {
+                            startTime = sq.value(0).toTime();
+                            endTime = sq.value(1).toTime();
+                            absentMins = sq.value(2).toInt();
                         }
+
+                        QString status = "正常打卡";
+                        if (currentTime < QTime(12, 0)) {
+                            int secsLate = startTime.secsTo(currentTime);
+                            if (secsLate > 0) {
+                                status = (secsLate > absentMins * 60) ? "旷工" : "迟到";
+                            }
+                        }
+                        else {
+                            status = (currentTime < endTime) ? "早退" : "正常下班";
+                        }
+
+                        QSqlQuery insertQuery(threadDb);
+                        insertQuery.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (:n, :t, :s)");
+                        insertQuery.bindValue(":n", name);
+                        insertQuery.bindValue(":t", timeStr);
+                        insertQuery.bindValue(":s", status);
+
+                        if (insertQuery.exec()) {
+                            QMetaObject::invokeMethod(this, [this, name, status]() {
+                                logMessage(QString("<font color='#00B42A'>考勤中心: 成功记录 [%1] 的考勤: %2</font>").arg(name, status));
+                                loadGlobalRecords();
+                                }, Qt::QueuedConnection);
+                        }
+                    }
+                    else if (type == "rule_settings") {
+                        QSqlQuery q(threadDb);
+                        q.prepare("REPLACE INTO shift_rules (dept, rule_name, start_time, end_time, late_mins, absent_mins) VALUES (?, ?, ?, ?, ?, ?)");
+                        q.addBindValue(json["dept"].toString());
+                        q.addBindValue(json["rule_name"].toString());
+                        q.addBindValue(json["start_time"].toString());
+                        q.addBindValue(json["end_time"].toString());
+                        q.addBindValue(json["late_mins"].toInt());
+                        q.addBindValue(json["absent_mins"].toInt());
+                        q.exec();
+                        QMetaObject::invokeMethod(this, [this]() { logMessage("<font color='#E6A23C'>规则中心: 管理层更新了企业排班规则。</font>"); }, Qt::QueuedConnection);
+                    }
+                    else if (type == "status_update") {
+                        QSqlQuery q(threadDb);
+                        q.prepare("UPDATE users SET status_icon = :s WHERE name = :n");
+                        q.bindValue(":s", json["status"].toString());
+                        q.bindValue(":n", json["name"].toString());
+                        q.exec();
+                    }
+                    else if (type == "punch_cheat") {
+                        QSqlQuery q(threadDb);
+                        q.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, NOW(), '作弊打卡')");
+                        q.addBindValue(json["name"].toString());
+                        q.exec();
+                        QMetaObject::invokeMethod(this, [this, json]() {
+                            logMessage(QString("<font color='red'>安全警报: 员工 [%1] 多次人脸核验失败，强制记为作弊！</font>").arg(json["name"].toString()));
+                            loadGlobalRecords();
+                            }, Qt::QueuedConnection);
+                    }
+                    else if (type == "appeal_request") {
+                        QSqlQuery ins(threadDb);
+                        ins.prepare("INSERT INTO appeals (applicant, abnormal_time, original_status, reason, approver, status) VALUES (?, ?, ?, ?, ?, '待审批')");
+                        ins.addBindValue(json["applicant"].toString());
+                        ins.addBindValue(json["abnormal_time"].toString());
+                        ins.addBindValue(json["original_status"].toString());
+                        ins.addBindValue(json["reason"].toString());
+                        ins.addBindValue(json["approver"].toString());
+                        ins.exec();
+                    }
+                    else if (type == "leave_request") {
+                        QSqlQuery ins(threadDb);
+                        ins.prepare("INSERT INTO leave_requests (applicant, leave_type, start_time, end_time, reason, approver, status) VALUES (?, ?, ?, ?, ?, ?, '待审批')");
+                        ins.addBindValue(json["applicant"].toString());
+                        ins.addBindValue(json["leave_type"].toString());
+                        ins.addBindValue(json["start_time"].toString());
+                        ins.addBindValue(json["end_time"].toString());
+                        ins.addBindValue(json["reason"].toString());
+                        ins.addBindValue(json["approver"].toString());
+                        ins.exec();
+                    }
+                    else if (type == "leave_approve") {
+                        int reqId = json["reqId"].toInt();
+                        QString applicant = json["applicant"].toString();
+                        QString sTimeStr = json["start_time"].toString();
+                        QString eTimeStr = json["end_time"].toString();
+                        QString lType = json["leave_type"].toString();
+
+                        QSqlQuery upd(threadDb);
+                        upd.exec(QString("UPDATE leave_requests SET status='已批准' WHERE id=%1").arg(reqId));
+
+                        QString finalStatus = "假-" + lType;
+                        QDate sDate = QDate::fromString(sTimeStr.left(10), "yyyy-MM-dd");
+                        QDate eDate = QDate::fromString(eTimeStr.left(10), "yyyy-MM-dd");
+
+                        if (sDate.isValid() && eDate.isValid() && sDate <= eDate) {
+                            for (QDate d = sDate; d <= eDate; d = d.addDays(1)) {
+                                QString punchTime = d.toString("yyyy-MM-dd") + " 09:00:00";
+                                QSqlQuery insertQ(threadDb);
+                                insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
+                                insertQ.addBindValue(applicant);
+                                insertQ.addBindValue(punchTime);
+                                insertQ.addBindValue(finalStatus);
+                                insertQ.exec();
+                            }
+                        }
+                        QMetaObject::invokeMethod(this, [this, applicant]() {
+                            logMessage(QString("<font color='#67C23A'>流程审批: [%1] 的请假已获批准，多天流水已连片入库。</font>").arg(applicant));
+                            loadGlobalRecords();
+                            }, Qt::QueuedConnection);
+                    }
+                    else if (type == "appeal_approve") {
+                        int reqId = json["reqId"].toInt();
+                        QString applicant = json["applicant"].toString();
+                        QString aTime = json["abnormal_time"].toString();
+                        QString aType = json["appeal_type"].toString();
+
+                        QSqlQuery upd(threadDb);
+                        upd.exec(QString("UPDATE appeals SET status='已批准' WHERE id=%1").arg(reqId));
+                        if (aType == "整天申诉") {
+                            upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
+                        }
+                        else {
+                            upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
+                        }
+                        QMetaObject::invokeMethod(this, [this, applicant]() {
+                            loadGlobalRecords();
+                            }, Qt::QueuedConnection);
+                    }
+                    else if (type == "register_face") {
+                        QString name = json["name"].toString();
+                        QByteArray featureData = QByteArray::fromBase64(json["feature"].toString().toUtf8());
+
+                        QSqlQuery q(threadDb);
+                        q.prepare("UPDATE users SET feature = :f WHERE name = :n");
+                        q.bindValue(":f", featureData);
+                        q.bindValue(":n", name);
+                        q.exec();
+                    }
+                    else if (type == "query_my_requests") {
+                        QString name = json["name"].toString().trimmed();
+                        QJsonObject response;
+                        response["status"] = "success";
+
+                        QJsonArray leaveArr;
+                        QSqlQuery lq(threadDb);
+                        QString lqStr = QString("SELECT leave_type, start_time, end_time, reason, approver, status FROM leave_requests WHERE applicant LIKE '%%%1%%' ORDER BY id DESC").arg(name);
+                        if (lq.exec(lqStr)) {
+                            while (lq.next()) {
+                                QJsonObject row;
+                                row["type"] = lq.value(0).toString();
+                                row["start"] = lq.value(1).toDateTime().toString("MM-dd HH:mm");
+                                row["end"] = lq.value(2).toDateTime().toString("MM-dd HH:mm");
+                                row["reason"] = lq.value(3).toString();
+                                row["approver"] = lq.value(4).toString();
+                                row["status"] = lq.value(5).toString();
+                                leaveArr.append(row);
+                            }
+                        }
+                        response["leave_data"] = leaveArr;
+
+                        QJsonArray appealArr;
+                        QSqlQuery aq(threadDb);
+                        QString aqStr = QString("SELECT abnormal_time, original_status, reason, approver, status FROM appeals WHERE applicant LIKE '%%%1%%' ORDER BY id DESC").arg(name);
+                        if (aq.exec(aqStr)) {
+                            while (aq.next()) {
+                                QJsonObject row;
+                                row["time"] = aq.value(0).toDateTime().toString("MM-dd HH:mm");
+                                row["type"] = aq.value(1).toString();
+                                row["reason"] = aq.value(2).toString();
+                                row["approver"] = aq.value(3).toString();
+                                row["status"] = aq.value(4).toString();
+                                appealArr.append(row);
+                            }
+                        }
+                        response["appeal_data"] = appealArr;
+
+                        QByteArray outData = QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n";
+                        QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); }, Qt::QueuedConnection);
                     }
                     else if (type == "ai_audit_file") {
                         QString name = json["name"].toString();
@@ -1303,113 +1425,6 @@ void AttendanceServer::onReadyRead() {
                         QMetaObject::invokeMethod(this, [this, name, fileName]() {
                             logMessage(QString("<font color='#00B42A'>AI 附件审计: 拦截并备份了 [%1] 上传的 AI 附件 '%2'。</font>").arg(name, fileName));
                             }, Qt::QueuedConnection);
-                    }
-                    else if (type == "chat" || type == "image" || type == "file") {
-                        QString fromUser = json["from"].toString(); QString toUser = json["to"].toString(); QString content = json["msg"].toString();
-
-                        if (type == "chat") {
-                            QMetaObject::invokeMethod(this, [this, fromUser, toUser, content]() {
-                                logMessage(QString("<font color='#E6A23C'>单聊审计: [%1] -> [%2]: %3</font>").arg(fromUser, toUser, content));
-                                }, Qt::QueuedConnection);
-                        }
-
-                        if (type == "file" || type == "image") {
-                            QString fileName = json["filename"].toString();
-                            if (fileName.isEmpty()) fileName = "image_audit_" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss") + ".png";
-
-                            QString folderName = "Unknown";
-                            QSqlQuery query(threadDb); query.prepare("SELECT id, name, department, job_title FROM users WHERE name = :n"); query.bindValue(":n", fromUser);
-                            if (query.exec() && query.next()) {
-                                QString id = query.value(0).toString(); QString n = query.value(1).toString();
-                                QString d = query.value(2).toString(); QString j = query.value(3).toString();
-                                if (d.isEmpty()) d = "未分配部门"; if (j.isEmpty() || j == "未分配") j = "员工";
-                                folderName = QString("%1_%2_%3_%4").arg(id, n, d, j);
-                            }
-
-                            QByteArray fileData = QByteArray::fromBase64(content.toUtf8());
-                            QString serverDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/server/" + folderName;
-                            QDir().mkpath(serverDirPath);
-                            QFile file(serverDirPath + "/" + fileName);
-                            if (file.open(QIODevice::WriteOnly)) {
-                                file.write(fileData); file.close();
-                                QMetaObject::invokeMethod(this, [this, fromUser, fileName]() {
-                                    logMessage(QString("<font color='#67C23A'>文件审计: 拦截到单聊 [%1] 发送的文件 '%2'。</font>").arg(fromUser, fileName));
-                                    }, Qt::QueuedConnection);
-                            }
-                        }
-
-                        bool isOnline = false;
-                        QMetaObject::invokeMethod(this, [this, toUser, &isOnline]() { isOnline = m_nameToSocket.contains(toUser); }, Qt::BlockingQueuedConnection);
-
-                        if (isOnline) {
-                            QTcpSocket* targetSocket = nullptr;
-                            QMetaObject::invokeMethod(this, [this, toUser, &targetSocket]() { targetSocket = m_nameToSocket[toUser]; }, Qt::BlockingQueuedConnection);
-                            if (targetSocket) QMetaObject::invokeMethod(targetSocket, [targetSocket, data]() { targetSocket->write(data); }, Qt::QueuedConnection);
-                        }
-                        else {
-                            QSqlQuery insertQ(threadDb);
-                            insertQ.prepare("INSERT INTO offline_messages (sender, receiver, department, msg_type, content, filename, send_time) VALUES (:s, :r, '', :t, :c, :f, NOW())");
-                            insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", toUser);
-                            insertQ.bindValue(":t", type); insertQ.bindValue(":c", content);
-                            insertQ.bindValue(":f", json["filename"].toString()); insertQ.exec();
-                            QMetaObject::invokeMethod(this, [this, toUser]() { logMessage(QString("不在线，文件/消息转入离线信箱。").arg(toUser)); }, Qt::QueuedConnection);
-                        }
-                    }
-                    else if (type.startsWith("group_")) {
-                        QString fromUser = json["from"].toString(); QString dept = json["department"].toString(); QString content = json["msg"].toString();
-
-                        QMetaObject::invokeMethod(this, [this, fromUser, dept]() {
-                            logMessage(QString("<font color='#9C27B0'>群发路由: [%1] 向 [%2] 发送了群消息。</font>").arg(fromUser, dept));
-                            }, Qt::QueuedConnection);
-
-                        if (type == "group_file" || type == "group_image") {
-                            QString fileName = json["filename"].toString();
-                            if (fileName.isEmpty()) fileName = "group_audit_" + QDateTime::currentDateTime().toString("yyyyMMddHHmmss") + ".png";
-
-                            QString folderName = "Unknown";
-                            QSqlQuery query(threadDb); query.prepare("SELECT id, name, department, job_title FROM users WHERE name = :n"); query.bindValue(":n", fromUser);
-                            if (query.exec() && query.next()) {
-                                QString id = query.value(0).toString(); QString n = query.value(1).toString();
-                                QString d = query.value(2).toString(); QString j = query.value(3).toString();
-                                if (d.isEmpty()) d = "未分配部门"; if (j.isEmpty() || j == "未分配") j = "员工";
-                                folderName = QString("%1_%2_%3_%4").arg(id, n, d, j);
-                            }
-
-                            QByteArray fileData = QByteArray::fromBase64(content.toUtf8());
-                            QString serverDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/server/" + folderName;
-                            QDir().mkpath(serverDirPath);
-                            QFile file(serverDirPath + "/" + fileName);
-                            if (file.open(QIODevice::WriteOnly)) {
-                                file.write(fileData); file.close();
-                                QMetaObject::invokeMethod(this, [this, fromUser, dept, fileName]() {
-                                    logMessage(QString("<font color='#67C23A'>群文件审计: 拦截到 [%1] 发送到群 [%2] 的文件 '%3'。</font>").arg(fromUser, dept, fileName));
-                                    }, Qt::QueuedConnection);
-                            }
-                        }
-
-                        QSqlQuery groupQ(threadDb);
-                        if (dept == "公司总群") groupQ.exec("SELECT name FROM users WHERE role != '超级管理员' AND account != 'admin'");
-                        else { groupQ.prepare("SELECT name FROM users WHERE department = :d AND role != '超级管理员'"); groupQ.bindValue(":d", dept); groupQ.exec(); }
-
-                        while (groupQ.next()) {
-                            QString member = groupQ.value(0).toString().trimmed();
-                            if (member == fromUser) continue;
-
-                            bool isOnline = false;
-                            QMetaObject::invokeMethod(this, [this, member, &isOnline]() { isOnline = m_nameToSocket.contains(member); }, Qt::BlockingQueuedConnection);
-
-                            if (isOnline) {
-                                QTcpSocket* targetSocket = nullptr;
-                                QMetaObject::invokeMethod(this, [this, member, &targetSocket]() { targetSocket = m_nameToSocket[member]; }, Qt::BlockingQueuedConnection);
-                                if (targetSocket) QMetaObject::invokeMethod(targetSocket, [targetSocket, data]() { targetSocket->write(data); }, Qt::QueuedConnection);
-                            }
-                            else {
-                                QSqlQuery insertQ(threadDb);
-                                insertQ.prepare("INSERT INTO offline_messages (sender, receiver, department, msg_type, content, filename, send_time) VALUES (:s, :r, :d, :t, :c, :f, NOW())");
-                                insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", member); insertQ.bindValue(":d", dept);
-                                insertQ.bindValue(":t", type); insertQ.bindValue(":c", content); insertQ.bindValue(":f", json["filename"].toString()); insertQ.exec();
-                            }
-                        }
                     }
                 }
             }
@@ -1441,12 +1456,15 @@ void AttendanceServer::updateOnlineUsersTable() {
 void AttendanceServer::initDatabase() {
     if (!QSqlDatabase::contains("server_db_connection")) {
         QSqlDatabase db = QSqlDatabase::addDatabase("QODBC", "server_db_connection");
-        QString dsn = QString("DRIVER={MySQL ODBC 8.0 Unicode Driver};SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;UID=root;PWD=root;");
+        QString dsn = QString("DRIVER={MySQL ODBC 8.0 Unicode Driver};SERVER=127.0.0.1;PORT=3305;DATABASE=attendance_db;UID=root;PWD=root;CHARSET=utf8mb4;");
         db.setDatabaseName(dsn);
         if (!db.open()) return;
     }
     QSqlDatabase db = QSqlDatabase::database("server_db_connection"); QSqlQuery query(db);
-    query.exec("SET NAMES utf8mb4"); query.exec("SET GLOBAL max_allowed_packet = 67108864");
+
+    // 🚀 初始化连接防吞字符集设置
+    query.exec("SET NAMES utf8mb4");
+    query.exec("SET GLOBAL max_allowed_packet = 67108864");
 
     query.exec("CREATE TABLE IF NOT EXISTS offline_messages (id INT AUTO_INCREMENT PRIMARY KEY, sender VARCHAR(50), receiver VARCHAR(50), department VARCHAR(50), msg_type VARCHAR(20), content LONGTEXT, filename VARCHAR(255), send_time DATETIME)");
     query.exec("ALTER TABLE offline_messages ADD COLUMN department VARCHAR(50) DEFAULT ''");
@@ -1480,6 +1498,13 @@ void AttendanceServer::initDatabase() {
         "late_mins INT, "
         "absent_mins INT)");
     query.exec("INSERT IGNORE INTO shift_rules (dept, rule_name, start_time, end_time, late_mins, absent_mins) VALUES ('全部', '常规班', '09:00:00', '18:00:00', 30, 120)");
+    query.exec("CREATE TABLE IF NOT EXISTS system_announcements (id INT AUTO_INCREMENT PRIMARY KEY, publisher VARCHAR(50), content TEXT, publish_time DATETIME)");
+    query.exec("CREATE TABLE IF NOT EXISTS ai_sessions (session_id VARCHAR(50) PRIMARY KEY, user_name VARCHAR(50), title VARCHAR(100), create_time DATETIME, is_visible INT DEFAULT 1, last_message TEXT)");
+    query.exec("CREATE TABLE IF NOT EXISTS ai_chat_logs (id INT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(50), role VARCHAR(20), content LONGTEXT, create_time DATETIME)");
+
+    // 🚀 核心增加建表与防吞表情包编码强制转换
+    query.exec("CREATE TABLE IF NOT EXISTS chat_history (id INT AUTO_INCREMENT PRIMARY KEY, sender VARCHAR(50), receiver VARCHAR(50), msg_type VARCHAR(20), content LONGTEXT, filename VARCHAR(255), send_time DATETIME, is_group INT)");
+    query.exec("ALTER TABLE chat_history CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 }
 
 void AttendanceServer::loadGlobalRecords() {
