@@ -63,10 +63,10 @@
     <QtMoc Include="AttendanceServer.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="Centerandcombodelegate.h">
+    <QtMoc Include="ServerLogin.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="ServerLogin.h">
+    <QtMoc Include="CenterAndComboDelegate.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

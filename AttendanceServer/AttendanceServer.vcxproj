@@ -113,7 +113,7 @@
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="ServerLogin.h" />
-    <QtMoc Include="Centerandcombodelegate.h" />
+    <QtMoc Include="CenterAndComboDelegate.h" />
     <ClInclude Include="Databasemanager.h" />
     <ClInclude Include="Requesthandler.h" />
   </ItemGroup>
