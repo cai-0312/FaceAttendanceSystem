@@ -349,7 +349,7 @@ void PunchModule::onAppealRequestClicked() {
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
 
-    bool isGM = (applicantDept == "总经办" && (applicantJob == "总经理" || applicantJob == "总裁"));
+    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理" );
     bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
     bool isTwoLevel = false;
 
@@ -544,7 +544,7 @@ void PunchModule::onLeaveRequestClicked()
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
 
-    bool isGM = (applicantDept == "总经办" && (applicantJob == "总经理" || applicantJob == "总裁"));
+    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理" );
     bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
     bool isTwoLevel = false;
 
