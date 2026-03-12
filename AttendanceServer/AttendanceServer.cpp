@@ -31,6 +31,7 @@ AttendanceServer::AttendanceServer(QWidget* parent)
 
     // 2. 初始化 UI 控件、模型、信号槽
     initUI();
+    initDispatchTable();
 }
 
 AttendanceServer::~AttendanceServer()
