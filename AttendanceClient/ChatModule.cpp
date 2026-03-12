@@ -331,10 +331,10 @@ void ChatModule::onContactSwitched(int currentRow) {
 
                 QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
                 if (mType.contains("image")) {
-                    displayMsg = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, content);
+                    displayMsg = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击查看原图)</a>").arg(fileUrl, suffix, content);
                 }
                 else {
-                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 历史附件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fName);
+                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 历史附件: %2<br><span style='font-size:12px;'>(点击打开文件)</span></a>").arg(fileUrl, fName);
                 }
             }
             else {

@@ -92,11 +92,30 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Centerandcombodelegate.cpp">
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
+    </ClCompile>
+    <ClCompile Include="Requesthandler_part1.cpp" />
+    <ClCompile Include="Requesthandler_part2.cpp" />
+    <ClCompile Include="Requesthandler_part3.cpp" />
+    <ClCompile Include="Requesthandler_part4.cpp" />
+    <ClCompile Include="ServerLogin.cpp" />
     <QtRcc Include="AttendanceServer.qrc" />
     <QtUic Include="AttendanceServer.ui" />
     <QtMoc Include="AttendanceServer.h" />
     <ClCompile Include="AttendanceServer.cpp" />
+    <ClCompile Include="Databasemanager.cpp" />
     <ClCompile Include="main.cpp" />
+    <QtUic Include="ServerLogin.ui" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="ServerLogin.h" />
+    <QtMoc Include="Centerandcombodelegate.h" />
+    <ClInclude Include="Databasemanager.h" />
+    <ClInclude Include="Requesthandler.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

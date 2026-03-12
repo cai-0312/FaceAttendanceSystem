@@ -2,7 +2,6 @@
 #include "ui_AttendanceClient.h"
 #include "MainWidget.h"
 #include <QMessageBox>
-#include <QDebug>
 #include <QGraphicsDropShadowEffect> 
 #include <QRegularExpression> 
 #include <QTcpSocket>
@@ -10,6 +9,23 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStyledItemDelegate> // 🚀 用于渲染高级下拉框
+#include <QPainter>
+#include <QPixmap>
+#include <QIcon>
+
+// 🚀 核心修复：提取为静态工具函数，方便程序启动和点击时随时调用，强行放大 emoji
+static QIcon createEmojiIcon(const QString& text, const QString& colorHex) {
+    QPixmap pix(26, 26);
+    pix.fill(Qt::transparent);
+    QPainter painter(&pix);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setPen(QColor(colorHex));
+    QFont font = painter.font();
+    font.setPixelSize(16); // 保证图标足够大、清晰
+    painter.setFont(font);
+    painter.drawText(pix.rect(), Qt::AlignCenter, text);
+    return QIcon(pix);
+}
 
 // 🚀 核心通讯组件：登录和注册必须通过服务器网关进行验证 (逻辑完全未动)
 static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
@@ -36,8 +52,7 @@ static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
 
 AttendanceClient::AttendanceClient(QWidget* parent) :
     QWidget(parent),
-    ui(new Ui::AttendanceClientClass),
-    m_isPwdVisible(false)
+    ui(new Ui::AttendanceClientClass)
 {
     ui->setupUi(this);
 
@@ -54,10 +69,13 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
     connect(ui->btn_Min, &QPushButton::clicked, this, &AttendanceClient::on_btn_Min_clicked);
 
     ui->stackedWidget->setCurrentIndex(0);
-    ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
 
-    m_pwdAction = ui->lineEdit_pwd->addAction(QIcon(), QLineEdit::TrailingPosition);
-    m_pwdAction->setText("👁️");
+    // 🚀 核心修复：初始化时默认隐藏密码，并强行渲染高对比度的大尺寸猴子图标
+    m_isPwdVisible = false;
+    ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
+    m_pwdAction = ui->lineEdit_pwd->addAction(createEmojiIcon("🙈", "#86909C"), QLineEdit::TrailingPosition);
+    m_pwdAction->setToolTip("显示密码");
+
     connect(m_pwdAction, &QAction::triggered, this, &AttendanceClient::togglePasswordVisibility);
     ui->lineEdit_pwd->setCursor(Qt::IBeamCursor);
 
@@ -101,15 +119,21 @@ AttendanceClient::~AttendanceClient() {
     delete ui;
 }
 
+// 🚀 核心修复：点击时调用独立的绘图函数切换图标外观
 void AttendanceClient::togglePasswordVisibility() {
     m_isPwdVisible = !m_isPwdVisible;
+
     if (m_isPwdVisible) {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Normal);
-        m_pwdAction->setText("🙈");
+        // 睁眼，亮蓝色
+        m_pwdAction->setIcon(createEmojiIcon("👀", "#165DFF"));
+        m_pwdAction->setToolTip("隐藏密码");
     }
     else {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
-        m_pwdAction->setText("👁️");
+        // 闭眼，深灰色
+        m_pwdAction->setIcon(createEmojiIcon("🙈", "#86909C"));
+        m_pwdAction->setToolTip("显示密码");
     }
 }
 

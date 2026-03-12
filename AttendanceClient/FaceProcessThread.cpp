@@ -8,7 +8,7 @@ FaceProcessThread::FaceProcessThread(QObject* parent) : QThread(parent), isRunni
     QString detectModel = "D:/models/retinaface_static.onnx";
     faceEngine = new RetinaFaceDecoder(detectModel.toStdString());
 
-    QString recogModel = "D:/models/arcface_mobilefacenet.onnx";
+    QString recogModel = "D:/models/w600k_r50.onnx";
     try {
         arcfaceNet = cv::dnn::readNetFromONNX(recogModel.toStdString());
         if (!arcfaceNet.empty()) {
