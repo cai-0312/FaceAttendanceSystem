@@ -37,7 +37,6 @@ private slots:
     void onStatusChanged(const QString& status);
 
 private:
-    void initDatabase();
     void loadRegisteredUsers();
 
 private:

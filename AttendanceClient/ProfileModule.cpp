@@ -1,5 +1,7 @@
 #include "ProfileModule.h"
+#include "NetworkHelper.h" 
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QDir>
 #include <QMessageBox>
 #include <QVBoxLayout>
@@ -30,33 +32,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-
-// 🚀 核心通讯工具：保证数据同步完整到达
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
-
-static void sendCommandToServer(const QJsonObject& json) {
-    requestDataFromServer(json);
-}
 
 ProfileModule::ProfileModule(QLabel* avatarLabel, QLabel* nameLabel, QLabel* deptLabel,
     QLabel* genderLabel, QLabel* phoneLabel,
@@ -161,106 +136,125 @@ void ProfileModule::injectAdvancedUI() {
     connect(m_settingsBtn, &QPushButton::clicked, this, &ProfileModule::onPreferencesClicked);
 }
 
-// 🚀 核心改造 1：向服务器拉取个人信息与巨型头像数据
 void ProfileModule::loadUserProfile(const QString& username) {
     m_currentUser = username;
-    if (m_currentUser.isEmpty()) return;
+
+    // 🚨 自检 1：检查主窗口有没有把登录名传过来
+    if (m_currentUser.isEmpty()) {
+        if (m_nameLabel) m_nameLabel->setText("❌ 错误：登录名丢失，未能获取数据！");
+        return;
+    }
+
+    if (m_nameLabel) m_nameLabel->setText("⏳ 正在努力向服务器拉取数据...");
 
     QJsonObject req;
     req["type"] = "query_user_profile";
     req["name"] = username;
-    QJsonObject res = requestDataFromServer(req);
 
-    if (res["status"].toString() == "success") {
-        QString formattedId = QString("%1").arg(res["id"].toInt(), 3, 10, QChar('0'));
-        QString jobTitle = res["job_title"].toString();
-        QString role = res["role"].toString();
-        QString dept = res["department"].toString();
-        QString genderStr = res["gender"].toString().isEmpty() ? "未知" : res["gender"].toString();
-        QString phoneStr = res["phone"].toString().isEmpty() ? "未设置" : res["phone"].toString();
-        QString realName = res["real_name"].toString();
-        if (realName.isEmpty()) realName = username;
+    QJsonObject res = NetworkHelper::request(req);
 
-        if (m_nameLabel) m_nameLabel->setText("👤 姓名: " + realName);
-        if (m_deptLabel) m_deptLabel->setText(dept);
-        if (m_genderLabel) m_genderLabel->setText(QString("%1 &nbsp;<a href='edit_gender' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(genderStr));
-        if (m_phoneLabel) m_phoneLabel->setText(QString("%1 &nbsp;<a href='edit_phone' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(phoneStr));
+    // 🚨 自检 2：检查网络是否畅通
+    if (res.isEmpty()) {
+        if (m_nameLabel) m_nameLabel->setText("❌ 错误：网络断开或服务器未响应！");
+        return;
+    }
 
-        QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
-        if (window) {
-            QLabel* idLabel = window->findChild<QLabel*>("label_ProfileEmpId");
-            if (idLabel) idLabel->setText(formattedId);
-            QLabel* roleLabel = window->findChild<QLabel*>("label_ProfileRole");
-            if (roleLabel) roleLabel->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
-        }
+    // 🚨 自检 3：检查服务端数据库 SQL 语句是否报错
+    if (res["status"].toString() != "success") {
+        QString errMsg = res["msg"].toString();
+        if (errMsg.isEmpty()) errMsg = "未知数据库错误，请检查服务端代码！";
+        if (m_nameLabel) m_nameLabel->setText(QString("<font color='red'>❌ 服务端拒绝: %1</font>").arg(errMsg));
+        return;
+    }
 
-        // 异步二维码
-        QString cardData = QString("【员工信息】\n姓名: %1\n工号: %2\n部门: %3\n职务: %4\n电话: %5").arg(realName, formattedId, dept, jobTitle, phoneStr);
-        QNetworkAccessManager* mgr = new QNetworkAccessManager(this);
-        QUrl url("http://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" + QUrl::toPercentEncoding(cardData));
-        QNetworkReply* reply = mgr->get(QNetworkRequest(url));
-        connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, window]() {
-            if (reply->error() == QNetworkReply::NoError) {
-                QPixmap pixmap;
-                pixmap.loadFromData(reply->readAll());
-                if (window) {
-                    QLabel* qrLabel = window->findChild<QLabel*>("label_QRCode");
-                    if (qrLabel) qrLabel->setPixmap(pixmap);
-                }
+    // 走到这里说明 100% 成功，正常渲染 UI
+    QString formattedId = QString("%1").arg(res["id"].toInt(), 3, 10, QChar('0'));
+    QString jobTitle = res["job_title"].toString();
+    QString role = res["role"].toString();
+    QString dept = res["department"].toString();
+    QString genderStr = res["gender"].toString().isEmpty() ? "未知" : res["gender"].toString();
+    QString phoneStr = res["phone"].toString().isEmpty() ? "未设置" : res["phone"].toString();
+    QString realName = res["real_name"].toString();
+    if (realName.isEmpty()) realName = username;
+
+    if (m_nameLabel) m_nameLabel->setText("👤 姓名: " + realName);
+    if (m_deptLabel) m_deptLabel->setText(dept);
+    if (m_genderLabel) m_genderLabel->setText(QString("%1 &nbsp;<a href='edit_gender' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(genderStr));
+    if (m_phoneLabel) m_phoneLabel->setText(QString("%1 &nbsp;<a href='edit_phone' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(phoneStr));
+
+    QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
+    if (window) {
+        QLabel* idLabel = window->findChild<QLabel*>("label_ProfileEmpId");
+        if (idLabel) idLabel->setText(formattedId);
+        QLabel* roleLabel = window->findChild<QLabel*>("label_ProfileRole");
+        if (roleLabel) roleLabel->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
+    }
+
+    // 异步二维码
+    QString cardData = QString("【员工信息】\n姓名: %1\n工号: %2\n部门: %3\n职务: %4\n电话: %5").arg(realName, formattedId, dept, jobTitle, phoneStr);
+    QNetworkAccessManager* mgr = new QNetworkAccessManager(this);
+    QUrl url("http://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" + QUrl::toPercentEncoding(cardData));
+    QNetworkReply* reply = mgr->get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, window]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QPixmap pixmap;
+            pixmap.loadFromData(reply->readAll());
+            if (window) {
+                QLabel* qrLabel = window->findChild<QLabel*>("label_QRCode");
+                if (qrLabel) qrLabel->setPixmap(pixmap);
             }
-            reply->deleteLater();
-            mgr->deleteLater();
+        }
+        reply->deleteLater();
+        mgr->deleteLater();
+        });
+
+    // 渲染服务器返回的 Base64 头像
+    QString avatarBase64 = res["avatar_base64"].toString();
+    if (!avatarBase64.isEmpty()) {
+        QFuture<QImage> future = QtConcurrent::run([avatarBase64]() -> QImage {
+            QImage result;
+            QImage img;
+            img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
+            if (!img.isNull()) {
+                int size = 130;
+                QImage scaledImg = img.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+                int cropX = (scaledImg.width() - size) / 2;
+                int cropY = (scaledImg.height() - size) / 2;
+                QImage squareImg = scaledImg.copy(cropX, cropY, size, size);
+                result = QImage(size, size, QImage::Format_ARGB32_Premultiplied);
+                result.fill(Qt::transparent);
+                QPainter painter(&result);
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform);
+                QPainterPath path;
+                path.addEllipse(0, 0, size, size);
+                painter.setClipPath(path);
+                painter.drawImage(0, 0, squareImg);
+                painter.end();
+            }
+            return result;
             });
 
-        // 渲染服务器返回的 Base64 头像
-        QString avatarBase64 = res["avatar_base64"].toString();
-        if (!avatarBase64.isEmpty()) {
-            QFuture<QImage> future = QtConcurrent::run([avatarBase64]() -> QImage {
-                QImage result;
-                QImage img;
-                img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
-                if (!img.isNull()) {
-                    int size = 130;
-                    QImage scaledImg = img.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-                    int cropX = (scaledImg.width() - size) / 2;
-                    int cropY = (scaledImg.height() - size) / 2;
-                    QImage squareImg = scaledImg.copy(cropX, cropY, size, size);
-                    result = QImage(size, size, QImage::Format_ARGB32_Premultiplied);
-                    result.fill(Qt::transparent);
-                    QPainter painter(&result);
-                    painter.setRenderHint(QPainter::Antialiasing);
-                    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-                    QPainterPath path;
-                    path.addEllipse(0, 0, size, size);
-                    painter.setClipPath(path);
-                    painter.drawImage(0, 0, squareImg);
-                    painter.end();
-                }
-                return result;
-                });
-
-            QFutureWatcher<QImage>* watcher = new QFutureWatcher<QImage>(this);
-            connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher]() {
-                QImage resImg = watcher->result();
-                if (!resImg.isNull() && m_avatarLabel) {
-                    m_avatarLabel->setPixmap(QPixmap::fromImage(resImg));
-                }
-                else if (m_avatarLabel) {
-                    QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
-                    m_avatarLabel->setPixmap(defaultAvatar);
-                }
-                watcher->deleteLater();
-                });
-            watcher->setFuture(future);
-        }
-        else if (m_avatarLabel) {
-            QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
-            m_avatarLabel->setPixmap(defaultAvatar);
-        }
+        QFutureWatcher<QImage>* watcher = new QFutureWatcher<QImage>(this);
+        connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher]() {
+            QImage resImg = watcher->result();
+            if (!resImg.isNull() && m_avatarLabel) {
+                m_avatarLabel->setPixmap(QPixmap::fromImage(resImg));
+            }
+            else if (m_avatarLabel) {
+                QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
+                m_avatarLabel->setPixmap(defaultAvatar);
+            }
+            watcher->deleteLater();
+            });
+        watcher->setFuture(future);
+    }
+    else if (m_avatarLabel) {
+        QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
+        m_avatarLabel->setPixmap(defaultAvatar);
     }
 }
 
-// 🚀 核心改造 2：通过网络修改性别
 void ProfileModule::onEditGenderClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("修改性别");
@@ -281,38 +275,61 @@ void ProfileModule::onEditGenderClicked() {
         req["name"] = m_currentUser;
         req["field"] = "gender";
         req["value"] = genderCombo->currentText();
-        sendCommandToServer(req);
+
+        QJsonObject res = NetworkHelper::request(req);
+        if (res["status"].toString() != "success") {
+            QMessageBox::warning((QWidget*)this->parent(), "错误", "更新失败: " + res["msg"].toString());
+        }
         loadUserProfile(m_currentUser);
     }
 }
 
-// 🚀 核心改造 3：通过网络修改电话
 void ProfileModule::onEditPhoneClicked() {
-    QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("修改联系电话");
-    dialog.resize(280, 100);
-    QFormLayout form(&dialog);
-    QLineEdit* phoneEdit = new QLineEdit(&dialog);
-    phoneEdit->setPlaceholderText("请输入新手机号");
-    form.addRow("手机号:", phoneEdit);
+    bool ok;
+    QInputDialog dialog((QWidget*)this->parent());
+    dialog.setWindowTitle("修改手机号");
+    dialog.setLabelText("请输入11位中国大陆手机号:");
+    dialog.setOkButtonText("确认修改");
+    dialog.setCancelButtonText("取消");
 
-    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
-    form.addRow(&buttonBox);
-    connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    // 🚀 核心优化 1：限制只能输入数字，且最多11位
+    // 注意：QInputDialog 默认不暴露 QLineEdit，我们需要通过 findChild 获取
+    QLineEdit* lineEdit = dialog.findChild<QLineEdit*>();
+    if (lineEdit) {
+        // 只允许 0-9 且限制 11 位
+        QRegularExpression regx("[0-9]{11}");
+        QValidator* validator = new QRegularExpressionValidator(regx, lineEdit);
+        lineEdit->setValidator(validator);
+        lineEdit->setMaxLength(11);
+    }
 
     if (dialog.exec() == QDialog::Accepted) {
+        QString newPhone = dialog.textValue().trimmed();
+
+        // 🚀 核心优化 2：提交前的终极长度校验
+        if (newPhone.length() != 11) {
+            QMessageBox::warning((QWidget*)this->parent(), "格式错误", "手机号必须为11位数字！");
+            return;
+        }
+
+        // 验证通过，发送网络请求
         QJsonObject req;
         req["type"] = "update_profile_field";
         req["name"] = m_currentUser;
         req["field"] = "phone";
-        req["value"] = phoneEdit->text().trimmed();
-        sendCommandToServer(req);
-        loadUserProfile(m_currentUser);
+        req["value"] = newPhone;
+
+        QJsonObject res = NetworkHelper::request(req);
+        if (res["status"].toString() == "success") {
+            QMessageBox::information((QWidget*)this->parent(), "成功", "联系电话已更新。");
+            loadUserProfile(m_currentUser);
+        }
+        else {
+            QMessageBox::warning((QWidget*)this->parent(), "错误", "更新失败: " + res["msg"].toString());
+        }
     }
 }
 
-// 🚀 核心改造 4：通过网络验证并修改密码
 void ProfileModule::onChangePasswordClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("修改登录密码");
@@ -338,7 +355,8 @@ void ProfileModule::onChangePasswordClicked() {
         req["name"] = m_currentUser;
         req["old_pwd"] = oldPwdEdit->text();
         req["new_pwd"] = newPwdEdit->text();
-        QJsonObject res = requestDataFromServer(req);
+
+        QJsonObject res = NetworkHelper::request(req);
 
         if (res["status"].toString() == "success") {
             QMessageBox::information((QWidget*)this->parent(), "成功", "密码修改成功！下次登录生效。");
@@ -349,28 +367,48 @@ void ProfileModule::onChangePasswordClicked() {
     }
 }
 
-// 🚀 核心改造 5：上传巨型头像数据走 TCP
 void ProfileModule::onChangeAvatarClicked() {
     if (m_currentUser.isEmpty()) return;
+
     QString filePath = QFileDialog::getOpenFileName((QWidget*)this->parent(), "选择个人写真/头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
     if (filePath.isEmpty()) return;
-    QPixmap newAvatar;
-    if (!newAvatar.load(filePath)) {
+
+    QImage img;
+    if (!img.load(filePath)) {
         QMessageBox::warning((QWidget*)this->parent(), "错误", "无法加载该图片，请检查格式！");
         return;
     }
 
-    QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly);
-    newAvatar.save(&buffer, "PNG");
+    // 🚀 核心压缩防崩逻辑开始 🚀
+    // 1. 将图片按比例缩小到最大 256x256 像素（足够高分屏显示头像了）
+    QImage scaledImg = img.scaled(256, 256, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+
+    // 2. 将图片居中裁剪成正方形
+    int side = qMin(scaledImg.width(), scaledImg.height());
+    QImage squareImg = scaledImg.copy((scaledImg.width() - side) / 2, (scaledImg.height() - side) / 2, side, side);
+
+    // 3. 强力压缩：转为 JPG 格式，并且质量设置为 70%
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    squareImg.save(&buffer, "JPG", 70); // 原本 5MB 的 PNG，这步过后会变成约 15KB 的 JPG
+    // 🚀 核心压缩防崩逻辑结束 🚀
 
     QJsonObject req;
     req["type"] = "update_profile_field";
     req["name"] = m_currentUser;
     req["field"] = "avatar";
-    req["value"] = QString(bytes.toBase64());
-    sendCommandToServer(req);
+    req["value"] = QString(bytes.toBase64()); // 此时的 Base64 极小，绝对不会撑爆 MySQL
 
-    QMessageBox::information((QWidget*)this->parent(), "成功", "专属头像已上传并持久化保存。");
+    QJsonObject res = NetworkHelper::request(req);
+    if (res["status"].toString() != "success") {
+        QMessageBox::warning((QWidget*)this->parent(), "错误", "头像上传失败: " + res["msg"].toString());
+    }
+    else {
+        QMessageBox::information((QWidget*)this->parent(), "成功", "专属头像已上传并持久化保存。");
+    }
+
+    // 刷新 UI
     loadUserProfile(m_currentUser);
 }
 
@@ -395,11 +433,11 @@ void ProfileModule::onExportProfilePdfClicked() {
     int height = writer.height();
     int margin = 200;
 
-    // 为了 PDF，再请求一次基础信息保证不缺数据
     QJsonObject req;
     req["type"] = "query_user_profile";
     req["name"] = m_currentUser;
-    QJsonObject res = requestDataFromServer(req);
+
+    QJsonObject res = NetworkHelper::request(req);
 
     QString cleanGender = res["gender"].toString().isEmpty() ? "未知" : res["gender"].toString();
     QString cleanPhone = res["phone"].toString().isEmpty() ? "未设置" : res["phone"].toString();

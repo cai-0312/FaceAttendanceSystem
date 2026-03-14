@@ -77,12 +77,14 @@ private slots:
 private:
     void initUI();          ///< 初始化控件、模型、信号槽
     void updateOnlineUsersTable();
+    
 
     Ui::AttendanceServerClass* ui;
 
     QTcpServer* m_tcpServer;
     QMap<QTcpSocket*, ClientInfo> m_clients;
     QMap<QString, QTcpSocket*>    m_nameToSocket;
+    QMap<QTcpSocket*, QByteArray> m_buffers;
 
     QSqlQueryModel* m_globalRecordModel;
     QSqlTableModel* m_permModel;        ///< RBAC 权限管理模型

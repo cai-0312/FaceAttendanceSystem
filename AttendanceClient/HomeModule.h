@@ -27,7 +27,7 @@ public:
 
     void refreshDashboard();
 
-signals:
+signals:  
     void requestQuickLeave();
     void requestQuickAppeal();
     void requestApproveLeave();

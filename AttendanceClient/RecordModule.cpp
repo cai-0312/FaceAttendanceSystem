@@ -1,4 +1,5 @@
 #include "RecordModule.h"
+#include "NetworkHelper.h" // 🚀 引入加固后的网络引擎
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QFileDialog>
@@ -17,40 +18,10 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QDateTime>
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QThread>
-
-// 🚀 核心通讯组件优化：防止 JSON 回传过大导致的半空截断！
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            // 循环读取直到读到换行符（服务器发送的 JSON 结尾必然带有 \n）
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull() && doc.isObject()) {
-                responseJson = doc.object();
-            }
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
 
 RecordModule::RecordModule(QTableView* tableView, QCalendarWidget* calendar,
     QLabel* summaryLabel, QLabel* detailDateLabel,
@@ -183,7 +154,8 @@ void RecordModule::injectAdvancedUI() {
         QJsonObject req;
         req["type"] = "query_my_requests";
         req["name"] = m_loginName.trimmed();
-        QJsonObject res = requestDataFromServer(req);
+        // 🚀 核心替换：使用 NetworkHelper
+        QJsonObject res = NetworkHelper::request(req);
 
         if (res.isEmpty() || res["status"].toString() != "success") {
             QMessageBox::warning(&dlg, "网络异常", "无法从服务器获取申请进度，请检查服务端是否正常运行。");
@@ -260,7 +232,8 @@ void RecordModule::loadMonthlyDataAndColorize(int year, int month) {
     req["name"] = m_loginName.trimmed();
     req["year"] = year;
     req["month"] = month;
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 核心替换：使用 NetworkHelper
+    QJsonObject res = NetworkHelper::request(req);
 
     if (!res.isEmpty()) {
         int normalDays = res["normal_days"].toInt();
@@ -310,7 +283,8 @@ void RecordModule::onFilterClicked() {
     req["end_date"] = m_endDateEdit->date().toString("yyyy-MM-dd");
     req["status_filter"] = m_statusCombo->currentText();
 
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 核心替换：使用 NetworkHelper
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         QJsonArray records = res["records"].toArray();
@@ -375,7 +349,9 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
                     req["type"] = "admin_modify_status";
                     req["record_id"] = recordId.toInt();
                     req["new_status"] = newStatus;
-                    requestDataFromServer(req);
+
+                    // 🚀 核心替换：使用 NetworkHelper
+                    NetworkHelper::request(req);
 
                     QMessageBox::information(nullptr, "成功", "修改指令已下发！");
                     refreshData();

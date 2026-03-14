@@ -1,4 +1,5 @@
 #include "UserModule.h"
+#include "NetworkHelper.h" // 🚀 引入加固后的网络引擎
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QItemSelectionModel>
@@ -12,33 +13,9 @@
 #include <QDate>
 #include <QTimer>
 #include <QStandardItem>
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-
-// 🚀 核心通讯组件：绝不绕过服务器，统一通过 TCP 发送 JSON 请求数据
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
 
 UserModule::UserModule(QTableView* tableView, QComboBox* deptCombo, QPushButton* filterBtn, QWidget* parentWidget)
     : QObject(parentWidget), m_tableView(tableView), m_deptCombo(deptCombo), m_filterBtn(filterBtn), m_parentWidget(parentWidget)
@@ -120,7 +97,8 @@ void UserModule::refreshTable(QString filterDept) {
     req["dept"] = filterDept;
     req["keyword"] = keyword;
 
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 核心替换：使用 NetworkHelper
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         QJsonArray users = res["data"].toArray();
@@ -177,7 +155,9 @@ void UserModule::onResetPassword(int row) {
         req["type"] = "admin_reset_password";
         req["account"] = account;
         req["name"] = name;
-        QJsonObject res = requestDataFromServer(req);
+
+        // 🚀 核心替换：使用 NetworkHelper
+        QJsonObject res = NetworkHelper::request(req);
 
         if (res["status"].toString() == "success") {
             QMessageBox::information(m_parentWidget, "成功", "密码已成功重置为：123456");
@@ -210,7 +190,9 @@ void UserModule::deleteSelectedUser() {
         req["type"] = "admin_delete_user";
         req["account"] = account;
         req["name"] = name;
-        QJsonObject res = requestDataFromServer(req);
+
+        // 🚀 核心替换：使用 NetworkHelper
+        QJsonObject res = NetworkHelper::request(req);
 
         if (res["status"].toString() == "success") {
             QMessageBox::information(m_parentWidget, "成功", "员工已彻底离职/删除！");

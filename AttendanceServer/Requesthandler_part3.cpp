@@ -574,8 +574,9 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
     res["abnormal_records"] = abnArr;
 
     QJsonArray hrArr, gmArr, mgrArr;
+
     QSqlQuery hq(db);
-    hq.exec("SELECT name FROM users WHERE department='人力资源部' AND role IN ('管理员登录','经理') AND name NOT LIKE '%超级管理员%'");
+    hq.exec("SELECT name FROM users WHERE department='人力资源部' AND job_title='部门经理' AND name NOT LIKE '%超级管理员%'");
     while (hq.next()) hrArr.append(hq.value(0).toString());
 
     QSqlQuery gq(db);
@@ -583,7 +584,7 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
     while (gq.next()) gmArr.append(gq.value(0).toString());
 
     QSqlQuery mq(db);
-    mq.prepare("SELECT name FROM users WHERE department=:d AND role='经理' AND name != :me");
+    mq.prepare("SELECT name FROM users WHERE department=:d AND job_title='部门经理' AND name != :me");
     mq.bindValue(":d", res["my_dept"].toString());
     mq.bindValue(":me", name);
     mq.exec();

@@ -1,5 +1,6 @@
 #include "MainWidget.h"
 #include "ui_MainWidget.h"
+#include "NetworkHelper.h"
 #define NOMINMAX
 #include <windows.h>
 #include <QMessageBox>
@@ -17,55 +18,16 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
-
-// 🚀 核心通讯组件：同步请求数据，绝不直连数据库
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
-
-// 🚀 核心防崩修复 2：将 TCP 抛投放入独立微线程！
-static void sendLogicCommandToServer(const QJsonObject& json) {
-    QtConcurrent::run([json]() {
-        QTcpSocket socket;
-        socket.connectToHost("127.0.0.1", 9999);
-        if (socket.waitForConnected(1000)) {
-            socket.write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
-            socket.waitForBytesWritten(1000);
-            socket.disconnectFromHost();
-        }
-        });
-}
+#include <QApplication> 
 
 MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     : QWidget(parent), ui(new Ui::MainWidget), m_loginName(loginName), m_role(role)
 {
     ui->setupUi(this);
-    // initDatabase(); // 彻底剥离本地数据库连接
-
-    // 🚀 核心改造 1：向服务器请求本人的部门信息
     QJsonObject uReq;
     uReq["type"] = "query_user_dept";
     uReq["name"] = m_loginName;
-    QJsonObject uRes = requestDataFromServer(uReq);
+    QJsonObject uRes = NetworkHelper::request(uReq);
 
     QString dept = uRes["department"].toString();
     if (uRes.contains("real_name")) m_loginName = uRes["real_name"].toString();
@@ -79,6 +41,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     if (m_role == "普通登录") {
         ui->listWidget_Nav->item(4)->setHidden(true);
     }
+    QString originalAccount = loginName;
 
     recordModule = new RecordModule(ui->tableView_Records, ui->calendarWidget_Attendance, ui->label_SummaryData, ui->label_DetailDate, ui->lineEdit_SearchName, ui->btn_FilterDate, ui->btn_Export, m_loginName, m_role, this);
     punchModule = new PunchModule(ui->label_Camera_Punch, ui->btn_manualPunch, ui->label_MorningTime, ui->label_MorningStatus, ui->label_EveningTime, ui->label_EveningStatus, ui->btn_RuleSettings, ui->btn_LeaveRequest, ui->btn_LeaveApprove, ui->btn_AppealRequest, ui->btn_AppealApprove, ui->label_CurrentTime, m_role, m_loginName, this);
@@ -86,8 +49,10 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     registerModule = new RegisterModule(ui->label_Camera_Register, this);
     m_aiModule = new AIAssistantModule(ui->textBrowser_AI, ui->lineEdit_AIInput, ui->btn_SendAI, ui->btn_ClearAIHistory, m_loginName, this);
     homeModule = new HomeModule(ui->verticalLayout_Home, m_role, m_loginName, this);
+
+    // 注意：聊天模块内部有单独的 TCP 长连接，使用 NetworkHelper::serverIp() 获取统一配置的地址
     chatModule = new ChatModule(ui->listWidget_Contacts, ui->textBrowser_Chat, ui->lineEdit_ChatMessage, ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
-    chatModule->connectToServer("127.0.0.1", 9999, m_loginName);
+    chatModule->connectToServer(NetworkHelper::serverIp(), NetworkHelper::serverPort(), m_loginName);
 
     QPushButton* btnEditProfile = new QPushButton("✏️ 修改性别与电话", this);
     if (ui->formLayout_Profile) {
@@ -144,7 +109,9 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
                 req["type"] = "publish_announcement";
                 req["publisher"] = m_loginName;
                 req["content"] = msg;
-                sendLogicCommandToServer(req);
+
+                // ✅ 替换为统一的异步发送
+                NetworkHelper::sendAsync(req);
 
                 QMessageBox::information(this, "发送成功", "全员广播已下发，并已同步至首页系统公告看板！");
                 if (homeModule) homeModule->refreshDashboard();
@@ -202,6 +169,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
             else QMessageBox::warning(this, "越权拦截", "您没有权限访问员工管理！");
         }
         else if (row == 7) {
+            // 每次点击“个人中心”都会主动刷一次最新的数据
             profileModule->loadUserProfile(m_loginName);
         }
         });
@@ -225,7 +193,9 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
                 QJsonObject req;
                 req["type"] = "punch_request";
                 req["name"] = name;
-                sendLogicCommandToServer(req);
+
+                // ✅ 替换为统一的异步发送
+                NetworkHelper::sendAsync(req);
 
                 state.lastPunchTime = now;
                 state.punchCount++;
@@ -249,6 +219,8 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
 
     if (aiThread) aiThread->start();
     loadRegisteredUsers();
+
+    // 🚀 致命修复：启动时触发个人信息加载
     if (profileModule) profileModule->loadUserProfile(m_loginName);
     if (homeModule) homeModule->refreshDashboard();
 }
@@ -258,15 +230,13 @@ MainWidget::~MainWidget() {
     delete ui;
 }
 
-void MainWidget::initDatabase() {
-    // 已经彻底废弃，防止外部直接引用
-}
-
 // 🚀 核心改造 3：通过 TCP 从服务器下载人脸特征库（防止多线程崩溃）
 void MainWidget::loadRegisteredUsers() {
     QJsonObject req;
     req["type"] = "query_face_features";
-    QJsonObject res = requestDataFromServer(req);
+
+    // ✅ 替换为使用统一的 NetworkHelper 请求（能安全接收超大体积的人脸特征库）
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         std::map<QString, cv::Mat> users;
@@ -298,17 +268,23 @@ void MainWidget::onStatusChanged(const QString& status) {
     req["type"] = "status_update";
     req["name"] = m_loginName;
     req["status"] = status;
-    sendLogicCommandToServer(req);
+
+    // ✅ 替换为统一的异步发送
+    NetworkHelper::sendAsync(req);
 }
 
 void MainWidget::closeEvent(QCloseEvent* event) {
     event->accept();
     this->hide();
+
+    // 安全释放摄像头
     if (aiThread) {
         aiThread->forceReleaseCamera();
         aiThread->terminate();
-        aiThread->wait(100);
+        aiThread->wait(500);
     }
-    HANDLE hProcess = GetCurrentProcess();
-    TerminateProcess(hProcess, 0);
+
+    // 🚀 安全退出修复：抛弃粗暴的 TerminateProcess，改用 Qt 官方的事件循环退出
+    // 防止直接杀进程导致的 TCP Socket 报 "远程主机强迫关闭了一个现有的连接" 错误
+    qApp->quit();
 }

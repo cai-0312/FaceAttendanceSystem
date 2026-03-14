@@ -1,6 +1,6 @@
 #include "RequestHandler.h"
 #include "AttendanceServer.h"
-
+#include <QSqlRecord>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QJsonDocument>
@@ -21,10 +21,16 @@
 // ============================================================
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
+    // 将 JSON 转为紧凑格式，并在末尾强行加上换行符作为结束标志
     QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
-    QMetaObject::invokeMethod(socket,
-        [socket, outData]() { socket->write(outData); },
-        Qt::QueuedConnection);
+
+    // 跨线程安全发送
+    QMetaObject::invokeMethod(socket, [socket, outData]() {
+        if (socket->state() == QAbstractSocket::ConnectedState) {
+            socket->write(outData);
+            socket->flush(); // 确保大数据立刻推向网卡
+        }
+        }, Qt::QueuedConnection);
 }
 
 // ============================================================
@@ -226,22 +232,35 @@ void RequestHandler::handleStatusUpdate(QSqlDatabase& db, QTcpSocket* /*socket*/
     q.exec();
 }
 
-
 // ============================================================
-// ── 用户档案 ─────────────────────────────────────────────────
+// 🚀 核心修复：避开 Qt 占位符 Bug，精准读取头像
 // ============================================================
-
+// ============================================================
+// 🚀 核心修复：彻底绕开 Qt 驱动的 LONGTEXT 预处理分配 Bug
+// ============================================================
 void RequestHandler::handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
-    QString name = json["name"].toString();
+    QString name = json["name"].toString().trimmed();
+
+    // 简单的防注入处理（将单引号转义）
+    QString safeName = name;
+    safeName.replace("'", "''");
+
     QJsonObject res;
     res["status"] = "fail";
 
     QSqlQuery q(db);
-    q.prepare("SELECT id, job_title, role, department, gender, phone, name, avatar "
-        "FROM users WHERE name = :n OR account = :n");
-    q.bindValue(":n", name);
-    if (q.exec() && q.next()) {
+    // 💡 核心终极修改：
+    // 绝对不能用 q.prepare()！直接用 QString::arg 拼接 SQL 语句。
+    // 这样直接发送给 MySQL 执行，Qt 驱动就不会去搞愚蠢的 4GB 内存预分配了！
+    QString sql = QString("SELECT id, job_title, role, department, gender, phone, name, avatar "
+        "FROM users WHERE name = '%1' OR account = '%1'").arg(safeName);
+
+    if (!q.exec(sql)) {
+        res["msg"] = "数据库查询异常: " + q.lastError().text();
+        qDebug() << "❌ [Profile 查询崩溃]:" << q.lastError().text();
+    }
+    else if (q.next()) {
         res["status"] = "success";
         res["id"] = q.value(0).toInt();
         res["job_title"] = q.value(1).toString();
@@ -250,23 +269,71 @@ void RequestHandler::handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket
         res["gender"] = q.value(4).toString();
         res["phone"] = q.value(5).toString();
         res["real_name"] = q.value(6).toString();
+
+        // 提取头像，现在绝对能正常取出来了
         res["avatar_base64"] = q.value(7).toString();
     }
+    else {
+        res["msg"] = "花名册中找不到该用户信息";
+    }
+
     sendJson(socket, res);
 }
 
-void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
+
+void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
-    QString name = json["name"].toString();
-    QString field = json["field"].toString();
-    QString value = json["value"].toString();
+    QString name = json["name"].toString().trimmed();
+    QString field = json["field"].toString().trimmed(); // 客户端传的标识，如 "gender" 或 "phone"
+    QString value = json["value"].toString();           // 新的值
+
+    QJsonObject res;
+    res["status"] = "fail";
+
+    // 🚀 核心修复：建立严格的字段白名单映射
+    QString dbColumn;
+    if (field == "gender") {
+        dbColumn = "gender";
+    }
+    else if (field == "phone") {
+        dbColumn = "phone"; // ✅ 现在支持手机号修改了
+    }
+    else if (field == "avatar") {
+        dbColumn = "avatar";
+    }
+    else if (field == "real_name") {
+        dbColumn = "name";
+    }
+    else {
+        res["msg"] = "不支持修改该字段: " + field;
+        sendJson(socket, res);
+        return;
+    }
 
     QSqlQuery q(db);
-    QString sql = QString("UPDATE users SET %1 = :v WHERE name = :n OR account = :n").arg(field);
+    // 💡 使用 %1 动态替换列名，使用 ? 占位符绑定值（安全且避开 LONGTEXT Bug）
+    QString sql = QString("UPDATE users SET %1 = ? WHERE name = ? OR account = ?").arg(dbColumn);
+
     q.prepare(sql);
-    q.bindValue(":v", value);
-    q.bindValue(":n", name);
-    q.exec();
+    q.addBindValue(value);
+    q.addBindValue(name);
+    q.addBindValue(name);
+
+    if (q.exec()) {
+        if (q.numRowsAffected() > 0) {
+            res["status"] = "success";
+            qDebug() << "✅ [Profile更新]:" << name << "的" << dbColumn << "已更新为" << value;
+        }
+        else {
+            res["msg"] = "未找到该账号，无法更新";
+        }
+    }
+    else {
+        res["msg"] = "数据库更新失败: " + q.lastError().text();
+        qDebug() << "❌ [Profile更新失败]:" << q.lastError().text();
+    }
+
+    sendJson(socket, res);
 }
 
 void RequestHandler::handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)

@@ -1,34 +1,25 @@
 #include "HomeModule.h"
+#include "NetworkHelper.h" // 🚀 引入加固后的网络引擎
 #include <QDebug>
 #include <QDateTime>
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-
-// 🚀 核心通讯组件：绝不绕过服务器，首页只拿 JSON 不碰数据库
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        // 首页数据量可能稍大，拉长等待时间并确保读取完整
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull() && doc.isObject()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QFrame>
+#include <QListWidget>
+#include <QPushButton>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QChartView>
+#include <QPieSeries>
+#include <QBarSeries>
+#include <QBarSet>
+#include <QLineSeries>
+#include <QBarCategoryAxis>
+#include <QValueAxis>
 
 HomeModule::HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName, QObject* parent)
     : QObject(parent), m_mainLayout(mainLayout), m_role(role), m_loginName(loginName)
@@ -66,7 +57,9 @@ void HomeModule::refreshDashboard() {
     req["type"] = "query_home_dashboard";
     req["role"] = m_role;
     req["name"] = m_loginName;
-    QJsonObject res = requestDataFromServer(req);
+
+    // 🚀 核心重构：彻底弃用旧的 requestDataFromServer，使用大一统的网络助手
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         // 1. 渲染顶部四个核心数据卡片

@@ -76,6 +76,9 @@
     <ClCompile Include="NoticePopup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Networkhelper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="MainWidget.h">
@@ -119,6 +122,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="RetinaFaceDecoder.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Networkhelper.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

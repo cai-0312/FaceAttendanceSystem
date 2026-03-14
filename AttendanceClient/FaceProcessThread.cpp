@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QThread>
 
+// 构造函数：初始化加载人脸检测模型 (RetinaFace) 与特征识别模型 (ArcFace)
 FaceProcessThread::FaceProcessThread(QObject* parent) : QThread(parent), isRunning(false), currentPage(0) {
     QString detectModel = "D:/models/retinaface_static.onnx";
     faceEngine = new RetinaFaceDecoder(detectModel.toStdString());
@@ -12,6 +13,7 @@ FaceProcessThread::FaceProcessThread(QObject* parent) : QThread(parent), isRunni
     try {
         arcfaceNet = cv::dnn::readNetFromONNX(recogModel.toStdString());
         if (!arcfaceNet.empty()) {
+            // 开启 CUDA 硬件加速以降低 CPU 占用
             arcfaceNet.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
             arcfaceNet.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
         }
@@ -21,6 +23,7 @@ FaceProcessThread::FaceProcessThread(QObject* parent) : QThread(parent), isRunni
     }
 }
 
+// 析构函数：释放引擎内存并安全退出线程
 FaceProcessThread::~FaceProcessThread() {
     stop();
     if (faceEngine) delete faceEngine;
@@ -44,7 +47,7 @@ void FaceProcessThread::setPage(int page) {
 void FaceProcessThread::requestRegister(QString name) {
     QMutexLocker locker(&mutex);
     pendingRegisterName = name;
-    registerRetryCount = 0; // 重置扫描倒计时
+    registerRetryCount = 0; // 重置录入扫描倒计时
 }
 
 void FaceProcessThread::run() {
@@ -101,6 +104,8 @@ void FaceProcessThread::run() {
 
     isRunning = true;
     qint64 lastDetectTime = 0;
+
+    // 缓存识别结果，防止UI闪烁
     struct MatchResult { cv::Rect rect; QString name; };
     std::vector<MatchResult> cachedResults;
     QStringList currentRecognizedNames;
@@ -118,6 +123,8 @@ void FaceProcessThread::run() {
         int page;
         QString regName;
         std::map<QString, cv::Mat> usersCopy;
+
+        // 锁内拷贝共享变量，防止主线程和工作线程冲突
         {
             QMutexLocker locker(&mutex);
             page = currentPage;
@@ -135,11 +142,12 @@ void FaceProcessThread::run() {
         }
 
         // =====================================
-        // 分支 1：人脸录入逻辑
+        // 分支 1：人脸录入注册逻辑
         // =====================================
         if (!regName.isEmpty() && faceEngine && !arcfaceNet.empty()) {
             std::vector<FaceDetectInfo> faces = faceEngine->detect(frame);
-            if (faces.size() == 1) {
+            if (faces.size() == 1) { // 仅当画面中只有一张脸时才允许录入
+                // 依据5个特征点执行仿射变换，将人脸对齐裁剪为标准的 112x112 大小
                 float ref_pts[5][2] = { {38.2946f, 51.6963f}, {73.5318f, 51.5014f}, {56.0252f, 71.7366f}, {41.5493f, 92.3655f}, {70.7299f, 92.2041f} };
                 std::vector<cv::Point2f> src_pts, dst_pts;
                 for (int i = 0; i < 5; ++i) { src_pts.push_back(faces[0].pts[i]); dst_pts.push_back(cv::Point2f(ref_pts[i][0], ref_pts[i][1])); }
@@ -147,38 +155,43 @@ void FaceProcessThread::run() {
                 cv::Mat aligned_face;
                 cv::warpAffine(frame, aligned_face, transform, cv::Size(112, 112));
 
+                // 输入 ArcFace 网络进行特征提取
                 cv::Mat blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5, cv::Size(112, 112), cv::Scalar(127.5, 127.5, 127.5), true, false);
                 arcfaceNet.setInput(blob);
                 cv::Mat feature = arcfaceNet.forward();
 
+                // 归一化特征向量
                 feature = feature.reshape(1, 1).clone();
                 cv::normalize(feature, feature, 1.0, 0.0, cv::NORM_L2);
 
                 QByteArray featureBytes((const char*)feature.data, feature.total() * feature.elemSize());
                 emit registerFeatureReady(regName, featureBytes);
 
+                // 录入成功，重置状态
                 QMutexLocker locker(&mutex);
                 pendingRegisterName.clear();
             }
-            continue;
+            continue; // 录入模式下跳过下方常规识别打卡
         }
 
+        // 仅在指定页面下才执行识别分析以节约算力
         if (page != 0 && page != 1) { QThread::msleep(100); continue; }
 
         // =====================================
         // 分支 2：考勤打卡识别逻辑
         // =====================================
         qint64 currentTimeMs = QDateTime::currentMSecsSinceEpoch();
-        if (currentTimeMs - lastDetectTime >= 300) {
+        if (currentTimeMs - lastDetectTime >= 300) { // 控制检测频率，每300ms比对一次
             std::vector<FaceDetectInfo> faces;
             if (faceEngine) faces = faceEngine->detect(frame);
 
             cachedResults.clear();
             currentRecognizedNames.clear();
 
-            if (page == 0) {
+            if (page == 0) { // 打卡页面模式
                 for (const auto& face : faces) {
                     if (!arcfaceNet.empty()) {
+                        // 抠图对齐
                         float ref_pts[5][2] = { {38.2946f, 51.6963f}, {73.5318f, 51.5014f}, {56.0252f, 71.7366f}, {41.5493f, 92.3655f}, {70.7299f, 92.2041f} };
                         std::vector<cv::Point2f> src_pts, dst_pts;
                         for (int i = 0; i < 5; ++i) { src_pts.push_back(face.pts[i]); dst_pts.push_back(cv::Point2f(ref_pts[i][0], ref_pts[i][1])); }
@@ -186,6 +199,7 @@ void FaceProcessThread::run() {
                         cv::Mat aligned_face;
                         cv::warpAffine(frame, aligned_face, transform, cv::Size(112, 112));
 
+                        // 提取当前画面特征
                         cv::Mat blob = cv::dnn::blobFromImage(aligned_face, 1.0 / 127.5, cv::Size(112, 112), cv::Scalar(127.5, 127.5, 127.5), true, false);
                         arcfaceNet.setInput(blob);
                         cv::Mat currentFeature = arcfaceNet.forward();
@@ -196,32 +210,38 @@ void FaceProcessThread::run() {
                         QString bestName = "未知访客";
                         double maxSim = 0.0;
 
+                        // 遍历特征库求点积相似度
                         for (auto it = usersCopy.begin(); it != usersCopy.end(); ++it) {
                             double sim = currentFeature.dot(it->second);
                             if (sim > maxSim) {
                                 maxSim = sim;
-                                if (sim > 0.40) bestName = it->first;
+                                if (sim > 0.90) bestName = it->first; // 阈值设定
                             }
                         }
 
+                        // 【修改点】：重新梳理的结果判定逻辑
                         QString displayText;
-                        if (usersCopy.empty()) {
-                            displayText = "特征库为空";
-                        }
-                        else if (bestName == "未知访客") {
-                            displayText = QString("未知访客").arg(maxSim, 0, 'f', 2);
+                        if (usersCopy.empty() || bestName == "未知访客") {
+                           
+                            displayText = "未知访客";
+                            bestName = "未知访客"; // 同步状态，用于下方UI框变红
                         }
                         else if (bestName != m_currentUser) {
-                            displayText = QString("非本人").arg(bestName);
+                            // 库中存在记录，但不是当前登录系统账号的本人
+                            displayText = "非本人";
                             bestName = "非本人";
                         }
                         else {
+                            // 识别成功且为本人，进入打卡防抖逻辑
                             displayText = bestName;
                             currentRecognizedNames.append(bestName);
                             QDateTime currentTime = QDateTime::currentDateTime();
+
+                            // 防止连续重复写入打卡，限制1分钟内仅记录一次初次识别
                             if (lastPunchTime.find(bestName) == lastPunchTime.end() || lastPunchTime[bestName].secsTo(currentTime) > 60) {
                                 lastPunchTime[bestName] = currentTime;
                             }
+                            // 距离首次成功判定5秒内，显示打卡成功提示
                             if (lastPunchTime.find(bestName) != lastPunchTime.end() && lastPunchTime[bestName].secsTo(QDateTime::currentDateTime()) <= 5) {
                                 displayText += " (打卡成功!)";
                             }
@@ -231,12 +251,15 @@ void FaceProcessThread::run() {
                 }
             }
             else if (page == 1) {
+                // 其它页面仅画人脸框，不进行计算比对
                 for (const auto& face : faces) cachedResults.push_back({ face.rect, "" });
             }
             lastDetectTime = currentTimeMs;
         }
 
-        // 高速渲染画面
+        // =====================================
+        // 画布渲染逻辑
+        // =====================================
         cv::Mat rgbFrame;
         cv::cvtColor(frame, rgbFrame, cv::COLOR_BGR2RGB);
         QImage img((const unsigned char*)(rgbFrame.data), rgbFrame.cols, rgbFrame.rows, rgbFrame.step, QImage::Format_RGB888);
@@ -246,7 +269,8 @@ void FaceProcessThread::run() {
         if (page == 0) {
             painter.setFont(QFont("Microsoft YaHei", 18, QFont::Bold));
             for (const auto& res : cachedResults) {
-                if (res.name.contains("未知访客") || res.name.contains("非本人") || res.name.contains("特征库为空")) {
+                // 根据整合后的判定状态绘制红/绿标识框
+                if (res.name == "未知访客" || res.name == "非本人") {
                     painter.setPen(QPen(Qt::red, 3));
                 }
                 else {
@@ -263,7 +287,7 @@ void FaceProcessThread::run() {
         painter.end();
 
         emit frameReady(finalImg, currentRecognizedNames);
-        QThread::msleep(33); // 锁定约 30 FPS 刷新率
+        QThread::msleep(33); // 锁定约 30 FPS 刷新率，降低系统功耗
     }
     capture.release();
 }

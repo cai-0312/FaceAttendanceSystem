@@ -116,6 +116,7 @@
     <ClCompile Include="FaceProcessThread.cpp" />
     <ClCompile Include="HomeModule.cpp" />
     <ClCompile Include="MainWidget.cpp" />
+    <ClCompile Include="Networkhelper.cpp" />
     <ClCompile Include="NoticePopup.cpp" />
     <ClCompile Include="ProfileModule.cpp" />
     <ClCompile Include="PunchModule.cpp" />
@@ -144,6 +145,7 @@
     <QtMoc Include="AIAssistantModule.h" />
     <QtMoc Include="HomeModule.h" />
     <QtMoc Include="NoticePopup.h" />
+    <ClInclude Include="Networkhelper.h" />
     <ClInclude Include="RetinaFaceDecoder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

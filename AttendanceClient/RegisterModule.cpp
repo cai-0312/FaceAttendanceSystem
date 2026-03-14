@@ -1,4 +1,5 @@
 #include "RegisterModule.h"
+#include "NetworkHelper.h" // 🚀 引入加固后的网络引擎
 #include <QDialog>
 #include <QFormLayout>
 #include <QLineEdit>
@@ -6,57 +7,12 @@
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QPixmap> 
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QThread>
 
-// 🚀 核心通讯工具 1：同步请求获取验证结果
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
-
-// 🚀 核心通讯工具 2：加入微小延时与死循环，确保 3KB 的人脸特征完整传输不被截断
-static void sendRegisterCommandToServer(const QJsonObject& json) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    if (socket.waitForConnected(1500)) {
-        QByteArray block = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-
-        // 死循环等待，直到数据全部塞进网卡缓冲区
-        while (socket.bytesToWrite() > 0) {
-            socket.waitForBytesWritten(100);
-        }
-        socket.flush();
-
-        // 强行延时 300 毫秒，给服务器拼装 TCP 包的时间
-        QThread::msleep(300);
-        socket.disconnectFromHost();
-    }
-}
-
 RegisterModule::RegisterModule(QLabel* cameraLabel, QWidget* parentWidget)
-    : QObject(parentWidget), m_cameraLabel(cameraLabel), m_parentWidget(parentWidget) {
-}
+    : QObject(parentWidget), m_cameraLabel(cameraLabel), m_parentWidget(parentWidget) {}
 
 void RegisterModule::renderFrame(const QImage& img) {
     if (m_cameraLabel) {
@@ -95,12 +51,13 @@ void RegisterModule::triggerRegistration() {
             return;
         }
 
-        // 🚀 核心修复：完全剥离 QSqlQuery，改发 TCP 请求交由服务端验证
         QJsonObject req;
         req["type"] = "verify_user_for_registration";
         req["name"] = inputName;
         req["dept"] = inputDept;
-        QJsonObject res = requestDataFromServer(req);
+
+        // 🚀 核心替换：使用大一统的 NetworkHelper 同步验证
+        QJsonObject res = NetworkHelper::request(req);
 
         if (res["status"].toString() == "success") {
             emit startRegistration(inputName);
@@ -117,7 +74,9 @@ void RegisterModule::onFeatureReady(QString name, QByteArray featureBytes) {
     req["type"] = "register_face";
     req["name"] = name;
     req["feature"] = QString(featureBytes.toBase64());
-    sendRegisterCommandToServer(req);
+
+    // 🚀 核心替换：以前的微小延时与死循环已全部在 NetworkHelper 底层得到了更优的实现
+    NetworkHelper::request(req);
 
     QMessageBox::information(m_parentWidget, "录入提交", "员工【" + name + "】的人脸特征已成功发送至服务器并落盘！");
     emit dataChanged();

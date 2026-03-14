@@ -176,10 +176,10 @@ void RequestHandler::handleQueryChatHistory(QSqlDatabase& db, QTcpSocket* socket
     bool    isGroup = json["is_group"].toBool();
 
     QString sql = isGroup
-        ? QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%%m-%%d %%H:%%i') "
+        ? QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') "
             "FROM chat_history WHERE receiver = '%1' AND is_group = 1 "
             "ORDER BY send_time ASC LIMIT 100").arg(target)
-        : QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%%m-%%d %%H:%%i') "
+        : QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') "
             "FROM chat_history WHERE ((sender='%1' AND receiver='%2') OR (sender='%2' AND receiver='%1')) "
             "AND is_group = 0 ORDER BY send_time ASC LIMIT 100").arg(me, target);
 

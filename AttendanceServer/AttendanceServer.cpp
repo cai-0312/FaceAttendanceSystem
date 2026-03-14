@@ -167,6 +167,11 @@ void AttendanceServer::onClientDisconnected()
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
+    // 🚀 核心修复：清理该 Socket 对应的缓冲区，防止内存泄漏和下次连接的数据污染
+    if (m_buffers.contains(socket)) {
+        m_buffers.remove(socket);
+    }
+
     if (m_clients.contains(socket)) {
         QString name = m_clients[socket].name;
         logMessage(QString("<font color='#F56C6C'>节点掉线: [%1] 已断开连接。</font>").arg(name));
@@ -186,17 +191,35 @@ void AttendanceServer::onReadyRead()
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    while (socket->canReadLine()) {
-        QByteArray data = socket->readLine();
+    static QMutex bufferMutex; // 🚀 必须加锁
+    QMutexLocker locker(&bufferMutex);
 
+    m_buffers[socket].append(socket->readAll());
+
+    while (m_buffers[socket].contains('\n')) {
+        int pos = m_buffers[socket].indexOf('\n');
+        QByteArray data = m_buffers[socket].left(pos).trimmed();
+        m_buffers[socket].remove(0, pos + 1);
+
+        if (data.isEmpty()) continue;
+
+        // 3. 将完整的 JSON 数据提交给线程池处理
         QtConcurrent::run([this, socket, data]() {
             QJsonDocument doc = QJsonDocument::fromJson(data);
-            if (doc.isNull() || !doc.isObject()) return;
+            if (doc.isNull() || !doc.isObject()) {
+                qDebug() << "❌ 收到残缺或非法的 JSON 数据，长度:" << data.size();
+                return;
+            }
 
             QJsonObject json = doc.object();
-            QString     type = json["type"].toString();
 
-            // group_* 前缀类型统一映射到 "chat" 处理器
+            // 🚨 关键防御：如果 JSON 解析成功但关键字段 name 还是空的，说明数据逻辑异常
+            if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) {
+                qDebug() << "⚠️ 警告：收到 update_profile_field 请求但 name 字段为空！";
+                return;
+            }
+
+            QString type = json["type"].toString();
             QString lookupKey = type.startsWith("group_") ? "chat" : type;
 
             auto it = m_dispatchTable.constFind(lookupKey);
@@ -212,13 +235,12 @@ void AttendanceServer::onReadyRead()
             }
             {
                 QSqlDatabase db = QSqlDatabase::database(connName);
-                it.value()(db, socket, json, data);   
+                it.value()(db, socket, json, data);
             }
             QSqlDatabase::removeDatabase(connName);
             });
     }
 }
-
 // ============================================================
 // 公开接口：供 RequestHandler 回调
 // ============================================================

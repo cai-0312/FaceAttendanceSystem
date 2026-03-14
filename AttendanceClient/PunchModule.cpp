@@ -1,4 +1,5 @@
 #include "PunchModule.h"
+#include "NetworkHelper.h" // 🚀 引入加固后的网络引擎
 #include <QPixmap>
 #include <QDialog>
 #include <QFormLayout>
@@ -19,38 +20,10 @@
 #include <QProcess>
 #include <QCheckBox>
 #include <QTimer>
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QThread>
-
-// 同步请求函数
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
-
-static void sendCommandToServer(const QJsonObject& json) {
-    requestDataFromServer(json);
-}
 
 PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     QLabel* morningTime, QLabel* morningStatus,
@@ -69,7 +42,8 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     QJsonObject uReq;
     uReq["type"] = "query_user_dept";
     uReq["name"] = m_loginName;
-    QJsonObject uRes = requestDataFromServer(uReq);
+    // 🚀 已重构：统一使用加固后的 NetworkHelper
+    QJsonObject uRes = NetworkHelper::request(uReq);
     QString myDept = uRes["department"].toString();
 
     if (myDept != "人力资源部") {
@@ -110,7 +84,8 @@ void PunchModule::loadRules(QString myDept) {
     QJsonObject req;
     req["type"] = "query_shift_rule";
     req["dept"] = myDept;
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 已重构
+    QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
         m_shiftName = res["rule_name"].toString();
         m_startTime = QTime::fromString(res["start_time"].toString(), "HH:mm:ss");
@@ -122,38 +97,71 @@ void PunchModule::loadRules(QString myDept) {
     }
 }
 
+// 🚀 核心重构：梳理显示层拦截逻辑
 void PunchModule::loadTodayPunchStatus() {
     if (m_loginName.isEmpty()) return;
     QJsonObject req;
     req["type"] = "query_today_status";
     req["name"] = m_loginName;
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 已重构
+    QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() != "success") return;
+
     bool isOnLeave = res["is_on_leave"].toBool();
+
+    // 💡 业务规则 1：如果员工处于请假状态，拦截后续所有的打卡解析，强制显示请假界面。
+    // 即便在数据库中生成了真实打卡，也不会更新显示。
+    if (isOnLeave) {
+        QString leaveHtml = "<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>请假</span><br><span style='font-size:12px;'>已准假</span></div>";
+        if (m_lblMorningStatus) {
+            m_lblMorningStatus->setText(leaveHtml);
+            m_lblMorningStatus->setStyleSheet("color: #E6A23C;");
+        }
+        if (m_lblEveningStatus) {
+            m_lblEveningStatus->setText(leaveHtml);
+            m_lblEveningStatus->setStyleSheet("color: #E6A23C;");
+        }
+        return; // 直接阻断返回
+    }
+
     QJsonArray punches = res["punches"].toArray();
     bool hasMorning = false;
+    bool hasEvening = false;
+
+    // 服务端返回的 punches 是按时间 ASC 升序排列的（最早的排在前面）
     for (int i = 0; i < punches.size(); ++i) {
         QJsonObject p = punches[i].toObject();
         QTime pTime = QTime::fromString(p["time"].toString(), "HH:mm:ss");
         QString statusStr = p["status"].toString();
+
         QString displayTxt = QString("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>%1</span><br><span style='font-size:12px;'>%2</span></div>").arg(pTime.toString("HH:mm"), statusStr);
-        if (pTime < QTime(12, 0) && !hasMorning) {
-            m_lblMorningStatus->setText(displayTxt);
-            m_lblMorningStatus->setStyleSheet(statusStr.contains("正常") ? "color: #67C23A;" : "color: #F56C6C;");
-            hasMorning = true;
+
+        if (pTime < QTime(12, 0)) {
+            // 💡 业务规则 2：上班打卡以“最早的”为准。
+            // 当 hasMorning 为 false 时，说明这是今天第一条早班记录，将其锁定上锁。
+            // 后续再遍历到早上12点前的打卡记录，因为 hasMorning 已经是 true 了，就不会再覆盖它。
+            if (!hasMorning) {
+                m_lblMorningStatus->setText(displayTxt);
+                m_lblMorningStatus->setStyleSheet(statusStr.contains("正常") || statusStr.contains("修正") ? "color: #67C23A;" : "color: #F56C6C;");
+                hasMorning = true;
+            }
         }
         else if (pTime >= QTime(12, 0)) {
+            // 下班打卡（由于列表是正序，越晚的打卡会不断覆盖前一次，最终恰好留下最晚的那一条作为最终下班时间）
             m_lblEveningStatus->setText(displayTxt);
-            m_lblEveningStatus->setStyleSheet(statusStr.contains("正常") ? "color: #409EFF;" : "color: #E6A23C;");
+            m_lblEveningStatus->setStyleSheet(statusStr.contains("正常") || statusStr.contains("修正") || statusStr.contains("下班") ? "color: #409EFF;" : "color: #E6A23C;");
+            hasEvening = true;
         }
     }
-    if (punches.isEmpty() && !isOnLeave) {
-        m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>缺卡</span><br><span style='font-size:12px;'>旷工</span></div>");
+
+    // 💡 业务补充：如果未查到时间段记录，则补全空缺时的界面状态
+    if (!hasMorning) {
+        m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>缺卡</span><br><span style='font-size:12px;'>待打卡/旷工</span></div>");
         m_lblMorningStatus->setStyleSheet("color: #F56C6C;");
     }
-    else if (punches.isEmpty() && isOnLeave) {
-        m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>请假</span><br><span style='font-size:12px;'>已准假</span></div>");
-        m_lblMorningStatus->setStyleSheet("color: #E6A23C;");
+    if (!hasEvening) {
+        m_lblEveningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>缺卡</span><br><span style='font-size:12px;'>待打卡</span></div>");
+        m_lblEveningStatus->setStyleSheet("color: #F56C6C;");
     }
 }
 
@@ -166,17 +174,15 @@ QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
     return (punchTime < m_endTime) ? "早退" : "正常下班";
 }
 
-// 🚀 核心改造：排班规则设置 UI 美化
 void PunchModule::onRuleSettingsClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("⚙️ 排班规则设置");
-    dialog.resize(400, 360); // 适度撑大窗口，避免拥挤
+    dialog.resize(400, 360);
 
     QFormLayout* form = new QFormLayout(&dialog);
-    form->setContentsMargins(30, 25, 30, 25); // 增加四周内边距
-    form->setSpacing(18);                     // 增加行间距
+    form->setContentsMargins(30, 25, 30, 25);
+    form->setSpacing(18);
 
-    // 🌟 全局高颜值输入框 CSS 样式
     QString modernInputStyle =
         "QComboBox, QTimeEdit, QSpinBox { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
         "QComboBox:hover, QTimeEdit:hover, QSpinBox:hover { border-color: #C0C4CC; }"
@@ -219,12 +225,10 @@ void PunchModule::onRuleSettingsClicked() {
     form->addRow("迟到判定:", lateEdit);
     form->addRow("旷工判定:", absentEdit);
 
-    // ── 按钮 (✨ UI 升级) ──
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     bb->button(QDialogButtonBox::Save)->setText("保存设置");
     bb->button(QDialogButtonBox::Cancel)->setText("取消");
 
-    // 给保存按钮加上主题蓝，取消按钮加上悬浮效果
     bb->button(QDialogButtonBox::Save)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #66B1FF; }");
     bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
 
@@ -232,13 +236,13 @@ void PunchModule::onRuleSettingsClicked() {
     connect(bb, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
-    // 绝对不改服务端逻辑
     if (dialog.exec() == QDialog::Accepted) {
         QJsonObject req; req["type"] = "rule_settings";
         req["dept"] = deptCombo->currentText(); req["rule_name"] = shiftCombo->currentText();
         req["start_time"] = startEdit->time().toString("HH:mm:ss"); req["end_time"] = endEdit->time().toString("HH:mm:ss");
         req["late_mins"] = lateEdit->value(); req["absent_mins"] = absentEdit->value();
-        sendCommandToServer(req);
+        // 🚀 已重构
+        NetworkHelper::request(req);
         QMessageBox::information(nullptr, "成功", "排班规则已提交！");
         QTimer::singleShot(500, this, [=]() { loadRules(deptCombo->currentText()); loadTodayPunchStatus(); });
     }
@@ -258,7 +262,8 @@ void PunchModule::onManualPunchClicked() {
         if (claimName != m_loginName) { QMessageBox::warning(nullptr, "拒绝", "只能为本人打卡！"); return; }
         if (claimName == m_currentFaceName && !m_currentFaceName.isEmpty() && m_currentFaceName != "未知访客") {
             QJsonObject req; req["type"] = "punch_request"; req["name"] = claimName;
-            sendCommandToServer(req);
+            // 🚀 已重构
+            NetworkHelper::request(req);
             speakText("考勤指令已下发");
             QTimer::singleShot(500, this, &PunchModule::loadTodayPunchStatus);
         }
@@ -266,7 +271,8 @@ void PunchModule::onManualPunchClicked() {
             m_cheatCount++;
             if (m_cheatCount >= 3) {
                 QJsonObject req; req["type"] = "punch_cheat"; req["name"] = claimName;
-                sendCommandToServer(req);
+                // 🚀 已重构
+                NetworkHelper::request(req);
                 m_cheatCount = 0;
             }
             else { QMessageBox::warning(nullptr, "失败", "人脸核验不匹配！"); }
@@ -280,7 +286,8 @@ void PunchModule::onAppealRequestClicked() {
     QJsonObject initReq;
     initReq["type"] = "query_approval_candidates";
     initReq["name"] = m_loginName;
-    QJsonObject initRes = requestDataFromServer(initReq);
+    // 🚀 已重构
+    QJsonObject initRes = NetworkHelper::request(initReq);
 
     if (initRes.isEmpty() || !initRes.contains("my_role")) {
         QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络！");
@@ -349,7 +356,7 @@ void PunchModule::onAppealRequestClicked() {
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
 
-    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理" );
+    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理");
     bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
     bool isTwoLevel = false;
 
@@ -436,7 +443,8 @@ void PunchModule::onAppealRequestClicked() {
         req["reason"] = reasonText;
         req["approver"] = chainList.join(",");
 
-        sendCommandToServer(req);
+        // 🚀 已重构
+        NetworkHelper::request(req);
 
         QMessageBox::information(parentWidget, "成功",
             QString("异常申诉已提交，当前进入 %1 级审批流程。\n审批链：%2")
@@ -455,7 +463,8 @@ void PunchModule::onLeaveRequestClicked()
     QJsonObject initReq;
     initReq["type"] = "query_approval_candidates";
     initReq["name"] = m_loginName;
-    QJsonObject initRes = requestDataFromServer(initReq);
+    // 🚀 已重构
+    QJsonObject initRes = NetworkHelper::request(initReq);
 
     if (initRes.isEmpty() || !initRes.contains("my_role")) {
         QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络连接和服务器状态！");
@@ -544,7 +553,7 @@ void PunchModule::onLeaveRequestClicked()
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
 
-    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理" );
+    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理");
     bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
     bool isTwoLevel = false;
 
@@ -624,7 +633,8 @@ void PunchModule::onLeaveRequestClicked()
         req["approval_levels"] = approvalLevels;
         req["approver_chain"] = approverChain;
 
-        sendCommandToServer(req);
+        // 🚀 已重构
+        NetworkHelper::request(req);
 
         QMessageBox::information(parentWidget, "成功",
             QString("请假申请已提交，当前进入 %1 级审批流程。\n审批链：%2")
@@ -647,7 +657,8 @@ void PunchModule::onLeaveApproveClicked() {
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
 
     QJsonObject req; req["type"] = "query_pending_leaves"; req["approver"] = m_loginName;
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 已重构
+    QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
         QJsonArray arr = res["data"].toArray();
         for (int i = 0; i < arr.size(); ++i) {
@@ -670,7 +681,8 @@ void PunchModule::onLeaveApproveClicked() {
                 QJsonObject passReq; passReq["type"] = "leave_approve";
                 passReq["reqId"] = reqId; passReq["applicant"] = applicant;
                 passReq["start_time"] = sTime; passReq["end_time"] = eTime; passReq["leave_type"] = lType;
-                sendCommandToServer(passReq);
+                // 🚀 已重构
+                NetworkHelper::request(passReq);
                 apprDlg.accept();
                 });
         }
@@ -692,7 +704,8 @@ void PunchModule::onAppealApproveClicked() {
     QJsonObject req;
     req["type"] = "query_pending_appeals";
     req["approver"] = m_loginName;
-    QJsonObject res = requestDataFromServer(req);
+    // 🚀 已重构
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         QJsonArray arr = res["data"].toArray();
@@ -721,7 +734,8 @@ void PunchModule::onAppealApproveClicked() {
                 passReq["applicant"] = applicant;
                 passReq["abnormal_time"] = aTime;
                 passReq["appeal_type"] = aType;
-                sendCommandToServer(passReq);
+                // 🚀 已重构
+                NetworkHelper::request(passReq);
 
                 QMessageBox::information(&apprDlg, "已处理", "指令已下发，服务器将完美修正记录！");
                 apprDlg.accept();

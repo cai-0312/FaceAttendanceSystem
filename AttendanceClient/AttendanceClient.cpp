@@ -1,19 +1,19 @@
 #include "AttendanceClient.h"
 #include "ui_AttendanceClient.h"
 #include "MainWidget.h"
+#include "NetworkHelper.h"
 #include <QMessageBox>
 #include <QGraphicsDropShadowEffect> 
 #include <QRegularExpression> 
-#include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QStyledItemDelegate> // 🚀 用于渲染高级下拉框
+#include <QStyledItemDelegate>
 #include <QPainter>
 #include <QPixmap>
 #include <QIcon>
 
-// 🚀 核心修复：提取为静态工具函数，方便程序启动和点击时随时调用，强行放大 emoji
+// 提取为静态工具函数：用于将文本图标转换为QIcon格式，方便程序启动和点击时随时调用
 static QIcon createEmojiIcon(const QString& text, const QString& colorHex) {
     QPixmap pix(26, 26);
     pix.fill(Qt::transparent);
@@ -21,56 +21,38 @@ static QIcon createEmojiIcon(const QString& text, const QString& colorHex) {
     painter.setRenderHint(QPainter::TextAntialiasing);
     painter.setPen(QColor(colorHex));
     QFont font = painter.font();
-    font.setPixelSize(16); // 保证图标足够大、清晰
+    font.setPixelSize(16);
     painter.setFont(font);
     painter.drawText(pix.rect(), Qt::AlignCenter, text);
     return QIcon(pix);
 }
 
-// 🚀 核心通讯组件：登录和注册必须通过服务器网关进行验证 (逻辑完全未动)
-static QJsonObject requestDataFromServer(const QJsonObject& jsonRequest) {
-    QTcpSocket socket;
-    socket.connectToHost("127.0.0.1", 9999);
-    QJsonObject responseJson;
-    if (socket.waitForConnected(2000)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        socket.waitForBytesWritten(1000);
-        if (socket.waitForReadyRead(5000)) {
-            QByteArray responseData;
-            while (socket.waitForReadyRead(50) || socket.bytesAvailable() > 0) {
-                responseData += socket.readAll();
-                if (responseData.endsWith("\n")) break;
-            }
-            QJsonDocument doc = QJsonDocument::fromJson(responseData);
-            if (!doc.isNull()) responseJson = doc.object();
-        }
-        socket.disconnectFromHost();
-    }
-    return responseJson;
-}
-
+// 构造函数：初始化UI界面、设置无边框阴影效果、绑定信号与槽以及初始化部门职位联动逻辑
 AttendanceClient::AttendanceClient(QWidget* parent) :
     QWidget(parent),
     ui(new Ui::AttendanceClientClass)
 {
     ui->setupUi(this);
 
+    // 设置无边框窗口以及透明背景
     this->setWindowFlags(Qt::FramelessWindowHint);
     this->setAttribute(Qt::WA_TranslucentBackground);
 
+    // 为主背景框架添加外阴影效果以增强立体感
     QGraphicsDropShadowEffect* shadow = new QGraphicsDropShadowEffect(this);
     shadow->setOffset(0, 0);
     shadow->setColor(QColor(0, 0, 0, 80));
     shadow->setBlurRadius(25);
     ui->frame_Background->setGraphicsEffect(shadow);
 
+    // 绑定窗口控制按钮事件
     connect(ui->btn_Close, &QPushButton::clicked, this, &AttendanceClient::on_btn_Close_clicked);
     connect(ui->btn_Min, &QPushButton::clicked, this, &AttendanceClient::on_btn_Min_clicked);
 
+    // 默认显示登录页面
     ui->stackedWidget->setCurrentIndex(0);
 
-    // 🚀 核心修复：初始化时默认隐藏密码，并强行渲染高对比度的大尺寸猴子图标
+    // 初始化密码输入框的回显模式与可视状态切换按钮
     m_isPwdVisible = false;
     ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
     m_pwdAction = ui->lineEdit_pwd->addAction(createEmojiIcon("🙈", "#86909C"), QLineEdit::TrailingPosition);
@@ -79,13 +61,13 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
     connect(m_pwdAction, &QAction::triggered, this, &AttendanceClient::togglePasswordVisibility);
     ui->lineEdit_pwd->setCursor(Qt::IBeamCursor);
 
-    // 🚀 注入高级渲染代理，保证 UI 文件中的 QAbstractItemView QSS 生效！
+    // 优化下拉框的样式显示
     ui->comboBox_Role->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegGender->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegDept->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegJobTitle->setItemDelegate(new QStyledItemDelegate(this));
 
-    // 绑定部门下拉框和职位下拉框的联动 (逻辑未动)
+    // 根据用户选择的部门，动态更新职务下拉框的内容列表
     connect(ui->comboBox_RegDept, &QComboBox::currentTextChanged, this, [=](const QString& dept) {
         ui->comboBox_RegJobTitle->clear();
         if (dept == "总经办") {
@@ -111,52 +93,52 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
         }
         });
 
-    // 初始化触发一次联动更新
+    // 手动触发一次部门文本改变信号，以初始化默认职务列表
     emit ui->comboBox_RegDept->currentTextChanged(ui->comboBox_RegDept->currentText());
 }
-
+// 析构函数：释放UI资源
 AttendanceClient::~AttendanceClient() {
     delete ui;
 }
-
-// 🚀 核心修复：点击时调用独立的绘图函数切换图标外观
+// 密码可见性切换逻辑：根据当前状态切换密码输入框的回显模式，并更新对应图标状态
 void AttendanceClient::togglePasswordVisibility() {
     m_isPwdVisible = !m_isPwdVisible;
 
     if (m_isPwdVisible) {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Normal);
-        // 睁眼，亮蓝色
         m_pwdAction->setIcon(createEmojiIcon("👀", "#165DFF"));
         m_pwdAction->setToolTip("隐藏密码");
     }
     else {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
-        // 闭眼，深灰色
         m_pwdAction->setIcon(createEmojiIcon("🙈", "#86909C"));
         m_pwdAction->setToolTip("显示密码");
     }
 }
-
+// 鼠标按下事件：记录当前鼠标位置，用于无边框窗口的拖拽计算
 void AttendanceClient::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         m_dragPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
     }
 }
-
+// 鼠标移动事件：根据鼠标移动的偏移量实时更新窗口位置
 void AttendanceClient::mouseMoveEvent(QMouseEvent* event) {
     if (event->buttons() & Qt::LeftButton) {
         move(event->globalPosition().toPoint() - m_dragPos);
         event->accept();
     }
 }
-
+// 窗口控制：关闭当前窗口
 void AttendanceClient::on_btn_Close_clicked() { this->close(); }
+// 窗口控制：最小化当前窗口
 void AttendanceClient::on_btn_Min_clicked() { this->showMinimized(); }
+// 界面跳转：切换至注册页面视图
 void AttendanceClient::on_btn_GoRegister_clicked() { ui->stackedWidget->setCurrentIndex(1); }
+// 界面跳转：切换回登录页面视图
 void AttendanceClient::on_btn_BackLogin_clicked() { ui->stackedWidget->setCurrentIndex(0); }
 
-// 🚀 登录验证通过 TCP 转发给服务器 (逻辑未动)
+// 登录验证逻辑：获取输入信息，向服务端发送验证请求，并根据结果处理跳转
 void AttendanceClient::on_btn_Login_clicked() {
     QString account = ui->lineEdit_Account->text().trimmed();
     QString pwd = ui->lineEdit_pwd->text().trimmed();
@@ -173,7 +155,7 @@ void AttendanceClient::on_btn_Login_clicked() {
     req["pwd"] = pwd;
     req["role"] = role;
 
-    QJsonObject res = requestDataFromServer(req);
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         QString realName = res["real_name"].toString();
@@ -193,7 +175,7 @@ void AttendanceClient::on_btn_Login_clicked() {
     }
 }
 
-// 🚀 注册账号通过 TCP 转发给服务器 (逻辑未动)
+// 注册账号逻辑：校验用户填写的表单信息，分配默认角色，并发送至服务端进行注册
 void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     QString account = ui->lineEdit_RegAccount->text().trimmed();
     QString name = ui->lineEdit_RegName->text().trimmed();
@@ -224,6 +206,7 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
         phone = "未设置";
     }
 
+    // 根据部门或职务进行权限自动定级
     QString assignRole = "普通登录";
     if (dept == "总经办" || dept == "财务部" || jobTitle.contains("部门经理") || jobTitle == "总经理" || jobTitle == "财务总监") {
         assignRole = "管理员登录";
@@ -240,12 +223,13 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     req["phone"] = phone;
     req["gender"] = gender;
 
-    QJsonObject res = requestDataFromServer(req);
+    QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
         QString successMsg = QString("账号注册成功！\n系统已根据您的部门及职务自动为您分配 [%1] 权限。\n已为您跳转至登录页。").arg(assignRole);
         QMessageBox::information(this, "注册成功", successMsg);
 
+        // 清空注册信息表单内容并跳转回登录页面
         ui->lineEdit_RegAccount->clear();
         ui->lineEdit_RegName->clear();
         ui->lineEdit_RegPwd->clear();
