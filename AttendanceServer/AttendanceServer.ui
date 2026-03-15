@@ -1,227 +1,227 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>AttendanceServerClass</class>
- <widget class="QWidget" name="AttendanceServerClass">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>900</width>
-    <height>650</height>
-   </rect>
-  </property>
-  <property name="windowTitle">
-   <string>考勤系统 - 分布式服务端总控中心</string>
-  </property>
-  <layout class="QVBoxLayout" name="verticalLayout">
-   <item>
-    <layout class="QHBoxLayout" name="horizontalLayout_Top">
-     <item>
-      <widget class="QLabel" name="label_Port">
-       <property name="text">
-        <string>监听端口:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLineEdit" name="lineEdit_Port">
-       <property name="maximumSize">
-        <size>
-         <width>80</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="text">
-        <string>9999</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btn_StartServer">
-       <property name="text">
-        <string>启动服务器</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btn_StopServer">
-       <property name="enabled">
-        <bool>false</bool>
-       </property>
-       <property name="text">
-        <string>停止服务器</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <spacer name="horizontalSpacer">
-       <property name="orientation">
-        <enum>Qt::Orientation::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QLabel" name="label_ServerStatus">
-       <property name="font">
-        <font>
-         <family>Microsoft YaHei</family>
-         <pointsize>10</pointsize>
-         <bold>true</bold>
-        </font>
-       </property>
-       <property name="text">
-        <string>🔴 当前状态：未启动</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <widget class="QTabWidget" name="tabWidget_Main">
-     <property name="currentIndex">
-      <number>0</number>
-     </property>
-     <widget class="QWidget" name="tab_Network">
-      <attribute name="title">
-       <string>🌐 网络监控控制台</string>
-      </attribute>
-      <layout class="QHBoxLayout" name="horizontalLayout_Tab1">
-       <item>
-        <layout class="QVBoxLayout" name="verticalLayout_Left">
-         <item>
-          <widget class="QLabel" name="label_OnlineUsers">
-           <property name="font">
-            <font>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>🟢 当前在线员工节点</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QTableWidget" name="tableWidget_OnlineUsers">
-           <property name="editTriggers">
-            <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
-           </property>
-           <property name="selectionBehavior">
-            <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QVBoxLayout" name="verticalLayout_Right">
-         <item>
-          <widget class="QLabel" name="label_ServerLog">
-           <property name="font">
-            <font>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>📜 消息路由与系统底层日志</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QTextBrowser" name="textBrowser_ServerLog">
-           <property name="styleSheet">
-            <string>background-color: rgb(30, 30, 30); color: rgb(0, 255, 0); font-family: Consolas, monospace; font-size: 10pt;</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="tab_Data">
-      <attribute name="title">
-       <string>📊 全局数据中心</string>
-      </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout_Tab2">
-       <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_DataTop">
-         <item>
-          <widget class="QPushButton" name="btn_RefreshData">
-           <property name="text">
-            <string>手动刷新全局考勤</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="btn_ExportGlobal">
-           <property name="text">
-            <string>导出全局报表</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="horizontalSpacer_2">
-           <property name="orientation">
-            <enum>Qt::Orientation::Horizontal</enum>
-           </property>
-           <property name="sizeHint" stdset="0">
-            <size>
-             <width>40</width>
-             <height>20</height>
-            </size>
-           </property>
-          </spacer>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <widget class="QTableView" name="tableView_GlobalRecords">
-         <property name="editTriggers">
-          <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
-         </property>
-         <property name="selectionBehavior">
-          <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
-     <widget class="QWidget" name="tab_Permissions">
-      <attribute name="title">
-       <string>🛡️ 权限控制中心</string>
-      </attribute>
-      <layout class="QVBoxLayout" name="verticalLayout_Tab3">
-       <item>
-        <widget class="QLabel" name="label_PermHint">
-         <property name="styleSheet">
-          <string>color: #E6A23C; font-weight: bold;</string>
-         </property>
-         <property name="text">
-          <string>提示：双击“系统权限角色”列可直接修改员工的系统级别权限（普通登录 / 管理员登录 / 超级管理员）并实时生效。</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QTableView" name="tableView_Permissions">
-         <property name="selectionBehavior">
-          <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
-    </widget>
-   </item>
-  </layout>
- </widget>
- <layoutdefault spacing="6" margin="11"/>
- <resources>
-  <include location="AttendanceServer.qrc"/>
- </resources>
- <connections/>
+	<class>AttendanceServerClass</class>
+	<widget class="QWidget" name="AttendanceServerClass">
+		<property name="geometry">
+			<rect>
+				<x>0</x>
+				<y>0</y>
+				<width>900</width>
+				<height>650</height>
+			</rect>
+		</property>
+		<property name="windowTitle">
+			<string>考勤系统 - 分布式服务端总控中心</string>
+		</property>
+		<layout class="QVBoxLayout" name="verticalLayout">
+			<item>
+				<layout class="QHBoxLayout" name="horizontalLayout_Top">
+					<item>
+						<widget class="QLabel" name="label_Port">
+							<property name="text">
+								<string>监听端口:</string>
+							</property>
+						</widget>
+					</item>
+					<item>
+						<widget class="QLineEdit" name="lineEdit_Port">
+							<property name="maximumSize">
+								<size>
+									<width>80</width>
+									<height>16777215</height>
+								</size>
+							</property>
+							<property name="text">
+								<string>9999</string>
+							</property>
+						</widget>
+					</item>
+					<item>
+						<widget class="QPushButton" name="btn_StartServer">
+							<property name="text">
+								<string>启动服务器</string>
+							</property>
+						</widget>
+					</item>
+					<item>
+						<widget class="QPushButton" name="btn_StopServer">
+							<property name="enabled">
+								<bool>false</bool>
+							</property>
+							<property name="text">
+								<string>停止服务器</string>
+							</property>
+						</widget>
+					</item>
+					<item>
+						<spacer name="horizontalSpacer">
+							<property name="orientation">
+								<enum>Qt::Orientation::Horizontal</enum>
+							</property>
+							<property name="sizeHint" stdset="0">
+								<size>
+									<width>40</width>
+									<height>20</height>
+								</size>
+							</property>
+						</spacer>
+					</item>
+					<item>
+						<widget class="QLabel" name="label_ServerStatus">
+							<property name="font">
+								<font>
+									<family>Microsoft YaHei</family>
+									<pointsize>10</pointsize>
+									<bold>true</bold>
+								</font>
+							</property>
+							<property name="text">
+								<string>🔴 当前状态：未启动</string>
+							</property>
+						</widget>
+					</item>
+				</layout>
+			</item>
+			<item>
+				<widget class="QTabWidget" name="tabWidget_Main">
+					<property name="currentIndex">
+						<number>0</number>
+					</property>
+					<widget class="QWidget" name="tab_Network">
+						<attribute name="title">
+							<string>🌐 网络监控控制台</string>
+						</attribute>
+						<layout class="QHBoxLayout" name="horizontalLayout_Tab1">
+							<item>
+								<layout class="QVBoxLayout" name="verticalLayout_Left">
+									<item>
+										<widget class="QLabel" name="label_OnlineUsers">
+											<property name="font">
+												<font>
+													<bold>true</bold>
+												</font>
+											</property>
+											<property name="text">
+												<string>🟢 当前在线员工节点</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QTableWidget" name="tableWidget_OnlineUsers">
+											<property name="editTriggers">
+												<set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+											</property>
+											<property name="selectionBehavior">
+												<enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+											</property>
+										</widget>
+									</item>
+								</layout>
+							</item>
+							<item>
+								<layout class="QVBoxLayout" name="verticalLayout_Right">
+									<item>
+										<widget class="QLabel" name="label_ServerLog">
+											<property name="font">
+												<font>
+													<bold>true</bold>
+												</font>
+											</property>
+											<property name="text">
+												<string>📜 消息路由与系统底层日志</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QTextBrowser" name="textBrowser_ServerLog">
+											<property name="styleSheet">
+												<string>background-color: rgb(30, 30, 30); color: rgb(0, 255, 0); font-family: Consolas, monospace; font-size: 10pt;</string>
+											</property>
+										</widget>
+									</item>
+								</layout>
+							</item>
+						</layout>
+					</widget>
+					<widget class="QWidget" name="tab_Data">
+						<attribute name="title">
+							<string>📊 全局数据中心</string>
+						</attribute>
+						<layout class="QVBoxLayout" name="verticalLayout_Tab2">
+							<item>
+								<layout class="QHBoxLayout" name="horizontalLayout_DataTop">
+									<item>
+										<widget class="QPushButton" name="btn_RefreshData">
+											<property name="text">
+												<string>手动刷新全局考勤</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<widget class="QPushButton" name="btn_ExportGlobal">
+											<property name="text">
+												<string>导出全局报表</string>
+											</property>
+										</widget>
+									</item>
+									<item>
+										<spacer name="horizontalSpacer_2">
+											<property name="orientation">
+												<enum>Qt::Orientation::Horizontal</enum>
+											</property>
+											<property name="sizeHint" stdset="0">
+												<size>
+													<width>40</width>
+													<height>20</height>
+												</size>
+											</property>
+										</spacer>
+									</item>
+								</layout>
+							</item>
+							<item>
+								<widget class="QTableView" name="tableView_GlobalRecords">
+									<property name="editTriggers">
+										<set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+									</property>
+									<property name="selectionBehavior">
+										<enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+					<widget class="QWidget" name="tab_Permissions">
+						<attribute name="title">
+							<string>🛡️ 权限控制中心</string>
+						</attribute>
+						<layout class="QVBoxLayout" name="verticalLayout_Tab3">
+							<item>
+								<widget class="QLabel" name="label_PermHint">
+									<property name="styleSheet">
+										<string>color: #E6A23C; font-weight: bold;</string>
+									</property>
+									<property name="text">
+										<string>提示：双击“系统权限角色”列可直接修改员工的系统级别权限（普通登录 / 管理员登录 / 超级管理员）并实时生效。</string>
+									</property>
+								</widget>
+							</item>
+							<item>
+								<widget class="QTableView" name="tableView_Permissions">
+									<property name="selectionBehavior">
+										<enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+									</property>
+								</widget>
+							</item>
+						</layout>
+					</widget>
+				</widget>
+			</item>
+		</layout>
+	</widget>
+	<layoutdefault spacing="6" margin="11"/>
+	<resources>
+		<include location="AttendanceServer.qrc"/>
+	</resources>
+	<connections/>
 </ui>

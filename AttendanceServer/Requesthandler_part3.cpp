@@ -9,8 +9,7 @@
 #include <QDateTime>
 #include <QDate>
 #include <QTime>
-#include <QDebug>
-
+// JSON 转换为紧凑格式并加上换行符，通过跨线程安全发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
     QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
@@ -18,30 +17,24 @@ static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
         [socket, outData]() { socket->write(outData); },
         Qt::QueuedConnection);
 }
-
-
-// ============================================================
-// ── 考勤核心 ─────────────────────────────────────────────────
-// ============================================================
-
+// 处理客户端发起的正常打卡请求
 void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
     QString   name = json["name"].toString();
+    // 强制使用服务器本地时间作为打卡时间，防止客户端篡改本地时间作弊
     QDateTime serverNow = QDateTime::currentDateTime();
     QString   timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
     QTime     currentTime = serverNow.time();
-
-    // 查询所属部门
+    // 1. 查询该员工所属的部门
     QString dept = "全部";
     QSqlQuery dq(db);
     dq.prepare("SELECT department FROM users WHERE name = :n");
     dq.bindValue(":n", name);
     if (dq.exec() && dq.next()) dept = dq.value(0).toString();
-
-    // 读取排班规则
+    // 2. 读取排班规则（优先匹配具体部门的规则，如果没有则使用"全部"的通用规则）
     QTime startTime(9, 0), endTime(18, 0);
-    int   absentMins = 120;
+    int   absentMins = 120; // 默认超过 120 分钟算旷工
     QSqlQuery sq(db);
     sq.prepare("SELECT start_time, end_time, absent_mins FROM shift_rules "
         "WHERE dept = :d OR dept = '全部' ORDER BY (dept = :d) DESC LIMIT 1");
@@ -51,25 +44,27 @@ void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* /*socket*/
         endTime = sq.value(1).toTime();
         absentMins = sq.value(2).toInt();
     }
-
-    // 判断状态
+    // 3. 判定当前打卡的考勤状态
     QString status = "正常打卡";
+    // 简单逻辑：以中午 12 点为界限区分上下班打卡（可根据实际需求优化）
     if (currentTime < QTime(12, 0)) {
+        // 判定上班打卡是否迟到或旷工
         int secsLate = startTime.secsTo(currentTime);
         if (secsLate > 0)
             status = (secsLate > absentMins * 60) ? "旷工" : "迟到";
     }
     else {
+        // 判定下班打卡是否早退
         status = (currentTime < endTime) ? "早退" : "正常下班";
     }
-
+    // 4. 将考勤记录落库
     QSqlQuery insertQuery(db);
     insertQuery.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (:n, :t, :s)");
     insertQuery.bindValue(":n", name);
     insertQuery.bindValue(":t", timeStr);
     insertQuery.bindValue(":s", status);
-
     if (insertQuery.exec()) {
+        // 记录系统日志并刷新服务端首页的全局考勤数据
         QMetaObject::invokeMethod(server, [server, name, status]() {
             server->logMessage(QString("<font color='#00B42A'>考勤中心: 成功记录 [%1] 的考勤: %2</font>")
                 .arg(name, status));
@@ -77,7 +72,7 @@ void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* /*socket*/
             }, Qt::QueuedConnection);
     }
 }
-
+// 处理客户端上报的作弊打卡（如活体检测失败/非本人特征强制打卡）
 void RequestHandler::handlePunchCheat(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
@@ -85,26 +80,26 @@ void RequestHandler::handlePunchCheat(QSqlDatabase& db, QTcpSocket* /*socket*/,
     q.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, NOW(), '作弊打卡')");
     q.addBindValue(json["name"].toString());
     q.exec();
-
+    // 在服务端发出红色安全警报
     QString name = json["name"].toString();
     QMetaObject::invokeMethod(server, [server, name]() {
         server->logMessage(QString("<font color='red'>安全警报: 员工 [%1] 多次人脸核验失败，强制记为作弊！</font>").arg(name));
         server->loadGlobalRecords();
         }, Qt::QueuedConnection);
 }
-
+// 查询员工当天的考勤状态及打卡时间轴
 void RequestHandler::handleQueryTodayStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString();
     QJsonObject res;
     res["status"] = "success";
-
+    // 1. 检查今天是否在已批准的请假日期范围内
     QSqlQuery leaveQ(db);
     leaveQ.prepare("SELECT id FROM leave_requests WHERE applicant=:n AND status='已批准' "
         "AND CURDATE() BETWEEN DATE(start_time) AND DATE(end_time)");
     leaveQ.bindValue(":n", name);
     res["is_on_leave"] = (leaveQ.exec() && leaveQ.next());
-
+    // 2. 查询今天的所有打卡记录流水
     QJsonArray punches;
     QSqlQuery query(db);
     query.prepare("SELECT punch_time, status FROM attendance_records "
@@ -121,32 +116,31 @@ void RequestHandler::handleQueryTodayStatus(QSqlDatabase& db, QTcpSocket* socket
     res["punches"] = punches;
     sendJson(socket, res);
 }
-
+// 供客户端月度考勤日历视图调用的状态查询（渲染不同颜色的小圆点）
 void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString();
     int     year = json["year"].toInt();
     int     month = json["month"].toInt();
-
+    // 计算当月的第一天和最后一天
     QString startDate = QString("%1-%2-01").arg(year).arg(month, 2, 10, QChar('0'));
     QDate   lastDay(year, month, 1);
     lastDay = lastDay.addMonths(1).addDays(-1);
     QString endDate = lastDay.toString("yyyy-MM-dd");
-
     QSqlQuery q(db);
     QString sql = QString(
         "SELECT DATE(punch_time) as d, status FROM attendance_records "
         "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' "
         "ORDER BY punch_time ASC"
     ).arg(name, startDate, endDate);
-
+    // 将同一天的多次打卡状态进行合并/覆盖判定
     QMap<QString, QString> dayStatus;
     if (q.exec(sql)) {
         while (q.next()) {
             QString dateStr = q.value(0).toDate().toString("yyyy-MM-dd");
             QString status = q.value(1).toString();
             QString existing = dayStatus.value(dateStr, "");
-
+            // 状态优先级判定逻辑：旷工 > 迟到/早退 > 请假 > 正常
             if (status.contains("旷工")) {
                 dayStatus[dateStr] = "absent";
             }
@@ -161,7 +155,7 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
             }
         }
     }
-
+    // 统计本月的各类考勤天数，并生成日历颜色映射表
     int normalDays = 0, lateDays = 0, leaveDays = 0, absentDays = 0;
     QJsonObject colorMap;
     for (auto it = dayStatus.begin(); it != dayStatus.end(); ++it) {
@@ -171,7 +165,6 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
         else if (it.value() == "leave")  leaveDays++;
         else if (it.value() == "absent") absentDays++;
     }
-
     QJsonObject res;
     res["status"] = "success";
     res["normal_days"] = normalDays;
@@ -181,28 +174,24 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
     res["color_map"] = colorMap;
     sendJson(socket, res);
 }
-
+// 获取满足特定过滤条件的考勤明细（包含分页或条件筛选）
 void RequestHandler::handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString nameFilter = json["name_filter"].toString().trimmed();
     QString sDate = json["start_date"].toString();
     QString eDate = json["end_date"].toString();
     QString statusFilter = json["status_filter"].toString();
-
     QString attSql = QString(
         "SELECT id, name, punch_time, status FROM attendance_records "
         "WHERE DATE(punch_time) BETWEEN '%1' AND '%2'"
     ).arg(sDate, eDate);
-
     if (!nameFilter.isEmpty())
         attSql += QString(" AND name LIKE '%%%1%%'").arg(nameFilter);
-
+    // 处理特殊的状态过滤逻辑
     if (statusFilter == "正常")  attSql += " AND status LIKE '%正常%' AND status NOT LIKE '%补卡%'";
     else if (statusFilter == "请假")  attSql += " AND (status LIKE '%假%' OR status LIKE '%调休%')";
     else if (statusFilter != "全部状态") attSql += QString(" AND status LIKE '%%%1%%'").arg(statusFilter);
-
     attSql += " ORDER BY punch_time DESC";
-
     QJsonArray recordsArr;
     QSqlQuery  attQ(db);
     if (attQ.exec(attSql)) {
@@ -212,17 +201,16 @@ void RequestHandler::handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* s
             row["name"] = attQ.value(1).toString();
             row["time"] = attQ.value(2).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
             row["status"] = attQ.value(3).toString();
-            row["source"] = "A";
+            row["source"] = "A"; // 预留字段，代表数据来源标识
             recordsArr.append(row);
         }
     }
-
     QJsonObject response;
     response["status"] = "success";
     response["records"] = recordsArr;
     sendJson(socket, response);
 }
-
+// 专供 AI 或大屏展示使用的当天精简考勤数据
 void RequestHandler::handleQueryTodayAttendanceForAi(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QJsonArray arr;
@@ -243,17 +231,16 @@ void RequestHandler::handleQueryTodayAttendanceForAi(QSqlDatabase& db, QTcpSocke
     res["data"] = arr;
     sendJson(socket, res);
 }
-
+// 获取客户端首页看板图表所需的所有数据源
 void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString role = json["role"].toString();
     QString name = json["name"].toString();
     QJsonObject res;
     res["status"] = "success";
-
     QJsonObject topCards;
     QSqlQuery   q(db);
-
+    // 1. 顶部卡片：统计企业总人数、今日实到打卡人数、异常人数
     q.exec("SELECT COUNT(*) FROM users WHERE role != '超级管理员'");
     if (q.next()) topCards["total_expected"] = q.value(0).toInt();
 
@@ -262,7 +249,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
 
     q.exec("SELECT COUNT(DISTINCT name) FROM attendance_records WHERE DATE(punch_time) = CURDATE() AND status NOT LIKE '%正常%'");
     if (q.next()) topCards["abnormal_count"] = q.value(0).toInt();
-
+    // 管理层显示待审批数量，普通员工显示自己的异常打卡次数
     if (role.contains("管理员") || role == "经理") {
         q.exec(QString("SELECT COUNT(*) FROM leave_requests WHERE approver LIKE '%%%1%%' AND status='待审批'").arg(name));
         if (q.next()) topCards["pending_leaves"] = q.value(0).toInt();
@@ -274,7 +261,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         if (q.next()) topCards["my_abnormal"] = q.value(0).toInt();
     }
     res["top_cards"] = topCards;
-
+    // 2. 饼图：今日各打卡状态分布比例
     QJsonArray pieArr;
     q.exec("SELECT status, COUNT(*) FROM attendance_records WHERE DATE(punch_time) = CURDATE() GROUP BY status");
     while (q.next()) {
@@ -282,7 +269,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         pieArr.append(o);
     }
     res["pie_chart"] = pieArr;
-
+    // 3. 柱状图：近30天各部门的异常情况对比
     QJsonArray barArr;
     q.exec("SELECT u.department, COUNT(a.id) FROM users u LEFT JOIN attendance_records a ON u.name = a.name AND a.status NOT LIKE '%正常%' WHERE DATE(a.punch_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY u.department");
     while (q.next()) {
@@ -292,7 +279,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         barArr.append(o);
     }
     res["bar_chart"] = barArr;
-
+    // 4. 折线图：近7天的活跃打卡人数趋势
     QJsonArray lineArr;
     q.exec("SELECT DATE_FORMAT(punch_time, '%m-%d'), COUNT(DISTINCT name) FROM attendance_records WHERE punch_time >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(punch_time) ORDER BY DATE(punch_time) ASC");
     while (q.next()) {
@@ -300,7 +287,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         lineArr.append(o);
     }
     res["line_chart"] = lineArr;
-
+    // 5. 滚动动态流：最近 10 条打卡记录
     QJsonArray feedArr;
     q.exec("SELECT DATE_FORMAT(punch_time, '%H:%i:%s'), name, status FROM attendance_records WHERE DATE(punch_time) = CURDATE() ORDER BY punch_time DESC LIMIT 10");
     while (q.next()) {
@@ -308,7 +295,7 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         feedArr.append(o);
     }
     res["feed_list"] = feedArr;
-
+    // 6. 系统公告栏：获取最新的3条公告
     QJsonArray noticeArr;
     q.exec("SELECT content, DATE_FORMAT(publish_time, '%m-%d') FROM system_announcements ORDER BY publish_time DESC LIMIT 3");
     while (q.next()) {
@@ -316,21 +303,14 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
         noticeArr.append(o);
     }
     res["notice_list"] = noticeArr;
-
     sendJson(socket, res);
 }
-
-
-// ============================================================
-// ── 排班规则 ─────────────────────────────────────────────────
-// ============================================================
-
+// 查询指定部门的排班与考勤惩罚规则
 void RequestHandler::handleQueryShiftRule(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString dept = json["dept"].toString();
     QJsonObject res;
     res["status"] = "fail";
-
     QSqlQuery sq(db);
     sq.prepare("SELECT rule_name, start_time, end_time, late_mins, absent_mins FROM shift_rules "
         "WHERE dept = :d OR dept = '全部' ORDER BY (dept = :d) DESC LIMIT 1");
@@ -345,7 +325,7 @@ void RequestHandler::handleQueryShiftRule(QSqlDatabase& db, QTcpSocket* socket, 
     }
     sendJson(socket, res);
 }
-
+// 更新排班规则
 void RequestHandler::handleRuleSettings(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
@@ -359,17 +339,12 @@ void RequestHandler::handleRuleSettings(QSqlDatabase& db, QTcpSocket* /*socket*/
     q.addBindValue(json["late_mins"].toInt());
     q.addBindValue(json["absent_mins"].toInt());
     q.exec();
-
+    // 记录后台管理日志
     QMetaObject::invokeMethod(server, [server]() {
         server->logMessage("<font color='#E6A23C'>规则中心: 管理层更新了企业排班规则。</font>");
         }, Qt::QueuedConnection);
 }
-
-
-// ============================================================
-// ── 请假 & 申诉 ──────────────────────────────────────────────
-// ============================================================
-
+// 提交请假申请单
 void RequestHandler::handleLeaveRequest(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
     QSqlQuery ins(db);
@@ -383,7 +358,7 @@ void RequestHandler::handleLeaveRequest(QSqlDatabase& db, QTcpSocket* /*socket*/
     ins.addBindValue(json["approver"].toString());
     ins.exec();
 }
-
+// 审批通过请假单，并在对应日期内生成连续的打卡流水
 void RequestHandler::handleLeaveApprove(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
@@ -392,16 +367,16 @@ void RequestHandler::handleLeaveApprove(QSqlDatabase& db, QTcpSocket* /*socket*/
     QString sTimeStr = json["start_time"].toString();
     QString eTimeStr = json["end_time"].toString();
     QString lType = json["leave_type"].toString();
-
+    // 更新请假单状态为已批准
     QSqlQuery upd(db);
     upd.exec(QString("UPDATE leave_requests SET status='已批准' WHERE id=%1").arg(reqId));
-
+    // 根据请假天数，向考勤流水表中循环插入虚拟的打卡记录
     QString finalStatus = "假-" + lType;
     QDate   sDate = QDate::fromString(sTimeStr.left(10), "yyyy-MM-dd");
     QDate   eDate = QDate::fromString(eTimeStr.left(10), "yyyy-MM-dd");
-
     if (sDate.isValid() && eDate.isValid() && sDate <= eDate) {
         for (QDate d = sDate; d <= eDate; d = d.addDays(1)) {
+            // 设定在早上 09:00 插入一条记录以补全报表数据
             QString    punchTime = d.toString("yyyy-MM-dd") + " 09:00:00";
             QSqlQuery  insertQ(db);
             insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
@@ -411,13 +386,12 @@ void RequestHandler::handleLeaveApprove(QSqlDatabase& db, QTcpSocket* /*socket*/
             insertQ.exec();
         }
     }
-
     QMetaObject::invokeMethod(server, [server, applicant]() {
         server->logMessage(QString("<font color='#67C23A'>流程审批: [%1] 的请假已获批准，多天流水已连片入库。</font>").arg(applicant));
         server->loadGlobalRecords();
         }, Qt::QueuedConnection);
 }
-
+// 提交异常考勤申诉记录
 void RequestHandler::handleAppealRequest(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
     QSqlQuery ins(db);
@@ -430,7 +404,7 @@ void RequestHandler::handleAppealRequest(QSqlDatabase& db, QTcpSocket* /*socket*
     ins.addBindValue(json["approver"].toString());
     ins.exec();
 }
-
+// 审批通过申诉，自动修复存在问题的考勤记录
 void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
@@ -438,22 +412,21 @@ void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*
     QString applicant = json["applicant"].toString();
     QString aTime = json["abnormal_time"].toString();
     QString aType = json["appeal_type"].toString();
-
+    // 更新申诉表状态
     QSqlQuery upd(db);
     upd.exec(QString("UPDATE appeals SET status='已批准' WHERE id=%1").arg(reqId));
-
+    // 根据申诉类型精准修正流水表数据
     if (aType == "整天申诉") {
         upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
     }
     else {
         upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
     }
-
     QMetaObject::invokeMethod(server, [server]() {
         server->loadGlobalRecords();
         }, Qt::QueuedConnection);
 }
-
+// 管理层获取分派给自己的待处理请假单
 void RequestHandler::handleQueryPendingLeaves(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString approver = json["approver"].toString();
@@ -478,7 +451,7 @@ void RequestHandler::handleQueryPendingLeaves(QSqlDatabase& db, QTcpSocket* sock
     res["data"] = arr;
     sendJson(socket, res);
 }
-
+// 管理层获取分派给自己的待处理申诉单
 void RequestHandler::handleQueryPendingAppeals(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString approver = json["approver"].toString();
@@ -502,13 +475,12 @@ void RequestHandler::handleQueryPendingAppeals(QSqlDatabase& db, QTcpSocket* soc
     res["data"] = arr;
     sendJson(socket, res);
 }
-
+// 员工获取自己发起的流程审批进度历史（含请假和申诉）
 void RequestHandler::handleQueryMyRequests(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString().trimmed();
     QJsonObject response;
     response["status"] = "success";
-
     QJsonArray leaveArr;
     QSqlQuery lq(db);
     if (lq.exec(QString("SELECT leave_type, start_time, end_time, reason, approver, status "
@@ -525,7 +497,6 @@ void RequestHandler::handleQueryMyRequests(QSqlDatabase& db, QTcpSocket* socket,
         }
     }
     response["leave_data"] = leaveArr;
-
     QJsonArray appealArr;
     QSqlQuery aq(db);
     if (aq.exec(QString("SELECT abnormal_time, original_status, reason, approver, status "
@@ -543,12 +514,12 @@ void RequestHandler::handleQueryMyRequests(QSqlDatabase& db, QTcpSocket* socket,
     response["appeal_data"] = appealArr;
     sendJson(socket, response);
 }
-
+// 客户端发起申诉前，获取可以指派的审批人列表及自身的异常打卡流水供选择
 void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString();
     QJsonObject res;
-
+    // 1. 获取员工自身岗位信息用于限定审批流层级
     QSqlQuery infoQ(db);
     infoQ.prepare("SELECT role, department, job_title FROM users WHERE name=:n");
     infoQ.bindValue(":n", name);
@@ -557,7 +528,7 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
         res["my_dept"] = infoQ.value(1).toString();
         res["my_job"] = infoQ.value(2).toString();
     }
-
+    // 2. 罗列该员工最近 10 条处于异常状态（不是'正常'）的打卡记录
     QJsonArray abnArr;
     QSqlQuery rq(db);
     rq.prepare("SELECT punch_time, status FROM attendance_records "
@@ -572,24 +543,20 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
         }
     }
     res["abnormal_records"] = abnArr;
-
+    // 3. 构建多级审批人列表：HR、总经理、直属部门经理
     QJsonArray hrArr, gmArr, mgrArr;
-
     QSqlQuery hq(db);
     hq.exec("SELECT name FROM users WHERE department='人力资源部' AND job_title='部门经理' AND name NOT LIKE '%超级管理员%'");
     while (hq.next()) hrArr.append(hq.value(0).toString());
-
     QSqlQuery gq(db);
     gq.exec("SELECT name FROM users WHERE job_title IN ('总经理', '总裁', '董事长') OR name='总经理' LIMIT 1");
     while (gq.next()) gmArr.append(gq.value(0).toString());
-
     QSqlQuery mq(db);
     mq.prepare("SELECT name FROM users WHERE department=:d AND job_title='部门经理' AND name != :me");
     mq.bindValue(":d", res["my_dept"].toString());
-    mq.bindValue(":me", name);
+    mq.bindValue(":me", name); // 防止部门经理自己向自己发起审批
     mq.exec();
     while (mq.next()) mgrArr.append(mq.value(0).toString());
-
     res["hr_list"] = hrArr;
     res["gm_list"] = gmArr;
     res["mgr_list"] = mgrArr;

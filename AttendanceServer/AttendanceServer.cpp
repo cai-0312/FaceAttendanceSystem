@@ -2,7 +2,6 @@
 #include "DatabaseManager.h"
 #include "RequestHandler.h"
 #include "CenterAndComboDelegate.h"
-
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlRecord>
@@ -11,25 +10,21 @@
 #include <QTextStream>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QDebug>
 #include <QDateTime>
 #include <QtConcurrent>
 #include <QFuture>
 #include <QThread>
 
-// ============================================================
-// 构造 / 析构
-// ============================================================
-
+// 构造函数：初始化网络路由引擎、建立底层数据库连接池并构建控制台界面
 AttendanceServer::AttendanceServer(QWidget* parent)
     : QWidget(parent), ui(new Ui::AttendanceServerClass)
 {
     ui->setupUi(this);
 
-    // 1. 初始化数据库（建连接 + DDL）
+    // 执行核心存储初始化：挂载数据库连接实例并完成基础数据表结构的建表工作
     DatabaseManager::initDatabase();
 
-    // 2. 初始化 UI 控件、模型、信号槽
+    // 构建视图树、绑定底层交互模型及指令分发表
     initUI();
     initDispatchTable();
 }
@@ -39,13 +34,10 @@ AttendanceServer::~AttendanceServer()
     delete ui;
 }
 
-// ============================================================
-// UI 初始化
-// ============================================================
-
+// 执行控制台各级子视图模块及权限模型的深度绑定与配置
 void AttendanceServer::initUI()
 {
-    // ── 全局考勤记录表 ────────────────────────────────────────
+    // 配置全局考勤记录只读视图与数据模型
     m_globalRecordModel = new QSqlQueryModel(this);
     ui->tableView_GlobalRecords->setModel(m_globalRecordModel);
     ui->tableView_GlobalRecords->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -55,7 +47,7 @@ void AttendanceServer::initUI()
     ui->tableView_GlobalRecords->setItemDelegate(new CenterAndComboDelegate(-1, QStringList(), this));
     loadGlobalRecords();
 
-    // ── 权限管理表 ────────────────────────────────────────────
+    // 配置RBAC级用户权限管控可编辑模型
     m_permModel = new QSqlTableModel(this, QSqlDatabase::database("server_db_connection"));
     m_permModel->setTable("view_users_lite");
     m_permModel->setEditStrategy(QSqlTableModel::OnFieldChange);
@@ -65,7 +57,7 @@ void AttendanceServer::initUI()
     ui->tableView_Permissions->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     ui->tableView_Permissions->setEditTriggers(QAbstractItemView::DoubleClicked);
 
-    // 只显示指定列
+    // 按需规避不需要干预的字段，实施视图级数据脱敏
     for (int i = 0; i < m_permModel->columnCount(); ++i) {
         QString colName = m_permModel->record().fieldName(i);
         if (colName != "id" && colName != "name" && colName != "department"
@@ -73,48 +65,44 @@ void AttendanceServer::initUI()
             ui->tableView_Permissions->setColumnHidden(i, true);
         }
     }
+
     m_permModel->setHeaderData(m_permModel->fieldIndex("id"), Qt::Horizontal, "工号");
     m_permModel->setHeaderData(m_permModel->fieldIndex("name"), Qt::Horizontal, "员工姓名");
     m_permModel->setHeaderData(m_permModel->fieldIndex("department"), Qt::Horizontal, "所属部门");
     m_permModel->setHeaderData(m_permModel->fieldIndex("job_title"), Qt::Horizontal, "企业职务");
     m_permModel->setHeaderData(m_permModel->fieldIndex("role"), Qt::Horizontal, "系统权限角色(双击修改)");
 
+    // 绑定下拉选择代理，约束权限配置的操作范围
     int roleColIdx = m_permModel->fieldIndex("role");
     QStringList roleOptions = { "普通登录", "管理员登录", "超级管理员" };
     ui->tableView_Permissions->setItemDelegate(
         new CenterAndComboDelegate(roleColIdx, roleOptions, this));
 
-    // ── TCP 服务器 ────────────────────────────────────────────
+    // 实例化底层的TCP端口监听引擎句柄
     m_tcpServer = new QTcpServer(this);
     connect(m_tcpServer, &QTcpServer::newConnection, this, &AttendanceServer::onNewConnection);
 
-    // ── 在线用户表 ────────────────────────────────────────────
+    // 配置实时在线设备接入表视图模型
     ui->tableWidget_OnlineUsers->setColumnCount(5);
     ui->tableWidget_OnlineUsers->setHorizontalHeaderLabels({ "姓名", "工作部门", "企业职务", "IP地址", "登录时间" });
     ui->tableWidget_OnlineUsers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     ui->tableWidget_OnlineUsers->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
-    // ── 按钮信号槽 ────────────────────────────────────────────
+    // 挂载全局操控类按钮的事件调度回调槽
     connect(ui->btn_StartServer, &QPushButton::clicked, this, &AttendanceServer::on_btn_StartServer_clicked);
     connect(ui->btn_StopServer, &QPushButton::clicked, this, &AttendanceServer::on_btn_StopServer_clicked);
     connect(ui->btn_RefreshData, &QPushButton::clicked, this, &AttendanceServer::on_btn_RefreshData_clicked);
     connect(ui->btn_ExportGlobal, &QPushButton::clicked, this, &AttendanceServer::on_btn_ExportGlobal_clicked);
 }
 
-// ============================================================
-// 日志
-// ============================================================
-
+// 基于HTML富文本格式向服务端内嵌的实时监控终端推送运行日志
 void AttendanceServer::logMessage(const QString& msg)
 {
     QString timeStr = QDateTime::currentDateTime().toString("[HH:mm:ss] ");
     ui->textBrowser_ServerLog->append(timeStr + msg);
 }
 
-// ============================================================
-// TCP 服务器控制
-// ============================================================
-
+// 唤醒内核监听线程并对外暴露TCP连接服务
 void AttendanceServer::on_btn_StartServer_clicked()
 {
     quint16 port = ui->lineEdit_Port->text().toUShort();
@@ -134,10 +122,12 @@ void AttendanceServer::on_btn_StartServer_clicked()
     }
 }
 
+// 剥离并终止TCP底层监听，并安全踢出全网范围内已建立长连接的终端节点
 void AttendanceServer::on_btn_StopServer_clicked()
 {
     m_tcpServer->close();
     for (QTcpSocket* socket : m_clients.keys()) socket->disconnectFromHost();
+
     m_clients.clear();
     m_nameToSocket.clear();
     updateOnlineUsersTable();
@@ -150,10 +140,7 @@ void AttendanceServer::on_btn_StopServer_clicked()
     logMessage("<font color='#E6A23C'>TCP 核心路由引擎已安全关闭。</font>");
 }
 
-// ============================================================
-// TCP 连接管理
-// ============================================================
-
+// 拦截新到来的套接字请求实例，配置通信钩子
 void AttendanceServer::onNewConnection()
 {
     QTcpSocket* socket = m_tcpServer->nextPendingConnection();
@@ -162,12 +149,13 @@ void AttendanceServer::onNewConnection()
     logMessage(QString("收到新的物理连接请求: %1").arg(socket->peerAddress().toString()));
 }
 
+// 清洗并回收离线终端套接字的内存级路由占用
 void AttendanceServer::onClientDisconnected()
 {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    // 🚀 核心修复：清理该 Socket 对应的缓冲区，防止内存泄漏和下次连接的数据污染
+    // 同步清理关联套接字的读写缓冲区，防止产生悬空指针与内存泄漏污染
     if (m_buffers.contains(socket)) {
         m_buffers.remove(socket);
     }
@@ -182,16 +170,14 @@ void AttendanceServer::onClientDisconnected()
     socket->deleteLater();
 }
 
-// ============================================================
-// 网络核心路由：将请求分发给 RequestHandler
-// ============================================================
-
+// 利用内部缓冲区机制修复TCP粘包半包现象，解析JSON报文并向任务池派发网络负荷指令
 void AttendanceServer::onReadyRead()
 {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    static QMutex bufferMutex; // 🚀 必须加锁
+    // 利用互斥锁保证在高并发流量下多字节流读写追加的并发安全性
+    static QMutex bufferMutex;
     QMutexLocker locker(&bufferMutex);
 
     m_buffers[socket].append(socket->readAll());
@@ -203,19 +189,17 @@ void AttendanceServer::onReadyRead()
 
         if (data.isEmpty()) continue;
 
-        // 3. 将完整的 JSON 数据提交给线程池处理
+        // 将组装完毕的完整协议报文投递至底层并发线程池进行无阻塞的业务级路由转发
         QtConcurrent::run([this, socket, data]() {
             QJsonDocument doc = QJsonDocument::fromJson(data);
             if (doc.isNull() || !doc.isObject()) {
-                qDebug() << "❌ 收到残缺或非法的 JSON 数据，长度:" << data.size();
                 return;
             }
 
             QJsonObject json = doc.object();
 
-            // 🚨 关键防御：如果 JSON 解析成功但关键字段 name 还是空的，说明数据逻辑异常
+            // 数据完整性校验：拦截未携带核心身份标识字段的异常改档报文，确保数据库层修改安全
             if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) {
-                qDebug() << "⚠️ 警告：收到 update_profile_field 请求但 name 字段为空！";
                 return;
             }
 
@@ -224,10 +208,10 @@ void AttendanceServer::onReadyRead()
 
             auto it = m_dispatchTable.constFind(lookupKey);
             if (it == m_dispatchTable.constEnd()) {
-                qDebug() << "未知请求类型，已忽略:" << type;
                 return;
             }
 
+            // 获取线程独占的数据库代理通道，执行基于多例程并行的存储介质写入调度
             QString connName = DatabaseManager::makeThreadConnName();
             if (!DatabaseManager::openThreadConnection(connName)) {
                 QSqlDatabase::removeDatabase(connName);
@@ -241,10 +225,8 @@ void AttendanceServer::onReadyRead()
             });
     }
 }
-// ============================================================
-// 公开接口：供 RequestHandler 回调
-// ============================================================
 
+// 通过授权逻辑拦截的业务终端进行中心化连接池写入及状态通报
 void AttendanceServer::registerClient(QTcpSocket* socket, const QString& name,
     const QString& dept, const QString& jobTitle,
     const QString& ip)
@@ -257,25 +239,25 @@ void AttendanceServer::registerClient(QTcpSocket* socket, const QString& name,
         .arg(name, dept, jobTitle));
 }
 
+// 检索指定实体在中心服务器长连接池中的存活状态
 bool AttendanceServer::isClientOnline(const QString& name) const
 {
     return m_nameToSocket.contains(name);
 }
 
+// 基于业务标识提取关联的底层套接字内存指针
 QTcpSocket* AttendanceServer::getSocketByName(const QString& name) const
 {
     return m_nameToSocket.value(name, nullptr);
 }
 
+// 触发展开RBAC权控表层的数据全量同步刷新
 void AttendanceServer::refreshPermModel()
 {
     m_permModel->select();
 }
 
-// ============================================================
-// 在线用户表刷新
-// ============================================================
-
+// 动态提取缓存表中的客户连接流，利用标准项模型重新渲染至前端总控监控台
 void AttendanceServer::updateOnlineUsersTable()
 {
     ui->tableWidget_OnlineUsers->setRowCount(0);
@@ -288,6 +270,7 @@ void AttendanceServer::updateOnlineUsersTable()
             item->setTextAlignment(Qt::AlignCenter);
             return item;
             };
+
         ui->tableWidget_OnlineUsers->setItem(row, 0, makeItem(info.name));
         ui->tableWidget_OnlineUsers->setItem(row, 1, makeItem(info.dept));
         ui->tableWidget_OnlineUsers->setItem(row, 2, makeItem(info.jobTitle));
@@ -296,10 +279,7 @@ void AttendanceServer::updateOnlineUsersTable()
     }
 }
 
-// ============================================================
-// 考勤记录刷新
-// ============================================================
-
+// 连接基础SQL引擎将底层记录流水映射呈现在控制台全览面板中
 void AttendanceServer::loadGlobalRecords()
 {
     QString sql =
@@ -315,15 +295,12 @@ void AttendanceServer::loadGlobalRecords()
     m_globalRecordModel->setQuery(sql, db);
 }
 
-// ============================================================
-// 工具栏按钮
-// ============================================================
-
 void AttendanceServer::on_btn_RefreshData_clicked()
 {
     loadGlobalRecords();
 }
 
+// 读取内存缓存模型状态，将整个体系内的历史归档流转化为脱机可读的本地CSV文件
 void AttendanceServer::on_btn_ExportGlobal_clicked()
 {
     QString fileName = QFileDialog::getSaveFileName(
@@ -353,9 +330,10 @@ void AttendanceServer::on_btn_ExportGlobal_clicked()
     }
 }
 
+// 调度及挂接各类不同分片层面的处理业务操作器集合，以驱动系统功能网络解析执行
 void AttendanceServer::initDispatchTable()
 {
-    // ── 人脸 & 账号 ──────────────────────────────────────────
+    // 配置人脸图像及基础账号管理路由通道
     m_dispatchTable["query_face_features"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryFaceFeatures(db, s, j);
         };
@@ -369,7 +347,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleVerifyUserForRegistration(db, s, j);
         };
 
-    // ── 需要 this 指针的，用 [this] 捕获 ────────────────────
+    // 配置须持有主干应用上下文的扩展级业务挂载路由
     m_dispatchTable["client_register_account"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleClientRegisterAccount(db, s, j, this);
         };
@@ -377,13 +355,12 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleLogin(db, s, j, this);
         };
 
-    // ── 在线状态 ─────────────────────────────────────────────
+    // 挂载动态状态追踪模块流节点
     m_dispatchTable["status_update"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleStatusUpdate(db, s, j);
         };
 
-    // ── 聊天（需要 rawData 和 this）──────────────────────────
-    // chat/image/file/group_* 共用同一个处理器，需特殊处理（见 onReadyRead）
+    // 绑定多类型即时通讯底层协议路由机制
     for (const QString& t : { "chat", "image", "file" }) {
         m_dispatchTable[t] = [this](auto& db, auto* s, auto& j, auto& raw) {
             RequestHandler::handleChatMessage(db, s, j, raw, this);
@@ -393,7 +370,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleBroadcast(db, s, j, raw, this);
         };
 
-    // ── 聊天查询 ─────────────────────────────────────────────
+    // 绑定数据持久化信息及回执业务拉取逻辑
     m_dispatchTable["query_chat_history"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryChatHistory(db, s, j);
         };
@@ -410,7 +387,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handlePublishAnnouncement(db, s, j);
         };
 
-    // ── 用户档案 ─────────────────────────────────────────────
+    // 绑定企业级用户及花名册管控操作路由
     m_dispatchTable["query_user_profile"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryUserProfile(db, s, j);
         };
@@ -424,7 +401,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleQueryUserDept(db, s, j);
         };
 
-    // ── 管理员操作 ───────────────────────────────────────────
+    // 配置高危级管理拦截功能通道挂载点
     m_dispatchTable["admin_reset_password"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAdminResetPassword(db, s, j, this);
         };
@@ -435,7 +412,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleAdminModifyStatus(db, s, j, this);
         };
 
-    // ── 考勤核心 ─────────────────────────────────────────────
+    // 构建核心签到判活业务的执行入口分发
     m_dispatchTable["punch_request"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handlePunchRequest(db, s, j, this);
         };
@@ -458,7 +435,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleQueryHomeDashboard(db, s, j);
         };
 
-    // ── 排班规则 ─────────────────────────────────────────────
+    // 设置企业级规则调配和动态计算模型入口
     m_dispatchTable["query_shift_rule"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryShiftRule(db, s, j);
         };
@@ -466,7 +443,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleRuleSettings(db, s, j, this);
         };
 
-    // ── 请假 & 申诉 ──────────────────────────────────────────
+    // 绑定OA级请假申报与日常行为纠正体系的路由
     m_dispatchTable["leave_request"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleLeaveRequest(db, s, j);
         };
@@ -492,7 +469,7 @@ void AttendanceServer::initDispatchTable()
         RequestHandler::handleQueryApprovalCandidates(db, s, j);
         };
 
-    // ── AI 助手 ──────────────────────────────────────────────
+    // 挂载人工智能对话上下文以及智能诊断相关的日志上报分支
     m_dispatchTable["ai_save_message"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAiSaveMessage(db, s, j);
         };

@@ -1,36 +1,24 @@
-#pragma once
-
+#ifndef SERVERLOGIN_H
+#define SERVERLOGIN_H
 #include <QWidget>
 #include <QPoint>
 #include <QMouseEvent>
-// 1. 提前声明 Ui 命名空间中的 UI 类（避免直接在头文件中 include ui_xxx.h 造成重定义）
-namespace Ui {
-    class ServerLoginClass;
-}
-
+namespace Ui { class ServerLoginClass; }                                    
 class ServerLogin : public QWidget
 {
     Q_OBJECT
-
 public:
-    explicit ServerLogin(QWidget* parent = nullptr);
-    ~ServerLogin();
-
+    explicit ServerLogin(QWidget* parent = nullptr);                        // 初始化服务器登录界面容器并配置底层窗口属性
+    ~ServerLogin();                                                         // 释放内存资源
 signals:
-    // 声明一个登录成功信号
-    void loginSuccessful();
+    void loginSuccessful();                                                   // 当数据库鉴权通过时触发，通知主控循环拉起核心业务窗口
 protected:
-    // 拦截鼠标按下和移动事件
-    void mousePressEvent(QMouseEvent* event) override;
-    void mouseMoveEvent(QMouseEvent* event) override;
-
+    void mousePressEvent(QMouseEvent* event) override;                       // 重写鼠标按下事件，用于记录无边框窗口拖拽的初始相对坐标偏移量
+    void mouseMoveEvent(QMouseEvent* event) override;                        // 重写鼠标移动事件，结合初始偏移量动态计算并更新主窗口的屏幕绝对位置
 private slots:
-    void on_btn_ServerLogin_clicked();
-
+    void on_btn_ServerLogin_clicked();                                       // 登录按钮点击事件，执行数据库连接与系统管理员身份的合法性校验
 private:
-    // 2. 注意这里必须带有星号 *，声明为指针
-    Ui::ServerLoginClass* ui;
-    QPoint m_dragPosition; // 记录鼠标拖动时的相对坐标
-
-
+    Ui::ServerLoginClass* ui;                                                // 由UI设计器自动生成的服务端登录界面控件句柄
+    QPoint m_dragPosition;                                                   // 记录鼠标拖动无边框窗口时的相对坐标信息
 };
+#endif // SERVERLOGIN_H

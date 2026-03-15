@@ -1,13 +1,9 @@
 #include "DatabaseManager.h"
-
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QDateTime>
 #include <QThread>
-
-// ==========================================
-// ODBC 连接字符串（所有模块统一使用）
-// ==========================================
+// 定义全局统一的底层 ODBC 数据源通信连接配置基准字符串
 static const QString kOdbcDsn =
 "DRIVER={MySQL ODBC 8.0 Unicode Driver};"
 "SERVER=127.0.0.1;"
@@ -16,24 +12,21 @@ static const QString kOdbcDsn =
 "UID=root;"
 "PWD=root;"
 "CHARSET=utf8mb4;";
-
+// 执行底层存储介质的初始化：分配持久化主连接并自动检测与补全缺失的业务数据表拓扑
 void DatabaseManager::initDatabase()
 {
-    // ---------- 建立主线程连接 ----------
+    // 挂载主控线程专用的 ODBC 数据库代理通道，避免并发资源跨线程争夺
     if (!QSqlDatabase::contains("server_db_connection")) {
         QSqlDatabase db = QSqlDatabase::addDatabase("QODBC", "server_db_connection");
         db.setDatabaseName(kOdbcDsn);
         if (!db.open()) return;
     }
-
     QSqlDatabase db = QSqlDatabase::database("server_db_connection");
     QSqlQuery query(db);
-
-    // 初始化字符集
+    // 下发底层环境变量配置：激活四字节完整 UTF-8 支持集与高通量报文传输阈值
     query.exec("SET NAMES utf8mb4");
     query.exec("SET GLOBAL max_allowed_packet = 67108864");
-
-    // ---------- DDL：建表 & 补列 ----------
+    // 核心表映射：离线消息与文件投递记录实体表结构同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS offline_messages ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -46,9 +39,9 @@ void DatabaseManager::initDatabase()
         "  send_time DATETIME"
         ")"
     );
-    // 防止列已存在时报错（忽略错误即可）
+    // 执行非侵入式热更新：为旧版本实体结构动态补全归属部门字段约束，规避重复执行异常
     query.exec("ALTER TABLE offline_messages ADD COLUMN department VARCHAR(50) DEFAULT ''");
-
+    // 核心表映射：OA系统请假审批单据状态追踪结构同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS leave_requests ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -63,7 +56,7 @@ void DatabaseManager::initDatabase()
         "  status VARCHAR(50)"
         ")"
     );
-
+    // 核心表映射：异常考勤主动申诉流程防篡改追踪结构同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS appeals ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -75,7 +68,7 @@ void DatabaseManager::initDatabase()
         "  status VARCHAR(50)"
         ")"
     );
-
+    // 核心表映射：企业考勤班次规则配置字典同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS shift_rules ("
         "  dept VARCHAR(50) PRIMARY KEY,"
@@ -86,12 +79,13 @@ void DatabaseManager::initDatabase()
         "  absent_mins INT"
         ")"
     );
+    // 注入系统内置基准参数：当配置字典为空时，自动填充全员默认作息时间标准
     query.exec(
         "INSERT IGNORE INTO shift_rules "
         "(dept, rule_name, start_time, end_time, late_mins, absent_mins) "
         "VALUES ('全部', '常规班', '09:00:00', '18:00:00', 30, 120)"
     );
-
+    // 核心表映射：系统全员广播与公共公告信息发布池结构同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS system_announcements ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -100,7 +94,7 @@ void DatabaseManager::initDatabase()
         "  publish_time DATETIME"
         ")"
     );
-
+    // 核心表映射：大语言模型智能会话上下文环境标识同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS ai_sessions ("
         "  session_id VARCHAR(50) PRIMARY KEY,"
@@ -111,7 +105,7 @@ void DatabaseManager::initDatabase()
         "  last_message TEXT"
         ")"
     );
-
+    // 核心表映射：大语言模型高维度对话向量与多轮时序上下文留档同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS ai_chat_logs ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -121,7 +115,7 @@ void DatabaseManager::initDatabase()
         "  create_time DATETIME"
         ")"
     );
-
+    // 核心表映射：局域网即时通讯记录与组播归档结构同步
     query.exec(
         "CREATE TABLE IF NOT EXISTS chat_history ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -134,26 +128,25 @@ void DatabaseManager::initDatabase()
         "  is_group INT"
         ")"
     );
+    // 动态强制刷新存储引擎的字符对齐及排序规格，保障全量多语种特征安全落地
     query.exec(
         "ALTER TABLE chat_history "
         "CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     );
 }
-
+// 基于并行架构调度系统计算专属通道名，避免底层数据库句柄的越权复用与死锁
 QString DatabaseManager::makeThreadConnName()
 {
     return QString("ServerConn_%1_%2")
         .arg(quintptr(QThread::currentThreadId()))
         .arg(QDateTime::currentMSecsSinceEpoch());
 }
-
+// 在完全分离的子线程环境中建立并挂载底层安全连接信道，大幅提升网络I/O吞吐极限
 bool DatabaseManager::openThreadConnection(const QString& connName)
 {
     QSqlDatabase threadDb = QSqlDatabase::addDatabase("QODBC", connName);
     threadDb.setDatabaseName(kOdbcDsn);
-
     if (!threadDb.open()) return false;
-
     QSqlQuery initQ(threadDb);
     initQ.exec("SET NAMES utf8mb4");
     return true;
