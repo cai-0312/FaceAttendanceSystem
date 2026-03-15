@@ -25,125 +25,107 @@
 #include <QComboBox>
 #include <QThread>
 #include <QTimer>
-
-//初始化网络模块、API基础配置、重构UI界面并从数据库加载历史会话
-AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineEdit,
-    QPushButton* sendBtn, QPushButton* clearBtn, QString userName, QObject* parent)
-    : QObject(parent), m_textBrowser(textBrowser), m_oldLineEdit(lineEdit),
-    m_sendBtn(sendBtn), m_clearBtn(clearBtn), m_userName(userName),
-    m_isReplying(false), m_voiceEnabled(false)
+// 初始化网络模块、API基础配置、重构UI界面并从数据库加载历史会话
+AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineEdit, QPushButton* sendBtn, QPushButton* clearBtn, QString userName, QObject* parent)
+    : QObject(parent), m_textBrowser(textBrowser), m_oldLineEdit(lineEdit), m_sendBtn(sendBtn), m_clearBtn(clearBtn), m_userName(userName), m_isReplying(false), m_voiceEnabled(false)
 {
     // 初始化网络访问管理器，用于处理HTTP请求
     m_networkManager = new QNetworkAccessManager(this);
     connect(m_networkManager, &QNetworkAccessManager::finished, this, &AIAssistantModule::onNetworkReply);
-
     // 设置默认的API地址、密钥和模型名称
     m_apiUrl = "https://api.deepseek.com/chat/completions";
     m_apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
     m_modelName = "deepseek-chat";
-
     // 构建高级聊天界面布局并加载会话记录
     rebuildAdvancedUI();
     loadSessionsFromDB();
 }
-
-//将原本简单的输入框和显示区域转换为包含侧边栏、多功能输入框的复杂布局
+// 将原本简单的输入框和显示区域转换为包含侧边栏、多功能输入框的复杂布局
 void AIAssistantModule::rebuildAdvancedUI() {
     QWidget* parentW = m_textBrowser->parentWidget();
     if (!parentW) return;
-
     // 清理原有的布局
     QLayout* oldLayout = parentW->layout();
-    if (oldLayout) { QLayoutItem* item; while ((item = oldLayout->takeAt(0)) != nullptr) {} delete oldLayout; }
+    if (oldLayout) {
+        QLayoutItem* item;
+        while ((item = oldLayout->takeAt(0)) != nullptr) {}
+        delete oldLayout;
+    }
     m_oldLineEdit->hide();
-
     // 创建主水平布局和分割器
     QHBoxLayout* mainLayout = new QHBoxLayout(parentW);
     QSplitter* mainSplitter = new QSplitter(Qt::Horizontal, parentW);
-
-    // ================= 左侧侧边栏设置 =================
+    // 左侧侧边栏设置
     m_leftWidget = new QWidget();
     m_leftWidget->setMinimumWidth(220);
     m_leftWidget->setMaximumWidth(280);
     QVBoxLayout* leftLay = new QVBoxLayout(m_leftWidget);
     leftLay->setContentsMargins(0, 0, 10, 0);
-
     // 新建对话按钮
     m_newSessionBtn = new QPushButton("➕ 新建对话");
     m_newSessionBtn->setCursor(Qt::PointingHandCursor);
     m_newSessionBtn->setStyleSheet("background-color: #165DFF; color: white; border-radius: 6px; padding: 10px; font-weight: bold;");
     connect(m_newSessionBtn, &QPushButton::clicked, this, &AIAssistantModule::onNewSessionClicked);
-
     // 历史记录搜索框
     m_searchBox = new QLineEdit();
     m_searchBox->setPlaceholderText("🔍 搜索历史...");
     m_searchBox->setStyleSheet("border: 1px solid #E5E6EB; border-radius: 15px; padding: 5px 15px;");
     connect(m_searchBox, &QLineEdit::returnPressed, this, &AIAssistantModule::onSearchHistory);
-
     // 会话列表
     m_sessionList = new QListWidget();
-    m_sessionList->setStyleSheet("QListWidget { border: none; background: transparent; outline: none; } QListWidget::item { padding: 10px; border-radius: 6px; margin-bottom: 4px; border-bottom: 1px solid #F2F3F5; color: #1D2129; } QListWidget::item:selected { background-color: #E8F3FF; border-left: 4px solid #165DFF; border-radius: 4px; }");
+    m_sessionList->setStyleSheet(
+        "QListWidget { border: none; background: transparent; outline: none; } "
+        "QListWidget::item { padding: 10px; border-radius: 6px; margin-bottom: 4px; border-bottom: 1px solid #F2F3F5; color: #1D2129; } "
+        "QListWidget::item:selected { background-color: #E8F3FF; border-left: 4px solid #165DFF; border-radius: 4px; }"
+    );
     connect(m_sessionList, &QListWidget::itemClicked, this, &AIAssistantModule::onSessionSelected);
-
     // 设置会话列表的右键菜单
     m_sessionList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_sessionList, &QListWidget::customContextMenuRequested, this, &AIAssistantModule::onSessionContextMenu);
-
     leftLay->addWidget(m_newSessionBtn);
     leftLay->addWidget(m_searchBox);
     leftLay->addWidget(m_sessionList);
-
-    // ================= 右侧主聊天区域设置 =================
+    // 右侧主聊天区域设置
     QWidget* rightWidget = new QWidget();
     QVBoxLayout* rightLay = new QVBoxLayout(rightWidget);
     rightLay->setContentsMargins(0, 0, 0, 0);
-
     // 顶部控制栏（侧边栏开关、语音开关）
     QHBoxLayout* topControlLay = new QHBoxLayout();
     m_toggleSidebarBtn = new QPushButton("☰ 收起列表");
     m_toggleSidebarBtn->setCursor(Qt::PointingHandCursor);
     m_toggleSidebarBtn->setStyleSheet("color: #4E5969; font-weight: bold; border: none; font-size: 14px;");
     connect(m_toggleSidebarBtn, &QPushButton::clicked, this, &AIAssistantModule::toggleSidebar);
-
     m_voiceBtn = new QPushButton("🔇 语音: 关");
     m_voiceBtn->setCursor(Qt::PointingHandCursor);
     m_voiceBtn->setStyleSheet("color: #86909C; font-weight: bold; border: none;");
     connect(m_voiceBtn, &QPushButton::clicked, this, &AIAssistantModule::toggleVoice);
-
     topControlLay->addWidget(m_toggleSidebarBtn);
     topControlLay->addStretch();
     topControlLay->addWidget(m_voiceBtn);
-
     // 右侧内容分割器（上面是聊天记录，下面是输入框）
     QSplitter* rightSplitter = new QSplitter(Qt::Vertical, rightWidget);
-
     // 聊天记录显示区域配置
     m_textBrowser->setOpenExternalLinks(true);
     m_textBrowser->setStyleSheet("border: none; background: transparent;");
     rightSplitter->addWidget(m_textBrowser);
-
-    // ================= 底部输入框与工具栏 =================
+    // 底部输入框与工具栏
     QFrame* inputFrame = new QFrame();
     inputFrame->setStyleSheet("QFrame { border: 1.5px solid #165DFF; border-radius: 15px; background: white; }");
     QVBoxLayout* inLay = new QVBoxLayout(inputFrame);
     inLay->setContentsMargins(10, 10, 10, 10);
     inLay->setSpacing(5);
-
     // 文本输入框
     m_inputTextEdit = new QTextEdit();
     m_inputTextEdit->setPlaceholderText("发消息或输入 / 选择技能... (Enter发送, Shift+Enter换行)");
     m_inputTextEdit->setStyleSheet("border: none; background: transparent; font-size: 14px;");
     m_inputTextEdit->installEventFilter(this); // 安装事件过滤器以拦截键盘事件
     inLay->addWidget(m_inputTextEdit);
-
     // 快捷操作工具栏
     QHBoxLayout* actionLay = new QHBoxLayout();
     actionLay->setSpacing(5);
-
     QString actionBtnStyle =
-        "QPushButton { background: transparent; color: #4E5969; border-radius: 8px; padding: 6px 10px; font-weight: bold; border: none; }"
+        "QPushButton { background: transparent; color: #4E5969; border-radius: 8px; padding: 6px 10px; font-weight: bold; border: none; } "
         "QPushButton:hover { background: #F2F3F5; color: #165DFF; }";
-
     // 附件上传按钮
     m_attachBtn = new QPushButton("📎");
     m_attachBtn->setCursor(Qt::PointingHandCursor);
@@ -151,41 +133,35 @@ void AIAssistantModule::rebuildAdvancedUI() {
     m_attachBtn->setToolTip("上传附件 (图片与各类文档)\n最多 5 个，每个 100 MB，支持所有文件");
     m_attachBtn->setStyleSheet(m_attachBtn->styleSheet() + "QToolTip { color: #ffffff; background-color: #2a2a2a; border: 1px solid white; border-radius: 4px; padding: 5px; }");
     connect(m_attachBtn, &QPushButton::clicked, this, &AIAssistantModule::onAttachFileClicked);
-
     // 快捷指令按钮配置
     QPushButton* btnQuick = new QPushButton("⚡ 快速");
     QPushButton* btnWrite = new QPushButton("📝 帮我写作");
     QPushButton* btnTranslate = new QPushButton("🔤 翻译");
     QPushButton* btnCode = new QPushButton("</> 编程");
-
     btnQuick->setCursor(Qt::PointingHandCursor); btnQuick->setStyleSheet(actionBtnStyle);
     btnWrite->setCursor(Qt::PointingHandCursor); btnWrite->setStyleSheet(actionBtnStyle);
     btnTranslate->setCursor(Qt::PointingHandCursor); btnTranslate->setStyleSheet(actionBtnStyle);
     btnCode->setCursor(Qt::PointingHandCursor); btnCode->setStyleSheet(actionBtnStyle);
-
     // 绑定快捷指令填充功能
     connect(btnQuick, &QPushButton::clicked, this, [=]() { m_inputTextEdit->setPlainText("请帮我总结一下今天的个人考勤数据："); m_inputTextEdit->setFocus(); });
     connect(btnWrite, &QPushButton::clicked, this, [=]() { m_inputTextEdit->setPlainText("请帮我起草一份关于 [此处填写主题] 的文档/报告，要求语言正式、逻辑清晰。"); m_inputTextEdit->setFocus(); });
     connect(btnTranslate, &QPushButton::clicked, this, [=]() { m_inputTextEdit->setPlainText("请将以下内容精准翻译成 [中文/英文]：\n\n"); m_inputTextEdit->setFocus(); });
     connect(btnCode, &QPushButton::clicked, this, [=]() { m_inputTextEdit->setPlainText("请帮我用 C++/Qt 编写一段代码，实现以下功能：\n\n"); m_inputTextEdit->setFocus(); });
-
     actionLay->addWidget(m_attachBtn);
     actionLay->addWidget(btnQuick);
     actionLay->addWidget(btnWrite);
     actionLay->addWidget(btnTranslate);
     actionLay->addWidget(btnCode);
-
     // AI 模型切换下拉框配置
     QComboBox* modelCombo = new QComboBox();
     modelCombo->setCursor(Qt::PointingHandCursor);
     modelCombo->addItems({ "🧠 DeepSeek-V3", "💡 DeepSeek-R1 (深度思考)", "💬 Doubao-Lite (文本)", "🎨 Doubao-Seedream (画图)" });
     modelCombo->setStyleSheet(
-        "QComboBox { background-color: transparent; color: #4E5969; border-radius: 8px; padding: 4px 10px; font-weight: bold; border: 1px solid transparent; }"
-        "QComboBox:hover { background-color: #F2F3F5; color: #165DFF; border: 1px solid #165DFF; }"
-        "QComboBox::drop-down { border: none; width: 20px; }"
+        "QComboBox { background-color: transparent; color: #4E5969; border-radius: 8px; padding: 4px 10px; font-weight: bold; border: 1px solid transparent; } "
+        "QComboBox:hover { background-color: #F2F3F5; color: #165DFF; border: 1px solid #165DFF; } "
+        "QComboBox::drop-down { border: none; width: 20px; } "
         "QComboBox QAbstractItemView { outline: none; border: 1px solid #E5E6EB; border-radius: 8px; background: white; selection-background-color: #E8F3FF; selection-color: #165DFF; }"
     );
-
     // 根据用户选择动态切换 API 地址和模型参数
     connect(modelCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         if (text.contains("V3")) {
@@ -209,67 +185,55 @@ void AIAssistantModule::rebuildAdvancedUI() {
             m_modelName = "ep-20260306195042-l95bj";
         }
         });
-
     actionLay->addWidget(modelCombo);
     actionLay->addStretch();
-
     // 发送按钮配置
     m_sendBtn->disconnect();
     m_sendBtn->setCursor(Qt::PointingHandCursor);
     m_sendBtn->setStyleSheet("background-color: #165DFF; color: white; border-radius: 12px; padding: 6px 20px; font-weight: bold; border: none;");
     connect(m_sendBtn, &QPushButton::clicked, this, &AIAssistantModule::onSendClicked);
     actionLay->addWidget(m_sendBtn);
-
     inLay->addLayout(actionLay);
-
     // 将组装好的输入区域添加到布局
     rightSplitter->addWidget(inputFrame);
     rightSplitter->setStretchFactor(0, 4); // 聊天记录区占据更多比例
     rightSplitter->setStretchFactor(1, 1); // 输入区占据较少比例
-
     rightLay->addLayout(topControlLay);
     rightLay->addWidget(rightSplitter);
-
     mainSplitter->addWidget(m_leftWidget);
     mainSplitter->addWidget(rightWidget);
     mainSplitter->setStretchFactor(0, 0); // 左侧固定/不拉伸
     mainSplitter->setStretchFactor(1, 1); // 右侧拉伸
-
     mainLayout->addWidget(mainSplitter);
 }
-
-//处理输入框中的快捷键 (Enter 发送, Shift+Enter 换行)
+// 处理输入框中的快捷键 (Enter 发送, Shift+Enter 换行)
 bool AIAssistantModule::eventFilter(QObject* obj, QEvent* event) {
     if (obj == m_inputTextEdit && event->type() == QEvent::KeyPress) {
         QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
         if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
             if (keyEvent->modifiers() & Qt::ShiftModifier) return false; // Shift+Enter 正常换行
-            else { onSendClicked(); return true; } // 仅 Enter 则触发发送
+            else {
+                onSendClicked();
+                return true;
+            }
         }
     }
     return QObject::eventFilter(obj, event);
 }
-
 // 处理用户选择文件并读取其内容
 void AIAssistantModule::onAttachFileClicked() {
     // 弹出文件选择对话框
-    QStringList filePaths = QFileDialog::getOpenFileNames(nullptr,
-        "上传附件", "",
-        "所有文件 (*.*);;文档 (*.txt *.csv *.md *.doc *.docx *.pdf);;图片 (*.png *.jpg *.jpeg)");
-
+    QStringList filePaths = QFileDialog::getOpenFileNames(nullptr, "上传附件", "", "所有文件 (*.*);;文档 (*.txt *.csv *.md *.doc *.docx *.pdf);;图片 (*.png *.jpg *.jpeg)");
     if (filePaths.isEmpty()) return;
-
     // 限制最多选择 5 个文件
     if (filePaths.size() > 5) {
         QMessageBox::warning(nullptr, "超出限制", "每次最多只能上传 5 个附件，系统已自动截取前 5 个文件！");
         filePaths = filePaths.mid(0, 5);
     }
-
     // 清理先前的附件缓存
     m_fileContext.clear();
     m_pendingFiles.clear();
     QStringList fileNames;
-
     // 遍历读取每一个被选中的文件
     for (const QString& path : filePaths) {
         QFile file(path);
@@ -277,10 +241,8 @@ void AIAssistantModule::onAttachFileClicked() {
             QByteArray data = file.readAll();
             QString fileName = QFileInfo(path).fileName();
             fileNames << fileName;
-
             // 存入待发送队列
             m_pendingFiles.append({ fileName, data });
-
             QString contentStr;
             // 针对不同文件类型做内容预览截取
             if (fileName.endsWith(".png", Qt::CaseInsensitive) || fileName.endsWith(".jpg", Qt::CaseInsensitive)) {
@@ -288,7 +250,6 @@ void AIAssistantModule::onAttachFileClicked() {
             }
             else if (fileName.endsWith(".doc", Qt::CaseInsensitive) || fileName.endsWith(".pdf", Qt::CaseInsensitive)) {
                 contentStr = QString::fromUtf8(data);
-                // 限制长文档的字数以防 token 超限
                 if (contentStr.length() > 5000) contentStr = contentStr.left(5000) + "\n...[文件过长已截断]...";
             }
             else {
@@ -300,7 +261,6 @@ void AIAssistantModule::onAttachFileClicked() {
             file.close();
         }
     }
-
     // 更新 UI 提示已选择附件
     if (!fileNames.isEmpty()) {
         QString displayNames = fileNames.join(", ");
@@ -309,21 +269,17 @@ void AIAssistantModule::onAttachFileClicked() {
         m_attachBtn->setStyleSheet("background-color: #E8F3FF; color: #165DFF; border-radius: 8px; padding: 6px 10px; font-weight: bold; border: none;");
     }
 }
-
 // 处理消息打包、向服务端发送审核数据以及发起 AI 网络请求
 void AIAssistantModule::onSendClicked() {
     // 防止重复提交验证和空输入拦截
     if (m_isReplying) return;
     QString inputText = m_inputTextEdit->toPlainText().trimmed();
     if (inputText.isEmpty() || m_apiKey.contains("xxx")) return;
-
     m_inputTextEdit->clear();
     appendMessage("user", inputText, true);
-
     bool isImageAPI = m_apiUrl.contains("images");
     QJsonObject requestBody;
     requestBody["model"] = m_modelName;
-
     // 处理带有附件请求的特殊逻辑分支
     if (!m_fileContext.isEmpty()) {
         // 先将物理文件发给服务端审计
@@ -331,56 +287,60 @@ void AIAssistantModule::onSendClicked() {
             sendAuditFileToServer(m_currentSessionId, filePair.first, filePair.second);
         }
         m_pendingFiles.clear();
-
-        m_isReplying = true; m_sendBtn->setEnabled(false); m_sendBtn->setText(isImageAPI ? "画图中..." : "解读中...");
-
+        m_isReplying = true;
+        m_sendBtn->setEnabled(false);
+        m_sendBtn->setText(isImageAPI ? "画图中..." : "解读中...");
         // 拼接含有附件内容的最终提示词
         QString finalPrompt = "以下是提供给你的参考文件内容：\n" + m_fileContext + "\n---\n请基于上述资料，详细回答问题：" + inputText;
-
         // 清理 UI 状态
         m_fileContext.clear();
         m_attachBtn->setText("📎");
         m_attachBtn->setStyleSheet("QPushButton { background: transparent; color: #4E5969; border-radius: 8px; padding: 6px 10px; font-weight: bold; border: none; } QPushButton:hover { background: #F2F3F5; color: #165DFF; }");
-
         // 根据API类型设置不同的请求体参数
         if (isImageAPI) {
             requestBody["prompt"] = inputText;
         }
         else {
-            QJsonObject userMsg; userMsg["role"] = "user"; userMsg["content"] = finalPrompt; m_messageHistory.append(userMsg);
+            QJsonObject userMsg;
+            userMsg["role"] = "user";
+            userMsg["content"] = finalPrompt;
+            m_messageHistory.append(userMsg);
             requestBody["messages"] = m_messageHistory;
             requestBody["temperature"] = 0.5;
         }
-
         // 发起附带上下文的网络请求
-        QNetworkRequest request((QUrl(m_apiUrl))); request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
+        QNetworkRequest request((QUrl(m_apiUrl)));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
         QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(requestBody).toJson());
         connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError>& errors) { reply->ignoreSslErrors(errors); });
         return;
     }
-
     // 检查是否命中本地业务意图（拦截器）
     if (handleLocalIntent(inputText)) return;
-
     // 纯文本消息逻辑分支
-    m_isReplying = true; m_sendBtn->setEnabled(false); m_sendBtn->setText(isImageAPI ? "挥毫中..." : "思考中...");
-
+    m_isReplying = true;
+    m_sendBtn->setEnabled(false);
+    m_sendBtn->setText(isImageAPI ? "挥毫中..." : "思考中...");
     if (isImageAPI) {
         requestBody["prompt"] = inputText;
     }
     else {
-        QJsonObject userMsg; userMsg["role"] = "user"; userMsg["content"] = inputText; m_messageHistory.append(userMsg);
+        QJsonObject userMsg;
+        userMsg["role"] = "user";
+        userMsg["content"] = inputText;
+        m_messageHistory.append(userMsg);
         requestBody["messages"] = m_messageHistory;
         requestBody["temperature"] = 0.7;
     }
-
     // 发起普通的网络请求
-    QNetworkRequest request((QUrl(m_apiUrl))); request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
+    QNetworkRequest request((QUrl(m_apiUrl)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(requestBody).toJson());
     connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError>& errors) { reply->ignoreSslErrors(errors); });
 }
-
-//用于识别并优先处理特定的本地业务需求（如查考勤）
+// 用于识别并优先处理特定的本地业务需求（如查考勤）
 bool AIAssistantModule::handleLocalIntent(const QString& inputText) {
     if (inputText.contains("今日考勤") || inputText.contains("今天打卡")) {
         // 构建查询请求并发送至后台系统
@@ -388,7 +348,6 @@ bool AIAssistantModule::handleLocalIntent(const QString& inputText) {
         req["type"] = "query_today_attendance_for_ai";
         req["name"] = m_userName;
         QJsonObject res = NetworkHelper::request(req, 3000, 8000);
-
         // 解析并格式化考勤查询结果
         QString replyStr = "根据实时查询，您今天的打卡记录如下：\n";
         QJsonArray arr = res["data"].toArray();
@@ -407,24 +366,25 @@ bool AIAssistantModule::handleLocalIntent(const QString& inputText) {
     }
     return false;
 }
-
-//接收 AI 接口返回的响应数据并更新到界面
+// 接收 AI 接口返回的响应数据并更新到界面
 void AIAssistantModule::onNetworkReply(QNetworkReply* reply) {
     // 恢复 UI 状态
-    m_isReplying = false; m_sendBtn->setEnabled(true); m_sendBtn->setText("发送");
-
+    m_isReplying = false;
+    m_sendBtn->setEnabled(true);
+    m_sendBtn->setText("发送");
     // 校验网络请求状态
     if (reply->error() == QNetworkReply::NoError) {
-        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll()); QJsonObject json = doc.object();
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        QJsonObject json = doc.object();
         bool isImageAPI = m_apiUrl.contains("images");
-
         // 解析图片生成接口的响应
         if (isImageAPI) {
             if (json.contains("data") && json["data"].isArray()) {
                 QString imgUrl = json["data"].toArray()[0].toObject()["url"].toString();
                 QString responseMsg = QString("🎨 <b>为您生成了一张图片！</b><br><br><a href='%1' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>🔗 点击此处在浏览器中查看高清原图并保存</a>").arg(imgUrl);
-
-                QJsonObject pseudoMsg; pseudoMsg["role"] = "assistant"; pseudoMsg["content"] = "[AI为您生成了一张图片]";
+                QJsonObject pseudoMsg;
+                pseudoMsg["role"] = "assistant";
+                pseudoMsg["content"] = "[AI为您生成了一张图片]";
                 m_messageHistory.append(pseudoMsg);
                 appendMessage("ai", responseMsg, true);
             }
@@ -440,7 +400,6 @@ void AIAssistantModule::onNetworkReply(QNetworkReply* reply) {
                 appendMessage("ai", msgObj["content"].toString(), true);
             }
         }
-
         // 延迟刷新左侧会话列表（以便更新摘要信息），先屏蔽信号避免触发二次加载
         QTimer::singleShot(600, this, [this]() {
             m_sessionList->blockSignals(true);
@@ -454,7 +413,6 @@ void AIAssistantModule::onNetworkReply(QNetworkReply* reply) {
     }
     reply->deleteLater();
 }
-
 // 将上传的文件数据发送给内部服务端进行记录或安全检查
 void AIAssistantModule::sendAuditFileToServer(const QString& sessionId, const QString& fileName, const QByteArray& fileData) {
     QJsonObject json;
@@ -465,8 +423,7 @@ void AIAssistantModule::sendAuditFileToServer(const QString& sessionId, const QS
     json["filedata"] = QString(fileData.toBase64());
     NetworkHelper::sendAsync(json);
 }
-
-//将聊天文本发送给内部服务端进行记录
+// 将聊天文本发送给内部服务端进行记录
 void AIAssistantModule::sendAuditToServer(const QString& sessionId, const QString& role, const QString& content) {
     QJsonObject json;
     json["type"] = "ai_audit";
@@ -476,8 +433,7 @@ void AIAssistantModule::sendAuditToServer(const QString& sessionId, const QStrin
     json["content"] = content;
     NetworkHelper::sendAsync(json);
 }
-
-//将单条消息保存到后台数据库关联的会话下
+// 将单条消息保存到后台数据库关联的会话下
 void AIAssistantModule::saveMessageToDB(const QString& sessionId, const QString& role, const QString& content) {
     QJsonObject req;
     req["type"] = "ai_save_message";
@@ -487,14 +443,11 @@ void AIAssistantModule::saveMessageToDB(const QString& sessionId, const QString&
     req["name"] = m_userName;
     NetworkHelper::sendAsync(req);
 }
-
-//将角色发言解析为带样式的 HTML 气泡并追加至显示区
+// 将角色发言解析为带样式的 HTML 气泡并追加至显示区
 void AIAssistantModule::appendMessage(const QString& role, const QString& msg, bool saveToDb) {
     if (saveToDb) saveMessageToDB(m_currentSessionId, role, msg);
-
     QString timeStr = QDateTime::currentDateTime().toString("HH:mm");
     QString formattedMsg;
-
     // 根据角色格式化文本内容
     if (role == "user") {
         formattedMsg = msg.toHtmlEscaped();
@@ -503,52 +456,32 @@ void AIAssistantModule::appendMessage(const QString& role, const QString& msg, b
     else {
         formattedMsg = parseMarkdown(msg);
     }
-
     QString bubble;
     // 渲染用户消息气泡（蓝色底色，居右对齐）
     if (role == "user") {
-        bubble = QString(
-            "<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'>"
-            "<tr><td width='20%'></td><td align='right'>"
-            "<div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>我 %1</div>"
-            "<table border='0' cellpadding='12' cellspacing='0' bgcolor='#165DFF' style='border-radius:12px;'>"
-            "<tr><td style='color:white; font-size:14px; line-height:1.6;'>%2</td></tr>"
-            "</table></td></tr></table>"
-        ).arg(timeStr, formattedMsg);
+        bubble = QString("<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'><tr><td width='20%'></td><td align='right'><div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>我 %1</div><table border='0' cellpadding='12' cellspacing='0' bgcolor='#165DFF' style='border-radius:12px;'><tr><td style='color:white; font-size:14px; line-height:1.6;'>%2</td></tr></table></td></tr></table>").arg(timeStr, formattedMsg);
     }
     // 渲染 AI 消息气泡（灰色底色，居左对齐）
     else {
-        bubble = QString(
-            "<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'>"
-            "<tr><td align='left'>"
-            "<div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>🤖 智能管家 %1</div>"
-            "<table border='0' cellpadding='12' cellspacing='0' bgcolor='#F2F3F5' style='border-radius:12px; border: 1px solid #E5E6EB;'>"
-            "<tr><td style='color:#2F3542; font-size:14px; line-height:1.6;'>%2</td></tr>"
-            "</table></td><td width='20%'></td></tr></table>"
-        ).arg(timeStr, formattedMsg);
-
+        bubble = QString("<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'><tr><td align='left'><div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>🤖 智能管家 %1</div><table border='0' cellpadding='12' cellspacing='0' bgcolor='#F2F3F5' style='border-radius:12px; border: 1px solid #E5E6EB;'><tr><td style='color:#2F3542; font-size:14px; line-height:1.6;'>%2</td></tr></table></td><td width='20%'></td></tr></table>").arg(timeStr, formattedMsg);
         // 如果需要保存且语音开启，则播放合成语音
         if (saveToDb) speakText(msg);
     }
-
     // 更新浏览器内容并滚动至底部
     m_currentHtmlDisplay += bubble;
     m_textBrowser->setHtml(m_currentHtmlDisplay);
     QScrollBar* scrollBar = m_textBrowser->verticalScrollBar();
     scrollBar->setValue(scrollBar->maximum());
 }
-
-//收起或展开左侧会话列表
+// 收起或展开左侧会话列表
 void AIAssistantModule::toggleSidebar() {
     m_leftWidget->setVisible(!m_leftWidget->isVisible());
     m_toggleSidebarBtn->setText(m_leftWidget->isVisible() ? "☰ 收起列表" : "☰ 展开列表");
 }
-
-//点击新建对话按钮创建全新会话上下文
+// 点击新建对话按钮创建全新会话上下文
 void AIAssistantModule::onNewSessionClicked() {
     m_currentSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString title = "新对话 " + QDateTime::currentDateTime().toString("MM-dd HH:mm");
-
     // 向服务端发送创建指令
     QJsonObject req;
     req["type"] = "create_ai_session";
@@ -556,7 +489,6 @@ void AIAssistantModule::onNewSessionClicked() {
     req["name"] = m_userName;
     req["title"] = title;
     NetworkHelper::sendAsync(req);
-
     // 延迟以确保数据落库后重载界面状态
     QTimer::singleShot(300, this, [this]() {
         m_sessionList->blockSignals(true);
@@ -565,15 +497,13 @@ void AIAssistantModule::onNewSessionClicked() {
         initializeContext();
         });
 }
-
-//从服务端抓取该用户所有的历史会话信息，并填充到侧边列表
+// 从服务端抓取该用户所有的历史会话信息，并填充到侧边列表
 void AIAssistantModule::loadSessionsFromDB() {
     m_sessionList->clear();
     QJsonObject req;
     req["type"] = "query_ai_sessions";
     req["name"] = m_userName;
     QJsonObject res = NetworkHelper::request(req, 3000, 8000);
-
     int targetRow = -1;
     // 解析网络返回的数据并创建列表项
     if (res["status"].toString() == "success") {
@@ -587,12 +517,11 @@ void AIAssistantModule::loadSessionsFromDB() {
             QListWidgetItem* item = new QListWidgetItem(QString("💬 %1\n  < %2 >").arg(title, snippet));
             item->setData(Qt::UserRole, sid);
             m_sessionList->addItem(item);
+
             if (sid == m_currentSessionId) targetRow = i;
         }
     }
-
     bool shouldLoadHistory = !m_sessionList->signalsBlocked();
-
     // 根据逻辑恢复用户界面当前应选中的高亮项
     if (targetRow >= 0) {
         m_sessionList->setCurrentRow(targetRow);
@@ -606,91 +535,96 @@ void AIAssistantModule::loadSessionsFromDB() {
         }
     }
     else {
-        // 如果完全没有记录，则自动新建一个
         if (shouldLoadHistory) onNewSessionClicked();
     }
 }
-
 // 左侧会话列表项点击处理
 void AIAssistantModule::onSessionSelected(QListWidgetItem* item) {
     m_currentSessionId = item->data(Qt::UserRole).toString();
     loadChatHistoryFromDB(m_currentSessionId);
 }
-
 // 左侧会话列表右键呼出菜单（重命名、删除）
 void AIAssistantModule::onSessionContextMenu(const QPoint& pos) {
     QListWidgetItem* item = m_sessionList->itemAt(pos);
     if (!item) return;
-    QMenu menu; QAction* actRename = menu.addAction("✏️ 重命名对话"); QAction* actDelete = menu.addAction("🗑️ 删除对话");
+    QMenu menu;
+    QAction* actRename = menu.addAction("✏️ 重命名对话");
+    QAction* actDelete = menu.addAction("🗑️ 删除对话");
     QAction* selected = menu.exec(m_sessionList->mapToGlobal(pos));
     QString sid = item->data(Qt::UserRole).toString();
-
     // 重命名对话流程
     if (selected == actRename) {
-        bool ok; QString oldName = item->text().split("\n").first().replace("💬 ", "");
+        bool ok;
+        QString oldName = item->text().split("\n").first().replace("💬 ", "");
         QString newName = QInputDialog::getText(nullptr, "重命名", "请输入新名称:", QLineEdit::Normal, oldName, &ok);
         if (ok && !newName.isEmpty()) {
-            QJsonObject req; req["type"] = "rename_ai_session"; req["session_id"] = sid; req["title"] = newName;
+            QJsonObject req;
+            req["type"] = "rename_ai_session";
+            req["session_id"] = sid;
+            req["title"] = newName;
             NetworkHelper::sendAsync(req);
             QTimer::singleShot(200, this, [this]() {
-                m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+                m_sessionList->blockSignals(true);
+                loadSessionsFromDB();
+                m_sessionList->blockSignals(false);
                 });
         }
     }
     // 删除对话流程
     else if (selected == actDelete) {
         if (QMessageBox::question(nullptr, "确认隐藏", "确定要在列表中隐藏该对话吗？") == QMessageBox::Yes) {
-            QJsonObject req; req["type"] = "delete_ai_session"; req["session_id"] = sid;
+            QJsonObject req;
+            req["type"] = "delete_ai_session";
+            req["session_id"] = sid;
             NetworkHelper::sendAsync(req);
             QTimer::singleShot(200, this, [this]() {
-                m_sessionList->blockSignals(true); loadSessionsFromDB(); m_sessionList->blockSignals(false);
+                m_sessionList->blockSignals(true);
+                loadSessionsFromDB();
+                m_sessionList->blockSignals(false);
                 });
         }
     }
 }
-
-//按照用户关键字过滤并显示会话历史
+// 按照用户关键字过滤并显示会话历史
 void AIAssistantModule::onSearchHistory() {
     QString keyword = m_searchBox->text().trimmed();
     if (keyword.isEmpty()) { loadSessionsFromDB(); return; }
     m_sessionList->clear();
-
     QJsonObject req;
     req["type"] = "search_ai_history";
     req["name"] = m_userName;
     req["keyword"] = keyword;
     QJsonObject res = NetworkHelper::request(req, 3000, 8000);
-
     // 解析搜索结果并刷新列表
     if (res["status"].toString() == "success") {
         QJsonArray arr = res["data"].toArray();
         for (int i = 0; i < arr.size(); ++i) {
             QJsonObject o = arr[i].toObject();
-            QString snippet = o["last_message"].toString(); if (snippet.isEmpty()) snippet = "暂无内容";
+            QString snippet = o["last_message"].toString();
+            if (snippet.isEmpty()) snippet = "暂无内容";
             QListWidgetItem* item = new QListWidgetItem(QString("🔍 %1\n  < %2 >").arg(o["title"].toString(), snippet));
             item->setData(Qt::UserRole, o["session_id"].toString());
             m_sessionList->addItem(item);
         }
     }
 }
-
-//重置并初始化当前聊天会话相关的内存变量（角色设定、初始页面）
+// 重置并初始化当前聊天会话相关的内存变量（角色设定、初始页面）
 void AIAssistantModule::initializeContext() {
     m_messageHistory = QJsonArray();
-    QJsonObject systemMsg; systemMsg["role"] = "system"; systemMsg["content"] = "你是一个专业的企业智能考勤与OA助手。你可以使用 Markdown 格式美化排版。";
+    QJsonObject systemMsg;
+    systemMsg["role"] = "system";
+    systemMsg["content"] = "你是一个专业的企业智能考勤与OA助手。你可以使用 Markdown 格式美化排版。";
     m_messageHistory.append(systemMsg);
     m_currentHtmlDisplay = "<div style='text-align:center; padding: 20px 0; color:#86909C;'>🤖 Ai助手. ✨</div>";
     m_textBrowser->setHtml(m_currentHtmlDisplay);
 }
-
-//从服务端读取某特定会话的全部消息历史并还原上下文与界面
+// 从服务端读取某特定会话的全部消息历史并还原上下文与界面
 void AIAssistantModule::loadChatHistoryFromDB(const QString& sessionId) {
     initializeContext();
     QJsonObject req;
     req["type"] = "query_ai_chat_history";
     req["session_id"] = sessionId;
     QJsonObject res = NetworkHelper::request(req, 3000, 8000);
-
     // 循环遍历加载的消息并渲染进UI
     if (res["status"].toString() == "success") {
         QJsonArray arr = res["data"].toArray();
@@ -698,15 +632,16 @@ void AIAssistantModule::loadChatHistoryFromDB(const QString& sessionId) {
             QJsonObject o = arr[i].toObject();
             QString role = o["role"].toString();
             QString content = o["content"].toString();
-
             // AI的角色名称在接口里要求是assistant
             QString apiRole = (role == "ai") ? "assistant" : role;
-            QJsonObject msg; msg["role"] = apiRole; msg["content"] = content; m_messageHistory.append(msg);
+            QJsonObject msg;
+            msg["role"] = apiRole;
+            msg["content"] = content;
+            m_messageHistory.append(msg);
             appendMessage(role, content, false);
         }
     }
 }
-
 // 文本处理工具：对 AI 返回的简易 Markdown 文本进行基础的 HTML 转换
 QString AIAssistantModule::parseMarkdown(const QString& md) {
     QString html = md.toHtmlEscaped();
@@ -717,19 +652,19 @@ QString AIAssistantModule::parseMarkdown(const QString& md) {
     html.replace("\n", "<br>"); // 换行
     return html;
 }
-
 // 交互功能：切换语音朗读 (TTS) 的开关状态
 void AIAssistantModule::toggleVoice() {
     m_voiceEnabled = !m_voiceEnabled;
     m_voiceBtn->setText(m_voiceEnabled ? "🔊 语音: 开" : "🔇 语音: 关");
     m_voiceBtn->setStyleSheet(m_voiceEnabled ? "color: #165DFF; font-weight: bold; border: none;" : "color: #86909C; font-weight: bold; border: none;");
 }
-
 // 利用 Windows 系统的 PowerShell 脚本调用原生语音合成库实现朗读
 void AIAssistantModule::speakText(const QString& text) {
     if (!m_voiceEnabled) return;
     QString cleanText = text;
-    cleanText.remove(QRegularExpression("<[^>]*>")); cleanText.remove(QRegularExpression("[\\*`#]")); cleanText.replace("'", "''");
+    cleanText.remove(QRegularExpression("<[^>]*>"));
+    cleanText.remove(QRegularExpression("[\\*`#]"));
+    cleanText.replace("'", "''");
     QString command = QString("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('%1');").arg(cleanText);
     QProcess::startDetached("powershell", QStringList() << "-WindowStyle" << "Hidden" << "-Command" << command);
 }
