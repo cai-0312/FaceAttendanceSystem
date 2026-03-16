@@ -18,7 +18,9 @@ class AIAssistantModule : public QObject
     Q_OBJECT
 public:
     // 初始化AI助手模块并绑定UI控件
-    AIAssistantModule(QTextBrowser* textBrowser,QLineEdit* lineEdit,QPushButton* sendBtn,QPushButton* clearBtn,QString userName,QObject* parent = nullptr);                                
+    AIAssistantModule(QTextBrowser* textBrowser,QLineEdit* lineEdit,QPushButton* sendBtn,QPushButton* clearBtn,QString userName,QObject* parent = nullptr);        
+public slots:
+    void clearCurrentSession();
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;       // 事件过滤器，用于拦截输入框的按键事件（如Enter发送）
 private slots:

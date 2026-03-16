@@ -36,14 +36,25 @@ AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineE
     m_apiUrl = "https://api.deepseek.com/chat/completions";
     m_apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
     m_modelName = "deepseek-chat";
-    // 构建高级聊天界面布局并加载会话记录
     rebuildAdvancedUI();
     loadSessionsFromDB();
+    // 连接清除按钮
+    if (m_clearBtn) {
+        connect(m_clearBtn, &QPushButton::clicked, this, &AIAssistantModule::clearCurrentSession);
+    }
 }
 // 将原本简单的输入框和显示区域转换为包含侧边栏、多功能输入框的复杂布局
 void AIAssistantModule::rebuildAdvancedUI() {
     QWidget* parentW = m_textBrowser->parentWidget();
     if (!parentW) return;
+    QList<QWidget*> children = parentW->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* child : children) {
+        // 保留需要重用的控件
+        if (child == m_textBrowser || child == m_sendBtn || child == m_clearBtn || child == m_oldLineEdit) {
+            continue;
+        }
+        child->hide();  // 或 child->deleteLater() 彻底删除
+    }
     // 清理原有的布局
     QLayout* oldLayout = parentW->layout();
     if (oldLayout) {
@@ -102,6 +113,12 @@ void AIAssistantModule::rebuildAdvancedUI() {
     topControlLay->addWidget(m_toggleSidebarBtn);
     topControlLay->addStretch();
     topControlLay->addWidget(m_voiceBtn);
+    if (m_clearBtn) {
+        m_clearBtn->setParent(rightWidget);               // 重新设置父对象，确保在新布局中
+        m_clearBtn->setCursor(Qt::PointingHandCursor);
+        m_clearBtn->setStyleSheet("QPushButton { color: #F56C6C; border: none; background: transparent; font-weight: bold; } QPushButton:hover { color: #F76560; }");
+        topControlLay->addWidget(m_clearBtn);
+    }
     // 右侧内容分割器（上面是聊天记录，下面是输入框）
     QSplitter* rightSplitter = new QSplitter(Qt::Vertical, rightWidget);
     // 聊天记录显示区域配置
@@ -613,9 +630,9 @@ void AIAssistantModule::initializeContext() {
     m_messageHistory = QJsonArray();
     QJsonObject systemMsg;
     systemMsg["role"] = "system";
-    systemMsg["content"] = "你是一个专业的企业智能考勤与OA助手。你可以使用 Markdown 格式美化排版。";
+    systemMsg["content"] = "你是一个专业的企业智能考勤与OA助手，你可以使用 Markdown 格式美化排版。";
     m_messageHistory.append(systemMsg);
-    m_currentHtmlDisplay = "<div style='text-align:center; padding: 20px 0; color:#86909C;'>🤖 Ai助手. ✨</div>";
+    m_currentHtmlDisplay = "<div style='text-align:center; padding: 20px 0; color:#86909C;'>🤖 Ai助手✨</div>";
     m_textBrowser->setHtml(m_currentHtmlDisplay);
 }
 // 从服务端读取某特定会话的全部消息历史并还原上下文与界面
@@ -667,4 +684,17 @@ void AIAssistantModule::speakText(const QString& text) {
     cleanText.replace("'", "''");
     QString command = QString("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('%1');").arg(cleanText);
     QProcess::startDetached("powershell", QStringList() << "-WindowStyle" << "Hidden" << "-Command" << command);
+}
+void AIAssistantModule::clearCurrentSession()
+{
+    if (m_currentSessionId.isEmpty()) return;
+    // 清空内存消息历史（保留系统提示词）
+    m_messageHistory = QJsonArray();
+    QJsonObject systemMsg;
+    systemMsg["role"] = "system";
+    systemMsg["content"] = "你是一个专业的企业智能考勤与OA助手，你可以使用 Markdown 格式美化排版。";
+    m_messageHistory.append(systemMsg);
+    // 清空界面显示
+    m_currentHtmlDisplay = "<div style='text-align:center; padding: 20px 0; color:#86909C;'>🤖 Ai助手✨</div>";
+    m_textBrowser->setHtml(m_currentHtmlDisplay);
 }

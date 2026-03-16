@@ -78,7 +78,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     btnBroadcast->setCursor(Qt::PointingHandCursor);
     btnBroadcast->setStyleSheet("QPushButton { background-color: #F56C6C; color: white; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #F78989; }");
 
-    if (m_role != "管理员登录" && m_role != "超级管理员") {
+    if (m_role != "管理员登录") {
         btnBroadcast->hide();
     }
     // 将广播按钮嵌入到主页顶部布局中
@@ -177,7 +177,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
             recordModule->refreshData();
         }
         else if (row == 4) {
-            if (m_role == "管理员登录" || m_role == "超级管理员" || m_role == "经理") {
+            if (m_role == "管理员登录" || m_role == "经理") {
                 userModule->refreshTable(ui->comboBox_FilterDept->currentText());
             }
             else {

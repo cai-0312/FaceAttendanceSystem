@@ -60,5 +60,7 @@ private:
     bool m_isCurrentGroup;                     // 状态标识：当前对话是否处于部门群聊模式
     QStringList m_recentEmojis;               // LRU缓存队列：存储用户最近使用过的表情符号
     QMap<QString, QString> m_chatHistories;      // 内存字典：按照对话目标名称缓存的HTML完整记录
+
+    void showUserInfo(const QString& userName);
 };
 #endif // CHATMODULE_H

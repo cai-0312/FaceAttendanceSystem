@@ -13,4 +13,4 @@ private:
     QPropertyAnimation* m_animation;                // 动画对象：控制弹窗从屏幕外滑动至可视区域的位置属性动画
     QTimer* m_timer;                                // 定时器对象：控制弹窗在指定驻留时间后自动关闭并销毁
 };
-#endif // NOTICEPOPUP_H
+#endif

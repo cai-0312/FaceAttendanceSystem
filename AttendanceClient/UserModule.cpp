@@ -159,11 +159,6 @@ void UserModule::deleteSelectedUser() {
     int row = selectModel->selectedRows().first().row();
     QString account = m_userModel->item(row, 1)->text();
     QString name = m_userModel->item(row, 2)->text();
-    // 核心安全防卫：拦截任何试图删除系统内置根账户的违规恶意操作
-    if (account == "admin" || name == "超级管理员") {
-        QMessageBox::critical(m_parentWidget, "权限拒绝", "系统内置超级管理员账号禁止删除！");
-        return;
-    }
     if (QMessageBox::question(m_parentWidget, "高危操作", "确认彻底删除员工【" + name + "】？\n删除后该人员的考勤和人脸将被抹除！") == QMessageBox::Yes) {
         QJsonObject req;
         req["type"] = "admin_delete_user";

@@ -43,7 +43,7 @@ RecordModule::RecordModule(QTableView* tableView, QCalendarWidget* calendar,
     // 动态注入时间段与高级状态过滤面板
     injectAdvancedUI();
     // 细粒度权限控制：普通职员视角强制隐藏跨部门及姓名筛选按钮
-    if (m_role != "管理员登录" && m_role != "超级管理员" && m_role != "经理") {
+    if (m_role != "管理员登录" && m_role != "经理") {
         m_searchNameEdit->hide();
         m_filterBtn->hide();
     }
@@ -119,7 +119,7 @@ void RecordModule::injectAdvancedUI() {
         }
     }
     // 回退普通职工的高阶报表导出权限
-    if (m_role != "管理员登录" && m_role != "超级管理员" && m_role != "经理") {
+    if (m_role != "管理员登录" && m_role != "经理") {
         m_exportMonthBtn->hide();
     }
     // 为动态生成的控件重新挂载事件调度中心
@@ -264,7 +264,7 @@ void RecordModule::onFilterClicked() {
     m_tableModel->clear();
     m_tableModel->setHorizontalHeaderLabels({ "隐藏ID", "员工姓名", "打卡时间", "考勤状态", "来源" });
     // 管理员与普通职员分别使用搜索输入框的值或固定账户名以实现硬级别的脱敏鉴权
-    QString nameFilter = (m_role != "管理员登录" && m_role != "超级管理员") ? m_loginName.trimmed() : m_searchNameEdit->text().trimmed();
+    QString nameFilter = (m_role != "管理员登录") ? m_loginName.trimmed() : m_searchNameEdit->text().trimmed();
     QJsonObject req;
     req["type"] = "query_attendance_detail";
     req["name_filter"] = nameFilter;
@@ -316,7 +316,7 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
             });
     }
     // 针对管理员阶层提供更底层的权限，允许直接对考勤数据库实施硬级别的状态字段覆写修改
-    if (m_role == "管理员登录" || m_role == "超级管理员") {
+    if (m_role == "管理员登录") {
         if (source == "L") {
             // 防御机制：如该考勤记录状态属于请假流转通过变更所得，则将其置灰禁止二次覆盖
             QAction* disableAct = menu.addAction("⚠️ 审批通过的假单请勿在此强行修改");

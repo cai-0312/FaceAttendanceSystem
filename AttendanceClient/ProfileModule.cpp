@@ -205,6 +205,7 @@ void ProfileModule::loadUserProfile(const QString& username) {
             QImage resImg = watcher->result();
             if (!resImg.isNull() && m_avatarLabel) {
                 m_avatarLabel->setPixmap(QPixmap::fromImage(resImg));
+                m_avatarLabel->setScaledContents(true);
             }
             else if (m_avatarLabel) {
                 QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
@@ -349,7 +350,7 @@ void ProfileModule::onChangeAvatarClicked() {
         QMessageBox::warning((QWidget*)this->parent(), "错误", "头像上传失败: " + res["msg"].toString());
     }
     else {
-        QMessageBox::information((QWidget*)this->parent(), "成功", "专属头像已上传并持久化保存。");
+        QMessageBox::information((QWidget*)this->parent(), "成功", "头像已修改。");
     }
     loadUserProfile(m_currentUser);
 }

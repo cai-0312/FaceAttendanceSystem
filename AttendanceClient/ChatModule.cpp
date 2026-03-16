@@ -553,90 +553,53 @@ void ChatModule::onBtnMoreOptClicked() {
     if (m_isCurrentGroup) {
         QVBoxLayout* layout = new QVBoxLayout(&dialog);
         QListWidget* listWidget = new QListWidget(&dialog);
-        listWidget->setStyleSheet("QListWidget::item { height: 40px; font-size: 14px; border-bottom: 1px solid #F0F0F0; }");
+        listWidget->setStyleSheet("QListWidget {""   background-color: #FFFFFF;" "   border: 1px solid #E0E0E0;""   border-radius: 8px;""   outline: none;""}"
+            "QListWidget::item {""   height: 40px;""   color: #333333;" "   font-size: 14px;" "   padding-left: 12px;""   border-bottom: 1px solid #F0F0F0;" "}"
+            "QListWidget::item:hover {""   background-color: #F5F5F5;" "}"
+            "QListWidget::item:selected {""   background-color: #E3F2FD;" "   color: #1565C0;" "}");
         layout->addWidget(listWidget);
+
         QJsonObject req;
         req["type"] = "query_group_members";
         req["department"] = m_currentTarget;
         QJsonObject res = NetworkHelper::request(req);
         int count = 0;
+
         if (res["status"].toString() == "success") {
             QJsonArray arr = res["data"].toArray();
             for (int i = 0; i < arr.size(); ++i) {
                 QJsonObject u = arr[i].toObject();
-                listWidget->addItem(QString("👤 %1 (%2 - %3)").arg(u["name"].toString(), u["dept"].toString(), u["job"].toString()));
+                QString name = u["name"].toString();
+                QString dept = u["dept"].toString();
+                QString job = u["job"].toString();
+
+                QListWidgetItem* item = new QListWidgetItem(QString("👤 %1 (%2 - %3)").arg(name, dept, job));
+                item->setData(Qt::UserRole, name); // 存储用户名
+                listWidget->addItem(item);
                 count++;
             }
         }
+
         dialog.setWindowTitle(QString("群成员列表 - %1 (%2人)").arg(m_currentTarget).arg(count));
+        dialog.setStyleSheet( "QDialog {""   background-color: #FFFFFF;""   border-radius: 10px;""}"
+        );
+        // 点击成员时显示个人信息
+        connect(listWidget, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+            QString userName = item->data(Qt::UserRole).toString();
+            if (!userName.isEmpty()) {
+                showUserInfo(userName); 
+            }
+            });
         QPushButton* closeBtn = new QPushButton("关闭", &dialog);
         closeBtn->setMinimumHeight(35);
         layout->addWidget(closeBtn);
         connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+
         dialog.exec();
     }
     // 查询单独个人名片资料
     else {
-        dialog.setWindowTitle("个人资料名片");
-        QVBoxLayout* layout = new QVBoxLayout(&dialog);
-        layout->setSpacing(20);
-        layout->setContentsMargins(30, 30, 30, 30);
-        QLabel* avatarLabel = new QLabel(&dialog);
-        avatarLabel->setAlignment(Qt::AlignCenter);
-        avatarLabel->setFixedSize(100, 100);
-        avatarLabel->setStyleSheet("background-color: #EAEAEA; border-radius: 50px;");
-        QFormLayout* form = new QFormLayout();
-        form->setLabelAlignment(Qt::AlignRight);
-        form->setFormAlignment(Qt::AlignHCenter | Qt::AlignTop);
-        form->setHorizontalSpacing(20);
-        form->setVerticalSpacing(15);
-        QJsonObject req;
-        req["type"] = "query_user_profile";
-        req["name"] = m_currentTarget;
-        QJsonObject res = NetworkHelper::request(req);
-        if (res["status"].toString() == "success") {
-            QString d = res["department"].toString();
-            QString j = res["job_title"].toString();
-            QString g = res["gender"].toString();
-            QString p = res["phone"].toString();
-            QString avatarBase64 = res["avatar_base64"].toString();
-            if (!avatarBase64.isEmpty()) {
-                QImage img;
-                img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
-                QImage scaledImg = img.scaled(100, 100, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-                QImage result(100, 100, QImage::Format_ARGB32_Premultiplied);
-                result.fill(Qt::transparent);
-                QPainter painter(&result);
-                painter.setRenderHint(QPainter::Antialiasing);
-                QPainterPath path;
-                path.addEllipse(0, 0, 100, 100);
-                painter.setClipPath(path);
-                painter.drawImage(0, 0, scaledImg);
-                avatarLabel->setPixmap(QPixmap::fromImage(result));
-            }
-            else {
-                avatarLabel->setText("👤");
-                avatarLabel->setFont(QFont("Microsoft YaHei", 36));
-            }
-            form->addRow("姓名:", new QLabel(QString("<b>%1</b>").arg(m_currentTarget), &dialog));
-            form->addRow("部门:", new QLabel(d, &dialog));
-            form->addRow("职务:", new QLabel(j.isEmpty() ? "未分配" : j, &dialog));
-            form->addRow("性别:", new QLabel(g.isEmpty() ? "未知" : g, &dialog));
-            form->addRow("电话:", new QLabel(p.isEmpty() ? "未设置" : p, &dialog));
-        }
-        else {
-            avatarLabel->setText("❌");
-            form->addRow(new QLabel("无法获取该用户信息", &dialog));
-        }
-        layout->addWidget(avatarLabel, 0, Qt::AlignHCenter);
-        layout->addLayout(form);
-        layout->addStretch();
-        QPushButton* closeBtn = new QPushButton("关闭名片", &dialog);
-        closeBtn->setMinimumHeight(40);
-        closeBtn->setStyleSheet("QPushButton { background-color: #3370FF; color: white; border-radius: 6px; } QPushButton:hover { background-color: #4E83FF; }");
-        layout->addWidget(closeBtn);
-        connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-        dialog.exec();
+        showUserInfo(m_currentTarget);
     }
 }
 // 通过网络接口向特定对象发送系统级别的结构化信息提示
@@ -661,4 +624,78 @@ void ChatModule::sendBroadcast(const QString& msg) {
         json["msg"] = msg;
         m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
     }
+}
+
+void ChatModule::showUserInfo(const QString& userName)
+{
+    QDialog dialog(nullptr);
+    dialog.setWindowTitle("个人资料名片");
+    QVBoxLayout* layout = new QVBoxLayout(&dialog);
+    layout->setSpacing(20);
+    layout->setContentsMargins(30, 30, 30, 30);
+
+    QLabel* avatarLabel = new QLabel(&dialog);
+    avatarLabel->setAlignment(Qt::AlignCenter);
+    avatarLabel->setFixedSize(100, 100);
+    avatarLabel->setStyleSheet("background-color: #EAEAEA; border-radius: 50px;");
+
+    QFormLayout* form = new QFormLayout();
+    form->setLabelAlignment(Qt::AlignRight);
+    form->setFormAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    form->setHorizontalSpacing(20);
+    form->setVerticalSpacing(15);
+
+    QJsonObject req;
+    req["type"] = "query_user_profile";
+    req["name"] = userName;   // 使用传入的用户名
+    QJsonObject res = NetworkHelper::request(req);
+
+    if (res["status"].toString() == "success") {
+        QString d = res["department"].toString();
+        QString j = res["job_title"].toString();
+        QString g = res["gender"].toString();
+        QString p = res["phone"].toString();
+        QString avatarBase64 = res["avatar_base64"].toString();
+
+        if (!avatarBase64.isEmpty()) {
+            QImage img;
+            img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
+            QImage scaledImg = img.scaled(100, 100, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            QImage result(100, 100, QImage::Format_ARGB32_Premultiplied);
+            result.fill(Qt::transparent);
+            QPainter painter(&result);
+            painter.setRenderHint(QPainter::Antialiasing);
+            QPainterPath path;
+            path.addEllipse(0, 0, 100, 100);
+            painter.setClipPath(path);
+            painter.drawImage(0, 0, scaledImg);
+            avatarLabel->setPixmap(QPixmap::fromImage(result));
+        }
+        else {
+            avatarLabel->setText("👤");
+            avatarLabel->setFont(QFont("Microsoft YaHei", 36));
+        }
+
+        form->addRow("姓名:", new QLabel(QString("<b>%1</b>").arg(userName), &dialog));
+        form->addRow("部门:", new QLabel(d, &dialog));
+        form->addRow("职务:", new QLabel(j.isEmpty() ? "未分配" : j, &dialog));
+        form->addRow("性别:", new QLabel(g.isEmpty() ? "未知" : g, &dialog));
+        form->addRow("电话:", new QLabel(p.isEmpty() ? "未设置" : p, &dialog));
+    }
+    else {
+        avatarLabel->setText("❌");
+        form->addRow(new QLabel("无法获取该用户信息", &dialog));
+    }
+
+    layout->addWidget(avatarLabel, 0, Qt::AlignHCenter);
+    layout->addLayout(form);
+    layout->addStretch();
+
+    QPushButton* closeBtn = new QPushButton("关闭名片", &dialog);
+    closeBtn->setMinimumHeight(40);
+    closeBtn->setStyleSheet("QPushButton { background-color: #3370FF; color: white; border-radius: 6px; } QPushButton:hover { background-color: #4E83FF; }");
+    layout->addWidget(closeBtn);
+    connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+
+    dialog.exec();
 }

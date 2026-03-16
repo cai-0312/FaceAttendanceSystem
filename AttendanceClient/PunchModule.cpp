@@ -24,6 +24,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QThread>
+
 // 构造函数：执行模块生命周期的初始化绑定，并控制不同角色的控件可视状态
 PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     QLabel* morningTime, QLabel* morningStatus,
@@ -53,7 +54,7 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
         if (m_btnRuleSettings) connect(m_btnRuleSettings, &QPushButton::clicked, this, &PunchModule::onRuleSettingsClicked);
     }
     // 过滤普通职员的审批级操作界面
-    if (m_role != "管理员登录" && m_role != "超级管理员" && m_role != "经理") {
+    if (m_role != "管理员登录" && m_role != "经理") {
         if (m_btnLeaveApprove) m_btnLeaveApprove->setHidden(true);
         if (m_btnAppealApprove) m_btnAppealApprove->setHidden(true);
     }
