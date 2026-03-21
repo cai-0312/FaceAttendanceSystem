@@ -25,6 +25,8 @@
 #include <QComboBox>
 #include <QThread>
 #include <QTimer>
+#include <QBuffer>
+#include <QImage>
 // 初始化网络模块、API基础配置、重构UI界面并从数据库加载历史会话
 AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineEdit, QPushButton* sendBtn, QPushButton* clearBtn, QString userName, QObject* parent)
     : QObject(parent), m_textBrowser(textBrowser), m_oldLineEdit(lineEdit), m_sendBtn(sendBtn), m_clearBtn(clearBtn), m_userName(userName), m_isReplying(false), m_voiceEnabled(false)
@@ -179,28 +181,40 @@ void AIAssistantModule::rebuildAdvancedUI() {
         "QComboBox::drop-down { border: none; width: 20px; } "
         "QComboBox QAbstractItemView { outline: none; border: 1px solid #E5E6EB; border-radius: 8px; background: white; selection-background-color: #E8F3FF; selection-color: #165DFF; }"
     );
-    // 根据用户选择动态切换 API 地址和模型参数
+    // 根据用户选择动态切换 API 地址和模型参数，并重置对话上下文避免身份混淆
     connect(modelCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
+        QString displayName;  // 用于 system prompt 中标识当前模型身份
         if (text.contains("V3")) {
             m_apiUrl = "https://api.deepseek.com/chat/completions";
             m_apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
             m_modelName = "deepseek-chat";
+            displayName = "DeepSeek-V3";
         }
         else if (text.contains("R1")) {
             m_apiUrl = "https://api.deepseek.com/chat/completions";
             m_apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
             m_modelName = "deepseek-reasoner";
+            displayName = "DeepSeek-R1";
         }
         else if (text.contains("Doubao-Lite")) {
             m_apiUrl = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
             m_apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
             m_modelName = "ep-20260307031237-h5zmt";
+            displayName = "豆包大模型 (Doubao-Lite)";
         }
         else if (text.contains("Seedream")) {
             m_apiUrl = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
             m_apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
             m_modelName = "ep-20260306195042-l95bj";
+            displayName = "豆包 Seedream (画图)";
         }
+        // [修复] 切换模型时必须重置对话上下文，否则历史消息会让新模型"继承"旧模型的身份
+        m_messageHistory = QJsonArray();
+        QJsonObject systemMsg;
+        systemMsg["role"] = "system";
+        systemMsg["content"] = QString("你是 %1，一个专业的企业智能考勤与OA助手，你可以使用 Markdown 格式美化排版。"
+            "当用户询问你是什么模型时，请如实回答你是 %1。").arg(displayName);
+        m_messageHistory.append(systemMsg);
         });
     actionLay->addWidget(modelCombo);
     actionLay->addStretch();
@@ -398,12 +412,95 @@ void AIAssistantModule::onNetworkReply(QNetworkReply* reply) {
         if (isImageAPI) {
             if (json.contains("data") && json["data"].isArray()) {
                 QString imgUrl = json["data"].toArray()[0].toObject()["url"].toString();
-                QString responseMsg = QString("🎨 <b>为您生成了一张图片！</b><br><br><a href='%1' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>🔗 点击此处在浏览器中查看高清原图并保存</a>").arg(imgUrl);
                 QJsonObject pseudoMsg;
                 pseudoMsg["role"] = "assistant";
                 pseudoMsg["content"] = "[AI为您生成了一张图片]";
                 m_messageHistory.append(pseudoMsg);
-                appendMessage("ai", responseMsg, true);
+
+                // 先显示文字提示（图片正在加载）
+                appendMessage("ai", "🎨 <b>为您生成了一张图片，正在加载中...</b>", false);
+
+                // 使用独立的 QNetworkAccessManager 下载图片（避免触发 onNetworkReply）
+                QNetworkAccessManager* imgLoader = new QNetworkAccessManager(this);
+                QNetworkRequest imgReq;
+                // 直接用 QUrl::fromEncoded 避免 Qt 对已签名 URL 中的参数二次编码
+                imgReq.setUrl(QUrl::fromEncoded(imgUrl.toUtf8()));
+                imgReq.setRawHeader("User-Agent", "Mozilla/5.0");
+                // 跟随重定向
+                imgReq.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                    QNetworkRequest::NoLessSafeRedirectPolicy);
+                QNetworkReply* imgReply = imgLoader->get(imgReq);
+                connect(imgReply, &QNetworkReply::sslErrors, imgReply,
+                    [imgReply](const QList<QSslError>& errors) { imgReply->ignoreSslErrors(errors); });
+
+                // 图片下载完成后，缩放并直接追加到聊天气泡
+                connect(imgReply, &QNetworkReply::finished, this,
+                    [this, imgReply, imgLoader, imgUrl]() {
+                        QString resultHtml;
+
+                        if (imgReply->error() == QNetworkReply::NoError) {
+                            QByteArray imageData = imgReply->readAll();
+                            QImage originalImg;
+                            originalImg.loadFromData(imageData);
+
+                            if (!originalImg.isNull()) {
+                                // 根据对话框实际宽度动态计算图片显示尺寸
+                                int browserWidth = m_textBrowser->viewport()->width();
+                                int maxImgWidth = static_cast<int>(browserWidth * 0.55);
+                                maxImgWidth = qBound(200, maxImgWidth, 800);
+
+                                QImage displayImg = originalImg;
+                                if (displayImg.width() > maxImgWidth) {
+                                    displayImg = displayImg.scaledToWidth(maxImgWidth, Qt::SmoothTransformation);
+                                }
+
+                                // 编码为 JPEG（比 PNG 小很多，加载更快）
+                                QByteArray scaledData;
+                                QBuffer buffer(&scaledData);
+                                buffer.open(QIODevice::WriteOnly);
+                                displayImg.save(&buffer, "JPEG", 85);
+                                buffer.close();
+
+                                // QTextBrowser 只认绝对像素值的 width/height
+                                resultHtml = QString(
+                                    "🎨 <b>为您生成了一张图片！</b><br><br>"
+                                    "<img src='data:image/jpeg;base64,%1' width='%2' height='%3' /><br><br>"
+                                    "<a href='%4' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>"
+                                    "🔗 点击查看高清原图并保存</a>"
+                                ).arg(QString(scaledData.toBase64()))
+                                    .arg(displayImg.width())
+                                    .arg(displayImg.height())
+                                    .arg(imgUrl);
+                            }
+                            else {
+                                // 下载成功但图片解码失败
+                                resultHtml = QString(
+                                    "🎨 <b>图片生成成功！</b>（预览解码失败）<br><br>"
+                                    "<a href='%1' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>"
+                                    "🔗 点击此处在浏览器中查看高清原图并保存</a>"
+                                ).arg(imgUrl);
+                            }
+                        }
+                        else {
+                            // 下载失败，提供可点击链接作为兜底方案
+                            qWarning() << "[AIModule] 图片下载失败:" << imgReply->errorString()
+                                << "HTTP状态码:" << imgReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                            resultHtml = QString(
+                                "🎨 <b>图片生成成功！</b>（预览加载失败）<br><br>"
+                                "<a href='%1' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>"
+                                "🔗 点击此处在浏览器中查看高清原图并保存</a>"
+                            ).arg(imgUrl);
+                        }
+
+                        // 移除之前的"加载中"提示，追加最终结果
+                        QString loadingPlaceholder = "🎨 <b>为您生成了一张图片，正在加载中...</b>";
+                        m_currentHtmlDisplay.replace(m_currentHtmlDisplay.lastIndexOf(loadingPlaceholder),
+                            loadingPlaceholder.length(), "");
+                        appendMessage("ai", resultHtml, true);
+
+                        imgReply->deleteLater();
+                        imgLoader->deleteLater();
+                    });
             }
             else {
                 appendMessage("ai", "❌ 画图失败，大模型拒绝了请求或触发安全拦截。", false);
@@ -471,7 +568,14 @@ void AIAssistantModule::appendMessage(const QString& role, const QString& msg, b
         formattedMsg.replace("\n", "<br>");
     }
     else {
-        formattedMsg = parseMarkdown(msg);
+        // [修复] 如果 AI 消息本身已包含 HTML 标签（如画图接口返回的 <a> <b> 等），
+        // 则直接使用，不再经过 parseMarkdown()（其内部 toHtmlEscaped 会破坏标签）
+        if (msg.contains("<a ") || msg.contains("<img ") || msg.contains("<b>")) {
+            formattedMsg = msg;  // 已经是富文本，直接使用
+        }
+        else {
+            formattedMsg = parseMarkdown(msg);  // 纯文本走 Markdown 解析
+        }
     }
     QString bubble;
     // 渲染用户消息气泡（蓝色底色，居右对齐）
