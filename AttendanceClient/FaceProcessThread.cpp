@@ -9,7 +9,12 @@
 #include <QDir>
 #include <QFile>
 #include <QUrl>
+#include <cmath>
+#include <numeric>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <mmsystem.h>
 #pragma comment(lib, "winmm.lib")
@@ -86,6 +91,93 @@ cv::Mat FaceProcessThread::extractFeature(const cv::Mat& frame, const FaceDetect
     cv::Mat feat = arcfaceNet.forward().reshape(1, 1).clone();
     cv::normalize(feat, feat, 1.0, 0.0, cv::NORM_L2);
     return feat;
+}
+
+// ====================== 活体检测（基于RetinaFace 5关键点） ======================
+// pts[0] = 左眼中心, pts[1] = 右眼中心
+// 原理：以眼睛关键点为中心裁切眼部小图，计算连续帧之间的像素绝对差均值，
+//       累积多帧差异后计算标准差。真人自然眨眼会产生明显的帧间波动（标准差>阈值），
+//       照片/屏幕是静态的，帧间差异几乎恒定（标准差≈0）。
+
+cv::Mat FaceProcessThread::cropEyeRegion(const cv::Mat& frame, const cv::Point2f& eyeCenter, float eyeDist) {
+    int halfW = (int)(eyeDist * 0.35f);
+    int halfH = (int)(eyeDist * 0.18f);
+    int x = std::max(0, (int)eyeCenter.x - halfW);
+    int y = std::max(0, (int)eyeCenter.y - halfH);
+    int w = std::min(halfW * 2, frame.cols - x);
+    int h = std::min(halfH * 2, frame.rows - y);
+    if (w <= 4 || h <= 4) return cv::Mat();
+
+    cv::Mat roi = frame(cv::Rect(x, y, w, h));
+    cv::Mat gray;
+    if (roi.channels() == 3)
+        cv::cvtColor(roi, gray, cv::COLOR_BGR2GRAY);
+    else
+        gray = roi.clone();
+
+    cv::Mat resized;
+    cv::resize(gray, resized, cv::Size(36, 16));
+    return resized;
+}
+
+void FaceProcessThread::resetLiveness() {
+    m_prevLeftEye = cv::Mat();
+    m_prevRightEye = cv::Mat();
+    m_eyeDiffHistory.clear();
+    m_currentAlive = false;
+}
+
+bool FaceProcessThread::updateLiveness(const cv::Mat& frame, const FaceDetectInfo& face) {
+    cv::Point2f leftEye = face.pts[0];
+    cv::Point2f rightEye = face.pts[1];
+
+    float eyeDist = std::sqrt(
+        (rightEye.x - leftEye.x) * (rightEye.x - leftEye.x) +
+        (rightEye.y - leftEye.y) * (rightEye.y - leftEye.y));
+
+    if (eyeDist < 15.0f) return m_currentAlive;
+
+    cv::Mat curLeft = cropEyeRegion(frame, leftEye, eyeDist);
+    cv::Mat curRight = cropEyeRegion(frame, rightEye, eyeDist);
+    if (curLeft.empty() || curRight.empty()) return m_currentAlive;
+
+    if (m_prevLeftEye.empty() || m_prevRightEye.empty()) {
+        m_prevLeftEye = curLeft.clone();
+        m_prevRightEye = curRight.clone();
+        return m_currentAlive;
+    }
+
+    cv::Mat diffL, diffR;
+    cv::absdiff(curLeft, m_prevLeftEye, diffL);
+    cv::absdiff(curRight, m_prevRightEye, diffR);
+    float meanDiff = ((float)cv::mean(diffL)[0] + (float)cv::mean(diffR)[0]) * 0.5f;
+
+    m_prevLeftEye = curLeft.clone();
+    m_prevRightEye = curRight.clone();
+
+    m_eyeDiffHistory.push_back(meanDiff);
+    if ((int)m_eyeDiffHistory.size() > m_livenessFrameCount)
+        m_eyeDiffHistory.pop_front();
+
+    if ((int)m_eyeDiffHistory.size() >= m_livenessFrameCount) {
+        float sum = 0.0f, sumSq = 0.0f;
+        for (float v : m_eyeDiffHistory) {
+            sum += v;
+            sumSq += v * v;
+        }
+        float n = (float)m_eyeDiffHistory.size();
+        float mean = sum / n;
+        float variance = sumSq / n - mean * mean;
+        float stddev = std::sqrt(std::max(0.0f, variance));
+
+        m_currentAlive = (stddev > m_livenessThreshold);
+
+        if (!m_currentAlive) {
+            qDebug() << "[Liveness] BLOCKED - stddev:" << stddev << "< threshold:" << m_livenessThreshold;
+        }
+    }
+
+    return m_currentAlive;
 }
 
 // ====================== DeepSeek 问候语生成 ======================
@@ -259,7 +351,7 @@ void FaceProcessThread::run() {
     isRunning = true;
     qint64 lastDetectTime = 0;
 
-    struct MatchResult { cv::Rect rect; QString name; };
+    struct MatchResult { cv::Rect rect; QString name; bool alive; };
     std::vector<MatchResult> cachedResults;
 
     while (isRunning) {
@@ -282,12 +374,14 @@ void FaceProcessThread::run() {
 
         float curConf, curNms, curRecog;
         int cooldown;
+        bool livenessOn;
         {
             QMutexLocker locker(&paramMutex);
             curConf = m_confThreshold;
             curNms = m_nmsThreshold;
             curRecog = m_recogThreshold;
             cooldown = m_punchCooldownSec;
+            livenessOn = m_livenessEnabled;
         }
 
         // ---- 注册逻辑 ----
@@ -332,7 +426,7 @@ void FaceProcessThread::run() {
                         }
                     }
 
-                    // 陌生人告警：截取人脸区域发送给UI
+                    // 陌生人告警
                     if (bestName == "未知访客") {
                         cv::Rect safeRect = face.rect & cv::Rect(0, 0, frame.cols, frame.rows);
                         if (safeRect.area() > 0) {
@@ -343,20 +437,31 @@ void FaceProcessThread::run() {
                                 faceRgb.step, QImage::Format_RGB888);
                             emit unknownFaceDetected(snap.copy());
                         }
+                        resetLiveness();
                     }
 
-                    // 打卡逻辑
+                    // 活体检测 + 打卡逻辑
                     if (bestName != "未知访客" && bestName == m_currentUser) {
-                        QDateTime now = QDateTime::currentDateTime();
-                        if (lastPunchTime.find(bestName) == lastPunchTime.end() ||
-                            lastPunchTime[bestName].secsTo(now) > cooldown) {
-                            lastPunchTime[bestName] = now;
-                            emit punchResult(bestName, maxSim, now);
-                            emit internalPunchSuccess(bestName, now);
+
+                        bool alive = true;
+                        if (livenessOn) {
+                            alive = updateLiveness(frame, face);
+                            emit livenessResult(alive);
+                        }
+
+                        if (alive) {
+                            QDateTime now = QDateTime::currentDateTime();
+                            if (lastPunchTime.find(bestName) == lastPunchTime.end() ||
+                                lastPunchTime[bestName].secsTo(now) > cooldown) {
+                                lastPunchTime[bestName] = now;
+                                emit punchResult(bestName, maxSim, now);
+                                emit internalPunchSuccess(bestName, now);
+                                resetLiveness();
+                            }
                         }
                     }
 
-                    cachedResults.push_back({ face.rect, bestName });
+                    cachedResults.push_back({ face.rect, bestName, livenessOn ? m_currentAlive : true });
                 }
             }
             lastDetectTime = nowMs;
@@ -370,9 +475,20 @@ void FaceProcessThread::run() {
         QPainter painter(&finalImg);
         painter.setFont(QFont("Microsoft YaHei", 18, QFont::Bold));
         for (const auto& res : cachedResults) {
-            painter.setPen(res.name == m_currentUser ? Qt::green : Qt::red);
+            if (res.name == m_currentUser && res.alive)
+                painter.setPen(Qt::green);
+            else if (res.name == m_currentUser && !res.alive)
+                painter.setPen(QColor(255, 165, 0));  // 橙色：识别到但活体检测未通过
+            else
+                painter.setPen(Qt::red);
+
             painter.drawRect(res.rect.x, res.rect.y, res.rect.width, res.rect.height);
-            painter.drawText(res.rect.x, res.rect.y - 10, res.name);
+
+            QString label = res.name;
+            if (res.name == m_currentUser && !res.alive)
+                label += " [检测中]";
+
+            painter.drawText(res.rect.x, res.rect.y - 10, label);
         }
         painter.end();
         emit frameReady(finalImg, { m_currentUser });

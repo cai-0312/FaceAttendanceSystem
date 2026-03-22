@@ -90,9 +90,6 @@
     <QtMoc Include="PunchModule.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="FaceProcessThread.h">
-      <Filter>Header Files</Filter>
-    </QtMoc>
     <QtMoc Include="RegisterModule.h">
       <Filter>Header Files</Filter>
     </QtMoc>
@@ -112,6 +109,9 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="AIAssistantModule.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="FaceProcessThread.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

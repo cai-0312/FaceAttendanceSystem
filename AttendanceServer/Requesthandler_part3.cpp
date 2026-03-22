@@ -174,6 +174,98 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
     res["color_map"] = colorMap;
     sendJson(socket, res);
 }
+
+// 管理员专用：获取全员当月考勤汇总数据（用于月度汇总报表导出）
+void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    int year = json["year"].toInt();
+    int month = json["month"].toInt();
+
+    QString startDate = QString("%1-%2-01").arg(year).arg(month, 2, 10, QChar('0'));
+    QDate lastDay(year, month, 1);
+    lastDay = lastDay.addMonths(1).addDays(-1);
+    QString endDate = lastDay.toString("yyyy-MM-dd");
+
+    // 计算当月应出勤天数（排除周六日）
+    int shouldWork = 0;
+    QDate d(year, month, 1);
+    while (d <= lastDay) {
+        if (d.dayOfWeek() <= 5) shouldWork++;
+        d = d.addDays(1);
+    }
+
+    // 查询所有员工的基本信息
+    QSqlQuery userQ(db);
+    userQ.exec("SELECT name, department FROM users WHERE role != '管理员' ORDER BY department, name");
+
+    QJsonArray summary;
+    while (userQ.next()) {
+        QString empName = userQ.value(0).toString();
+        QString empDept = userQ.value(1).toString();
+
+        // 查询该员工当月的所有打卡记录
+        QSqlQuery q(db);
+        q.exec(QString(
+            "SELECT DATE(punch_time) as d, status FROM attendance_records "
+            "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' "
+            "ORDER BY punch_time ASC"
+        ).arg(empName, startDate, endDate));
+
+        // 按天合并状态（同一天多条记录取最高优先级）
+        QMap<QString, QString> dayStatus;
+        while (q.next()) {
+            QString dateStr = q.value(0).toDate().toString("yyyy-MM-dd");
+            QString status = q.value(1).toString();
+            QString existing = dayStatus.value(dateStr, "");
+            if (status.contains("旷工")) {
+                dayStatus[dateStr] = "absent";
+            }
+            else if (status.contains("迟到") || status.contains("早退")) {
+                if (existing != "absent") dayStatus[dateStr] = "late";
+            }
+            else if (status.contains("假")) {
+                if (existing != "absent" && existing != "late") dayStatus[dateStr] = "leave";
+            }
+            else if (status.contains("正常") || status.contains("下班") || status.contains("补卡")) {
+                if (existing.isEmpty()) dayStatus[dateStr] = "normal";
+            }
+        }
+
+        // 统计各项指标
+        int actualWork = 0, lateCount = 0, earlyCount = 0, absentDays = 0, leaveDays = 0;
+        for (auto it = dayStatus.begin(); it != dayStatus.end(); ++it) {
+            if (it.value() == "normal")  actualWork++;
+            else if (it.value() == "late") { actualWork++; lateCount++; }
+            else if (it.value() == "leave") leaveDays++;
+            else if (it.value() == "absent") absentDays++;
+        }
+
+        // 统计早退次数（单独查询含"早退"的记录数）
+        QSqlQuery earlyQ(db);
+        earlyQ.exec(QString(
+            "SELECT COUNT(DISTINCT DATE(punch_time)) FROM attendance_records "
+            "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' AND status LIKE '%%早退%%'"
+        ).arg(empName, startDate, endDate));
+        if (earlyQ.next()) earlyCount = earlyQ.value(0).toInt();
+
+        QJsonObject row;
+        row["name"] = empName;
+        row["dept"] = empDept;
+        row["should_work"] = shouldWork;
+        row["actual_work"] = actualWork;
+        row["late_count"] = lateCount;
+        row["early_count"] = earlyCount;
+        row["absent_days"] = absentDays;
+        row["leave_days"] = leaveDays;
+        summary.append(row);
+    }
+
+    QJsonObject res;
+    res["status"] = "success";
+    res["summary"] = summary;
+    sendJson(socket, res);
+}
+
 // 获取满足特定过滤条件的考勤明细（包含分页或条件筛选）
 void RequestHandler::handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {

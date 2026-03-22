@@ -101,7 +101,7 @@
    <item>
     <widget class="QStackedWidget" name="stackedWidget">
      <property name="currentIndex">
-      <number>5</number>
+      <number>7</number>
      </property>
      <widget class="QWidget" name="page_Home">
       <layout class="QVBoxLayout" name="verticalLayout_Home">
@@ -1847,7 +1847,7 @@
                  <string notr="true">color: #8F959E; font-size: 12px; margin-top: 5px;</string>
                 </property>
                 <property name="text">
-                 <string>📱 扫一扫 保存联系人</string>
+                 <string>📱 扫一扫 查看联系人</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>

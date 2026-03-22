@@ -280,12 +280,22 @@ void RecordModule::onFilterClicked() {
             rowItems << new QStandardItem(rowObj["id"].toString());
             rowItems << new QStandardItem(rowObj["name"].toString());
             rowItems << new QStandardItem(rowObj["time"].toString());
-            // 针对携带异常考勤字样的记录执行高亮染色处理
             QString st = rowObj["status"].toString();
             QStandardItem* statusItem = new QStandardItem(st);
-            if (st.contains("假")) {
+            if (st.contains("迟到") || st.contains("早退")) {
                 statusItem->setForeground(QBrush(QColor("#FA6400")));
                 statusItem->setFont(QFont("Microsoft YaHei", 9, QFont::Bold));
+            }
+            else if (st.contains("旷工")) {
+                statusItem->setForeground(QBrush(QColor("#F53F3F")));
+                statusItem->setFont(QFont("Microsoft YaHei", 9, QFont::Bold));
+            }
+            else if (st.contains("假")) {
+                statusItem->setForeground(QBrush(QColor("#3370FF")));
+                statusItem->setFont(QFont("Microsoft YaHei", 9, QFont::Bold));
+            }
+            else if (st.contains("正常") || st.contains("补卡")) {
+                statusItem->setForeground(QBrush(QColor("#00B42A")));
             }
             rowItems << statusItem;
             rowItems << new QStandardItem(rowObj["source"].toString());
@@ -349,24 +359,123 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
 }
 // 获取当前挂载表格内已加载好的所有序列化明细矩阵，转储为纯文本格式流并输出至本地CSV文件
 void RecordModule::onExportClicked() {
-    QString filePath = QFileDialog::getSaveFileName(nullptr, "导出流水账", "Detail_" + QDateTime::currentDateTime().toString("yyyyMMdd") + ".csv", "CSV Files (*.csv)");
+    if (m_tableModel->rowCount() == 0) {
+        QMessageBox::warning(nullptr, "提示", "当前表格没有数据，请先筛选出记录再导出。");
+        return;
+    }
+
+    QString startStr = m_startDateEdit->date().toString("yyyyMMdd");
+    QString endStr = m_endDateEdit->date().toString("yyyyMMdd");
+    QString defaultName = QString("考勤明细_%1_%2_%3.csv").arg(m_loginName, startStr, endStr);
+
+    QString filePath = QFileDialog::getSaveFileName(nullptr, "导出考勤明细", defaultName, "CSV Files (*.csv)");
     if (filePath.isEmpty()) return;
+
     QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
-    // 初始化文件文本写入通道流并施加 UTF-8 BOM 文件头签名，避免跨平台表格查看软件的乱码缺陷
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(nullptr, "错误", "无法创建文件，请检查路径权限。");
+        return;
+    }
+
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
-    out << QString("\xEF\xBB\xBF") << "员工姓名,打卡时间,考勤状态\n";
+    out << QString("\xEF\xBB\xBF");
+
+    out << QString("考勤明细报表\n");
+    out << QString("查询区间: %1 至 %2\n").arg(
+        m_startDateEdit->date().toString("yyyy-MM-dd"),
+        m_endDateEdit->date().toString("yyyy-MM-dd"));
+    out << QString("筛选状态: %1\n").arg(m_statusCombo->currentText());
+    out << QString("导出时间: %1\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    out << QString("共 %1 条记录\n\n").arg(m_tableModel->rowCount());
+
+    out << "序号,员工姓名,打卡时间,考勤状态\n";
     for (int i = 0; i < m_tableModel->rowCount(); ++i) {
-        out << QString("%1,%2,%3\n").arg(
+        out << QString("%1,%2,%3,%4\n").arg(
+            QString::number(i + 1),
             m_tableModel->item(i, 1)->text(),
             m_tableModel->item(i, 2)->text(),
             m_tableModel->item(i, 3)->text());
     }
+
     file.close();
-    QMessageBox::information(nullptr, "成功", "明细流水账已导出！");
+    QMessageBox::information(nullptr, "导出成功",
+        QString("考勤明细已导出！\n共 %1 条记录\n文件：%2").arg(m_tableModel->rowCount()).arg(filePath));
 }
 // 大体量数据的宏观统计导出仅向具有全局总控调度权限的服务端管理系统开放以避免终端堵塞
 void RecordModule::onExportMonthClicked() {
-    QMessageBox::information(nullptr, "提示", "为保证数据安全，月度统计请联系管理员在服务端总控中心导出！");
+    if (m_role != "管理员登录") {
+        QMessageBox::warning(nullptr, "权限不足", "仅管理员可导出月度汇总报表。");
+        return;
+    }
+
+    int year = m_calendarWidget->yearShown();
+    int month = m_calendarWidget->monthShown();
+
+    QJsonObject req;
+    req["type"] = "query_monthly_summary_all";
+    req["year"] = year;
+    req["month"] = month;
+
+    QJsonObject res = NetworkHelper::request(req);
+    if (res.isEmpty() || res["status"].toString() != "success") {
+        QMessageBox::warning(nullptr, "请求失败", "无法从服务器获取月度汇总数据，请检查服务端是否正常运行。");
+        return;
+    }
+
+    QJsonArray summaryArr = res["summary"].toArray();
+    if (summaryArr.isEmpty()) {
+        QMessageBox::information(nullptr, "提示", QString("%1年%2月暂无考勤数据。").arg(year).arg(month));
+        return;
+    }
+
+    QString defaultName = QString("月度汇总_%1年%2月.csv").arg(year).arg(month, 2, 10, QChar('0'));
+    QString filePath = QFileDialog::getSaveFileName(nullptr, "导出月度汇总", defaultName, "CSV Files (*.csv)");
+    if (filePath.isEmpty()) return;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(nullptr, "错误", "无法创建文件，请检查路径权限。");
+        return;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << QString("\xEF\xBB\xBF");
+
+    out << QString("月度考勤汇总报表\n");
+    out << QString("统计月份: %1年%2月\n").arg(year).arg(month);
+    out << QString("导出时间: %1\n").arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    out << QString("导出人员: %1\n").arg(m_loginName);
+    out << QString("共 %1 名员工\n\n").arg(summaryArr.size());
+
+    out << "序号,员工姓名,部门,应出勤(天),实出勤(天),迟到(次),早退(次),旷工(天),请假(天),出勤率\n";
+
+    for (int i = 0; i < summaryArr.size(); ++i) {
+        QJsonObject row = summaryArr[i].toObject();
+        QString name = row["name"].toString();
+        QString dept = row["dept"].toString();
+        int shouldWork = row["should_work"].toInt();
+        int actualWork = row["actual_work"].toInt();
+        int lateCount = row["late_count"].toInt();
+        int earlyCount = row["early_count"].toInt();
+        int absentDays = row["absent_days"].toInt();
+        int leaveDays = row["leave_days"].toInt();
+
+        QString rate = shouldWork > 0
+            ? QString::number((double)actualWork / shouldWork * 100.0, 'f', 1) + "%"
+            : "0.0%";
+
+        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10\n")
+            .arg(i + 1).arg(name).arg(dept)
+            .arg(shouldWork).arg(actualWork)
+            .arg(lateCount).arg(earlyCount)
+            .arg(absentDays).arg(leaveDays)
+            .arg(rate);
+    }
+
+    file.close();
+    QMessageBox::information(nullptr, "导出成功",
+        QString("月度汇总已导出！\n%1年%2月，共%3名员工\n文件：%4")
+        .arg(year).arg(month).arg(summaryArr.size()).arg(filePath));
 }

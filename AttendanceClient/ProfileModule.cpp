@@ -97,7 +97,7 @@ void ProfileModule::injectAdvancedUI() {
     m_exportPdfBtn->setCursor(Qt::PointingHandCursor);
     m_exportPdfBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_exportPdfBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #E6A23C; } QPushButton:hover { background-color: #EBB563; }");
-    m_settingsBtn = new QPushButton("🎨 客户端设置");
+    m_settingsBtn = new QPushButton("🎨 系统设置");
     m_settingsBtn->setCursor(Qt::PointingHandCursor);
     m_settingsBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_settingsBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #722ED1; } QPushButton:hover { background-color: #8D51DE; }");
@@ -251,7 +251,7 @@ void ProfileModule::onEditPhoneClicked() {
     bool ok;
     QInputDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("修改手机号");
-    dialog.setLabelText("请输入11位中国大陆手机号:");
+    dialog.setLabelText("请输入11位手机号:");
     dialog.setOkButtonText("确认修改");
     dialog.setCancelButtonText("取消");
     // 配置输入校验器，限制手机号输入格式必须为纯数字且最高11位长度
@@ -313,7 +313,7 @@ void ProfileModule::onChangePasswordClicked() {
         req["new_pwd"] = newPwdEdit->text();
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") {
-            QMessageBox::information((QWidget*)this->parent(), "成功", "密码修改成功！下次登录生效。");
+            QMessageBox::information((QWidget*)this->parent(), "成功", "密码修改成功！");
         }
         else {
             QMessageBox::warning((QWidget*)this->parent(), "错误", res["msg"].toString());
@@ -323,7 +323,7 @@ void ProfileModule::onChangePasswordClicked() {
 // 处理本地图片选取、内存裁剪压缩以及头像数据的服务端持久化上报
 void ProfileModule::onChangeAvatarClicked() {
     if (m_currentUser.isEmpty()) return;
-    QString filePath = QFileDialog::getOpenFileName((QWidget*)this->parent(), "选择个人写真/头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
+    QString filePath = QFileDialog::getOpenFileName((QWidget*)this->parent(), "选择个人头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
     if (filePath.isEmpty()) return;
     QImage img;
     if (!img.load(filePath)) {
@@ -421,21 +421,21 @@ void ProfileModule::onExportProfilePdfClicked() {
     painter.setPen(Qt::gray);
     QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     painter.drawText(margin, 2600, width - 2 * margin, 200, Qt::AlignRight, "打印时间：" + timeStr);
-    painter.drawText(margin, 2600, width - 2 * margin, 200, Qt::AlignLeft, "注：此档案由人脸识别考勤系统自动生成");
+    painter.drawText(margin, 2600, width - 2 * margin, 200, Qt::AlignLeft, "注：此档案由系统自动生成");
     painter.end();
     QMessageBox::information((QWidget*)this->parent(), "导出成功",
-        "员工档案已成功导出为 PDF，可直接连接打印机打印。");
+        "员工档案已成功导出为 PDF");
 }
 // 抛出相关信号以唤醒外部人脸识别引擎完成底层的特征更新操作
 void ProfileModule::onReRegisterFaceClicked() {
-    if (QMessageBox::question((QWidget*)this->parent(), "重新录入人脸", "为了提高识别率，建议您重新录入人脸特征。\n\n点击【确认】将跳转，原有人脸特征将被覆盖。") == QMessageBox::Yes) {
+    if (QMessageBox::question((QWidget*)this->parent(), "重新录入人脸", "点击【Yes】将跳转录入人脸，原有人脸特征将被覆盖。") == QMessageBox::Yes) {
         emit requestFaceReRegister(m_currentUser);
     }
 }
 // 唤出本地设置交互面板并将偏好属性持久化至配置文件
 void ProfileModule::onPreferencesClicked() {
     QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("🎨 客户端偏好设置");
+    dialog.setWindowTitle("🎨 系统偏好设置");
     dialog.resize(300, 150);
     QVBoxLayout layout(&dialog);
     QSettings settings("config.ini", QSettings::IniFormat);
@@ -454,6 +454,6 @@ void ProfileModule::onPreferencesClicked() {
     if (dialog.exec() == QDialog::Accepted) {
         settings.setValue("Preferences/VoiceEnabled", voiceCheck->isChecked());
         settings.setValue("Preferences/PopupEnabled", popupCheck->isChecked());
-        QMessageBox::information((QWidget*)this->parent(), "设置已同步", "配置已存入本地 config.ini，重启后依然生效。");
+        QMessageBox::information((QWidget*)this->parent(), "设置已完成", "重启后生效。");
     }
 }

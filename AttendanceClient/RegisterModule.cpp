@@ -52,8 +52,8 @@ void RegisterModule::triggerRegistration() {
         // 调用统一的网络模块同步发起身份验证请求
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") {
-            emit startRegistration(inputName);
             QMessageBox::information(m_parentWidget, "授权成功", "身份核验通过！\n请正视摄像头，系统正在提取您的面部特征...");
+            emit startRegistration(inputName);
         }
         else {
             QMessageBox::warning(m_parentWidget, "核验拦截", "系统中不存在该姓名与部门的组合！\n请确认信息无误，或联系管理员确认花名册。");

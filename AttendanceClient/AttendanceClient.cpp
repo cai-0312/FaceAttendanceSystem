@@ -179,7 +179,7 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     }
     QRegularExpression reChinese("[\\x{4e00}-\\x{9fa5}]");
     if (reChinese.match(account).hasMatch()) {
-        QMessageBox::warning(this, "格式错误", "员工账号（工号）不允许包含中文字符，请使用字母或数字！");
+        QMessageBox::warning(this, "格式错误", "员工账号不允许包含中文字符，请使用字母或数字！");
         return;
     }
     QRegularExpression rePhone("^\\d{11}$");
@@ -221,7 +221,7 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
             QMessageBox::critical(this, "服务器错误", "无法连接到服务端，注册失败！");
         }
         else {
-            QMessageBox::warning(this, "注册失败", "该工号可能已被占用或数据库错误！\n" + res["msg"].toString());
+            QMessageBox::warning(this, "注册失败", "该账号可能已被占用！\n" + res["msg"].toString());
         }
     }
 }

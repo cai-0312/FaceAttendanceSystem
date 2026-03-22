@@ -41,6 +41,7 @@ public:
     static void handlePunchCheat(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handleQueryTodayStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    static void handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryTodayAttendanceForAi(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);

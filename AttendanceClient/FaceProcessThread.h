@@ -1,9 +1,13 @@
 #pragma once
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <QThread>
 #include <QMutex>
 #include <QImage>
 #include <QDateTime>
 #include <map>
+#include <deque>
 #include <opencv2/opencv.hpp>
 #include "RetinaFaceDecoder.h"
 
@@ -65,6 +69,11 @@ public:
         m_ttsEnabled = enabled;
     }
 
+    void setLivenessEnabled(bool enabled) {
+        QMutexLocker locker(&paramMutex);
+        m_livenessEnabled = enabled;
+    }
+
 protected:
     void run() override;
 
@@ -76,6 +85,7 @@ signals:
     void ttsStatusChanged(QString status);
     void punchResult(QString name, double similarity, QDateTime time);
     void unknownFaceDetected(QImage faceSnapshot);
+    void livenessResult(bool alive);
 
 private slots:
     void requestAiGreeting(QString name, QDateTime time);
@@ -104,6 +114,7 @@ private:
 
     int m_punchCooldownSec = 60;
     bool m_ttsEnabled = true;
+    bool m_livenessEnabled = true;
 
     QNetworkAccessManager* m_netManager = nullptr;
 
@@ -116,4 +127,18 @@ private:
     void downloadAndPlayAudio(const QString& audioUrl);
     void playLocalAudio(const QString& filePath);
     cv::Mat extractFeature(const cv::Mat& frame, const FaceDetectInfo& face);
+
+    // ====================== 活体检测（基于RetinaFace 5关键点） ======================
+    // 利用 pts[0]=左眼中心, pts[1]=右眼中心 裁切眼部区域
+    // 通过多帧眼部像素变化的标准差判断活体（真人眨眼有波动，照片无波动）
+    cv::Mat m_prevLeftEye;
+    cv::Mat m_prevRightEye;
+    std::deque<float> m_eyeDiffHistory;
+    int m_livenessFrameCount = 7;        // 7帧 × 300ms ≈ 2秒完成检测
+    float m_livenessThreshold = 1.2f;    // 帧数少时阈值相应降低
+    bool m_currentAlive = false;
+
+    cv::Mat cropEyeRegion(const cv::Mat& frame, const cv::Point2f& eyeCenter, float eyeDist);
+    bool updateLiveness(const cv::Mat& frame, const FaceDetectInfo& face);
+    void resetLiveness();
 };
