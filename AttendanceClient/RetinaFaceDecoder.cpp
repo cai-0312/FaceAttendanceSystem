@@ -10,9 +10,9 @@ RetinaFaceDecoder::RetinaFaceDecoder(const std::string& onnx_path) {
         // 尝试从指定的本地文件路径加载 ONNX 格式的深度神经网络模型
         net = cv::dnn::readNetFromONNX(onnx_path);
         if (!net.empty()) {
-            // 配置 OpenCV 的计算后端为默认引擎，并设置目标运行平台为 CPU
-            net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
-            net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+            // 使用 CUDA GPU 加速推理（ResNet50模型较大，GPU推理效果显著）
+            net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+            net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
         }
     }
     catch (const cv::Exception& e) {
@@ -46,7 +46,7 @@ void RetinaFaceDecoder::create_anchors(int w, int h) {
 std::vector<FaceDetectInfo> RetinaFaceDecoder::detect(const cv::Mat& image, float conf_threshold, float nms_threshold) {
     std::vector<FaceDetectInfo> faces;
     if (image.empty() || net.empty()) return faces;
-    // 将输入分辨率统一约束转换为 640x480，以严格匹配当前 ONNX 模型的静态输入张量要求
+    // 将输入分辨率统一为 640x640，匹配 RetinaFace-ResNet50 模型的标准输入张量
     int img_w = 640;
     int img_h = 480;
     // 图像预处理阶段：扣除通道均值并转化为深度神经网络标准输入所需的 4D Blob 数据格式

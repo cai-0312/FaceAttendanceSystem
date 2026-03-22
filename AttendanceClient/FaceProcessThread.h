@@ -6,33 +6,114 @@
 #include <map>
 #include <opencv2/opencv.hpp>
 #include "RetinaFaceDecoder.h"
+
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QDir>
+#include <QFile>
+
 class FaceProcessThread : public QThread {
     Q_OBJECT
 public:
     explicit FaceProcessThread(QObject* parent = nullptr);
     ~FaceProcessThread();
-    void stop();                            // 停止线程：中断视频采集循环并安全退出线程
-    void updateRegisteredUsers(const std::map<QString, cv::Mat>& users);                 // 更新特征库：将数据库中已加载的人脸特征同步至本识别线程
-    void setPage(int page);                                                              // 设置页码：根据 UI 状态控制识别策略（如考勤页与注册页的逻辑区分）
-    void requestRegister(QString name);                                                  // 注册请求：提交待录入的人员姓名，触发对应特征的抓取与上报流程
-    void setCurrentUser(const QString& name) { QMutexLocker locker(&mutex); m_currentUser = name; }                  // 设置当前登录用户：用于判断镜头前的人脸是否为“本人”
-    void forceReleaseCamera() { QMutexLocker locker(&mutex); if (capture.isOpened()) { capture.release(); } }        // 强制释放摄像头：应对外部组件抢占硬件时的紧急释放接口
+
+    void stop();
+    void updateRegisteredUsers(const std::map<QString, cv::Mat>& users);
+    void setPage(int page);
+    void requestRegister(QString name);
+    void setCurrentUser(const QString& name) { QMutexLocker locker(&mutex); m_currentUser = name; }
+    void forceReleaseCamera() { QMutexLocker locker(&mutex); if (capture.isOpened()) capture.release(); }
+
+    void setDetectParams(float confThresh, float nmsThresh, float recogThresh) {
+        QMutexLocker locker(&paramMutex);
+        m_confThreshold = confThresh;
+        m_nmsThreshold = nmsThresh;
+        m_recogThreshold = recogThresh;
+    }
+
+    void setCameraParams(int camIndex, int width, int height) {
+        QMutexLocker locker(&paramMutex);
+        m_camIndex = camIndex;
+        m_camWidth = width;
+        m_camHeight = height;
+    }
+
+    void setDeepSeekApiKey(const QString& apiKey) {
+        QMutexLocker locker(&paramMutex);
+        m_deepseekApiKey = apiKey;
+    }
+
+    void setDashScopeApiKey(const QString& apiKey) {
+        QMutexLocker locker(&paramMutex);
+        m_dashscopeApiKey = apiKey;
+    }
+
+    void setTtsVoice(const QString& voiceName) {
+        QMutexLocker locker(&paramMutex);
+        m_ttsVoice = voiceName;
+    }
+
+    void setPunchCooldown(int seconds) {
+        QMutexLocker locker(&paramMutex);
+        m_punchCooldownSec = seconds;
+    }
+
+    void setTtsEnabled(bool enabled) {
+        QMutexLocker locker(&paramMutex);
+        m_ttsEnabled = enabled;
+    }
+
 protected:
-    void run() override;                                        // 线程主执行函数：执行摄像头读取、活体/人脸检测、特征对齐与比对的核心死循环
+    void run() override;
+
 signals:
-    void frameReady(QImage img, QStringList recognizedNames);                     // 视频帧就绪信号：将处理后（画好方框与文字）的画面发送给 UI 进行渲染
-    void registerFeatureReady(QString name, QByteArray featureBytes);             // 特征提取成功信号：返回 ArcFace 提取的 128 维/512 维高维特征向量
-    void registerFailed(QString errorMsg);                                       // 注册失败信号：当人脸录入超时或无清晰正脸时反馈异常
+    void frameReady(QImage img, QStringList recognizedNames);
+    void registerFeatureReady(QString name, QByteArray featureBytes);
+    void registerFailed(QString errorMsg);
+    void internalPunchSuccess(QString name, QDateTime time);
+    void ttsStatusChanged(QString status);
+    void punchResult(QString name, double similarity, QDateTime time);
+    void unknownFaceDetected(QImage faceSnapshot);
+
+private slots:
+    void requestAiGreeting(QString name, QDateTime time);
+    void requestQwenTTS(const QString& text);
+
 private:
-    bool isRunning;                                                            // 线程运行状态控制标志
-    int currentPage;                                                          // 记录当前 UI 所处的页面索引（0: 打卡, 1: 注册等）
-    QString pendingRegisterName;                                             // 存储当前正在进行注册录入的人员姓名
-    int registerRetryCount = 0;                                              // 注册抓取重试计数器（用于超时判定）
-    cv::VideoCapture capture;                                                 // OpenCV 视频流采集对象
-    RetinaFaceDecoder* faceEngine = nullptr;                                  // 人脸检测引擎（负责寻找人脸框和5个关键点）
-    cv::dnn::Net arcfaceNet;                                                // 人脸特征提取网络（负责将人脸转为高维特征进行比对）
-    std::map<QString, cv::Mat> registeredUsers;                             // 内存特征库：已注册用户的姓名与特征矩阵映射
-    std::map<QString, QDateTime> lastPunchTime;                               // 打卡频率防抖：记录各人员上一次成功识别的时间
-    QMutex mutex;                                                            // 线程锁：保护多线程场景下共享数据的读写安全
-    QString m_currentUser;                                                   // 保存当前系统登录的用户名，用于“非本人”逻辑判定
+    bool isRunning;
+    int currentPage;
+    QString pendingRegisterName;
+    int registerRetryCount = 0;
+    cv::VideoCapture capture;
+    RetinaFaceDecoder* faceEngine = nullptr;
+    cv::dnn::Net arcfaceNet;
+    std::map<QString, cv::Mat> registeredUsers;
+    std::map<QString, QDateTime> lastPunchTime;
+    QMutex mutex;
+    QString m_currentUser;
+
+    QMutex paramMutex;
+    float m_confThreshold = 0.50f;
+    float m_nmsThreshold = 0.40f;
+    float m_recogThreshold = 0.65f;
+    int m_camIndex = 0;
+    int m_camWidth = 640;
+    int m_camHeight = 480;
+
+    int m_punchCooldownSec = 60;
+    bool m_ttsEnabled = true;
+
+    QNetworkAccessManager* m_netManager = nullptr;
+
+    QString m_deepseekApiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
+
+    QString m_dashscopeApiKey = "sk-6cf1c1856a1d443b97c7c5b7aa17eeef";
+    QString m_ttsVoice = "Cherry";
+    QString m_ttsModel = "qwen3-tts-flash";
+
+    void downloadAndPlayAudio(const QString& audioUrl);
+    void playLocalAudio(const QString& filePath);
+    cv::Mat extractFeature(const cv::Mat& frame, const FaceDetectInfo& face);
 };
