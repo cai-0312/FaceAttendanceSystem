@@ -68,7 +68,7 @@ void RegisterModule::onFeatureReady(QString name, QByteArray featureBytes) {
     req["feature"] = QString(featureBytes.toBase64());
     // 将组装好的特征网络请求下发至服务器
     NetworkHelper::request(req);
-    QMessageBox::information(m_parentWidget, "录入提交", "员工【" + name + "】的人脸已成功发送至服务器！");
+    QMessageBox::information(m_parentWidget, "录入提交", "员工【" + name + "】的人脸已成功！");
     // 抛出数据变更信号通知系统环境刷新本地内存哈希映射
     emit dataChanged();
 }

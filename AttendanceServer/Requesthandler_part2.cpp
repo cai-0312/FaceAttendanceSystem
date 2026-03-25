@@ -67,11 +67,7 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
     histQ.exec();
     // ── 私聊路由 ──────────────────────────────────────────────
     if (!isGroup) {
-        bool isOnline = false;
-        // 跨线程查询目标用户是否在线
-        QMetaObject::invokeMethod(server, [server, target, &isOnline]() {
-            isOnline = server->isClientOnline(target);
-            }, Qt::BlockingQueuedConnection);
+        bool isOnline = server->isClientOnline(target);
         // 如果目标在线，直接获取其 Socket 并转发原始数据包
         if (isOnline) {
             QTcpSocket* targetSocket = nullptr;
@@ -133,10 +129,7 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
         QString member = groupQ.value(0).toString().trimmed();
         // 排除发送者自己
         if (member == fromUser) continue;
-        bool isOnline = false;
-        QMetaObject::invokeMethod(server, [server, member, &isOnline]() {
-            isOnline = server->isClientOnline(member);
-            }, Qt::BlockingQueuedConnection);
+        bool isOnline = server->isClientOnline(member);
         if (isOnline) {
             // 成员在线，直接通过 Socket 转发
             QTcpSocket* targetSocket = nullptr;
@@ -275,12 +268,7 @@ void RequestHandler::handleReadReceipt(QSqlDatabase& /*db*/, QTcpSocket* /*socke
     const QJsonObject& json, AttendanceServer* server)
 {
     QString toUser = json["to"].toString();
-    QTcpSocket* targetSocket = nullptr;
-    // 跨线程查找目标用户是否在线并获取 socket
-    QMetaObject::invokeMethod(server, [server, toUser, &targetSocket]() {
-        targetSocket = server->getSocketByName(toUser);
-        }, Qt::BlockingQueuedConnection);
-    // 如果发送消息的人仍在线，将该“已读”状态回执原路转发给对方
+    QTcpSocket* targetSocket = server->getSocketByName(toUser);
     if (targetSocket) {
         QByteArray outData = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
         QMetaObject::invokeMethod(targetSocket, [targetSocket, outData]() {
@@ -323,10 +311,7 @@ void RequestHandler::handleBroadcast(QSqlDatabase& db, QTcpSocket* /*socket*/,
     while (allUsersQ.next()) {
         QString member = allUsersQ.value(0).toString().trimmed();
         if (member == fromUser) continue;
-        bool isOnline = false;
-        QMetaObject::invokeMethod(server, [server, member, &isOnline]() {
-            isOnline = server->isClientOnline(member);
-            }, Qt::BlockingQueuedConnection);
+        bool isOnline = server->isClientOnline(member);
         if (isOnline) {
             // 在线则立刻转发
             QTcpSocket* targetSocket = nullptr;
