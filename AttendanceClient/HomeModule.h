@@ -16,6 +16,7 @@
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QValueAxis>
+
 class HomeModule : public QObject
 {
     Q_OBJECT

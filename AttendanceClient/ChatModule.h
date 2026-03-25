@@ -8,6 +8,8 @@
 #include <QLabel>
 #include <QMap>
 #include <QPushButton>
+#include <QTextEdit>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -33,6 +35,8 @@ public slots:
 
 signals:
     void broadcastReceived(QString from, QString msg);                            // 接收到全局广播消息时向外触发该信号
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override;
 private slots:
     void onConnected();                                     // 监听到Socket连接成功，发送初始化登录校验报文
     void onDisconnected();                                 // 监听到Socket断开，进行连接状态清理
@@ -60,7 +64,7 @@ private:
     bool m_isCurrentGroup;                     // 状态标识：当前对话是否处于部门群聊模式
     QStringList m_recentEmojis;               // LRU缓存队列：存储用户最近使用过的表情符号
     QMap<QString, QString> m_chatHistories;      // 内存字典：按照对话目标名称缓存的HTML完整记录
-
+    QTextEdit* m_textEdit;
     void showUserInfo(const QString& userName);
 };
 #endif // CHATMODULE_H

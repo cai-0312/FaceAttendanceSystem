@@ -101,7 +101,7 @@
    <item>
     <widget class="QStackedWidget" name="stackedWidget">
      <property name="currentIndex">
-      <number>3</number>
+      <number>5</number>
      </property>
      <widget class="QWidget" name="page_Home">
       <layout class="QVBoxLayout" name="verticalLayout_Home">
@@ -1236,7 +1236,7 @@
                   <string notr="true">QPushButton { background: #3370FF; color: #FFF; border-radius: 6px; border: none; } QPushButton:hover { background: #4E83FF; }</string>
                  </property>
                  <property name="text">
-                  <string>发 送</string>
+                  <string>发 送 Enter</string>
                  </property>
                 </widget>
                </item>

@@ -114,7 +114,6 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     connect(m_tcpSocket, &QTcpSocket::readyRead, this, &ChatModule::onReadyRead);
     // 绑定界面控件的各种交互操作
     connect(m_contactsList, &QListWidget::currentRowChanged, this, &ChatModule::onContactSwitched);
-    connect(m_lineEdit, &QLineEdit::returnPressed, this, &ChatModule::sendMessage);
     connect(m_btnEmoji, &QPushButton::clicked, this, &ChatModule::onBtnEmojiClicked);
     connect(m_btnFolder, &QPushButton::clicked, this, &ChatModule::onBtnFolderClicked);
     connect(m_btnHistory, &QPushButton::clicked, this, &ChatModule::onBtnHistoryClicked);
@@ -135,6 +134,85 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
             }
         }
         });
+    // ====================== 动态重构输入框：实现自由拉伸 ======================
+    QWidget* mainPage = m_textBrowser->parentWidget(); // 获取聊天大屏的绝对父容器
+    // 2. 创建上下分割器
+    QSplitter* splitter = new QSplitter(Qt::Vertical, mainPage);
+    splitter->setHandleWidth(4);
+    splitter->setStyleSheet("QSplitter::handle { background-color: #DCDFE6; margin: 2px 0px; }");
+
+    // 3. 将聊天大屏替换进分割器
+    if (mainPage && mainPage->layout()) {
+        mainPage->layout()->replaceWidget(m_textBrowser, splitter);
+    }
+
+    // 4. 构建底部容器 (包含工具栏、文本框和悬浮按钮)
+    QWidget* bottomWidget = new QWidget(splitter);
+    bottomWidget->setMinimumHeight(120); // 预留足够空间给拉伸
+    QVBoxLayout* bottomLayout = new QVBoxLayout(bottomWidget);
+    bottomLayout->setContentsMargins(0, 5, 0, 0);
+    bottomLayout->setSpacing(5);
+
+    // ── 顶部工具栏 layout (只放表情、文件夹、历史按钮) ────────────────
+    QHBoxLayout* toolLayout = new QHBoxLayout();
+    toolLayout->addWidget(m_btnEmoji);
+    toolLayout->addWidget(m_btnFolder);
+    toolLayout->addWidget(m_btnHistory);
+    toolLayout->addStretch(); // 弹簧把按钮靠左
+
+    bottomLayout->addLayout(toolLayout); // 添加工具栏
+
+    // ── 🚩 核心修改：文本框与发送按钮的叠加容器 ──
+    QWidget* textEditWrapper = new QWidget(bottomWidget);
+    QGridLayout* wrapperLayout = new QGridLayout(textEditWrapper);
+    wrapperLayout->setContentsMargins(0, 0, 0, 0); // Wrapper本身不需要间距
+    wrapperLayout->setSpacing(0);
+    m_textEdit = new QTextEdit(textEditWrapper);
+    m_textEdit->setPlaceholderText("在此输入消息...");
+    m_textEdit->setStyleSheet(
+        "QTextEdit { border: 1px solid #DCDFE6; border-radius: 6px; padding: 10px 110px 42px 10px; background: white; color: #303133; font-size: 14px; }"
+        "QTextEdit:focus { border-color: #409EFF; }"
+    );
+    m_textEdit->setMinimumHeight(80); // 增加最小高度，使其更协调
+    m_textEdit->installEventFilter(this); // 保持键盘事件拦截 (Enter发送, Shift+Enter换行)
+
+    QPushButton* btnSend = new QPushButton("发送", textEditWrapper);
+    btnSend->setCursor(Qt::PointingHandCursor);
+    btnSend->setToolTip("按 Enter 发送，Shift + Enter 换行");
+    btnSend->setStyleSheet(
+        "QPushButton { background-color: #3370FF; color: white; border-radius: 4px; padding: 8px 16px; font-weight: bold; font-size: 13px; }"
+        "QPushButton:hover { background-color: #4E83FF; }"
+        "QPushButton:pressed { background-color: #2458CC; }"
+    );
+    btnSend->setFixedSize(90, 32);
+    wrapperLayout->addWidget(m_textEdit, 0, 0); 
+    wrapperLayout->addWidget(btnSend, 0, 0, Qt::AlignBottom | Qt::AlignRight);
+    btnSend->setContentsMargins(10, 10, 15, 15);
+    connect(btnSend, &QPushButton::clicked, this, &ChatModule::sendMessage);
+    bottomLayout->addWidget(textEditWrapper, 1); 
+
+    // 5. 组装到分割器
+    splitter->addWidget(m_textBrowser);
+    splitter->addWidget(bottomWidget);
+    splitter->setStretchFactor(0, 8); // 聊天大屏占 80%
+    splitter->setStretchFactor(1, 2); // 输入区占 20%
+
+    // 6. 🚩 终极毁灭旧控件：顺藤摸瓜，连同它外层的带边框壳子一起干掉！
+    QWidget* oldContainer = m_lineEdit;
+    // 向上寻找，直到找到它在 mainPage 下的直接子节点（也就是旧的整个底部栏外壳）
+    while (oldContainer && oldContainer->parentWidget() != mainPage && oldContainer->parentWidget() != nullptr) {
+        oldContainer = oldContainer->parentWidget();
+    }
+    // 彻底摧毁这个旧壳子（极度安全：因为按钮已经被我们提前移走了，所以只会删掉多余的空壳和旧编辑框）
+    if (oldContainer && oldContainer != mainPage && oldContainer != m_textBrowser && oldContainer != splitter) {
+        oldContainer->hide();
+        oldContainer->deleteLater();
+    }
+    else {
+        m_lineEdit->hide();
+        m_lineEdit->deleteLater();
+    }
+    // ===================================================================
 }
 // 初始化 TCP 连接并加载云端联系人列表
 void ChatModule::connectToServer(const QString& ip, quint16 port, const QString& myName) {
@@ -305,7 +383,7 @@ void ChatModule::onContactSwitched(int currentRow) {
 }
 // 处理文本信息的发送及本地 UI 渲染
 void ChatModule::sendMessage() {
-    QString msg = m_lineEdit->text().trimmed();
+    QString msg = m_textEdit->toPlainText().trimmed();
     if (msg.isEmpty() || m_currentTarget.isEmpty()) return;
     // 更新最近使用过的Emoji缓存
     QStringList allEmojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉", "🔥", "💼", "🏢", "☕", "❌", "✔️" };
@@ -330,7 +408,7 @@ void ChatModule::sendMessage() {
     m_chatHistories[m_currentTarget] += myMsgHtml;
     m_textBrowser->setHtml(m_chatHistories[m_currentTarget]);
     m_textBrowser->moveCursor(QTextCursor::End);
-    m_lineEdit->clear();
+    m_textEdit->clear();
     // 通过 TCP 发送 JSON 数据包至服务端
     if (m_tcpSocket->state() == QAbstractSocket::ConnectedState) {
         QJsonObject json;
@@ -522,7 +600,7 @@ void ChatModule::onBtnEmojiClicked() {
     QStringList emojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉", "🔥", "💼", "🏢", "☕", "❌", "✔️" };
     for (const auto& em : emojis) {
         QAction* act = emojiMenu.addAction(em);
-        connect(act, &QAction::triggered, this, [=]() { m_lineEdit->insert(em); });
+        connect(act, &QAction::triggered, this, [=]() { m_textEdit->insertPlainText(em); });
     }
     emojiMenu.setStyleSheet("QMenu { font-size: 20px; padding: 5px; } QMenu::item { padding: 8px; }");
     emojiMenu.exec(QCursor::pos());
@@ -536,7 +614,7 @@ void ChatModule::onBtnHistoryClicked() {
     QMenu historyMenu;
     for (const QString& em : m_recentEmojis) {
         QAction* act = historyMenu.addAction(em);
-        connect(act, &QAction::triggered, this, [=]() { m_lineEdit->insert(em); });
+        connect(act, &QAction::triggered, this, [=]() { m_textEdit->insertPlainText(em); });
     }
     historyMenu.setStyleSheet("QMenu { font-size: 20px; padding: 5px; } QMenu::item { padding: 8px; }");
     historyMenu.exec(QCursor::pos());
@@ -698,4 +776,22 @@ void ChatModule::showUserInfo(const QString& userName)
     connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
 
     dialog.exec();
+}
+bool ChatModule::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == m_textEdit && event->type() == QEvent::KeyPress) {
+        QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+        // 捕捉回车键
+        if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
+            if (keyEvent->modifiers() & Qt::ShiftModifier) {
+                // Shift + Enter：正常换行，放行
+                return false;
+            }
+            else {
+                // 纯 Enter：发送消息并拦截事件（防止光标乱跑）
+                sendMessage();
+                return true;
+            }
+        }
+    }
+    return QObject::eventFilter(obj, event);
 }
