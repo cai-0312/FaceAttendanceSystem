@@ -101,7 +101,7 @@
    <item>
     <widget class="QStackedWidget" name="stackedWidget">
      <property name="currentIndex">
-      <number>7</number>
+      <number>3</number>
      </property>
      <widget class="QWidget" name="page_Home">
       <layout class="QVBoxLayout" name="verticalLayout_Home">
@@ -654,7 +654,7 @@
              <string notr="true">QPushButton { background-color: #00B42A; color: white; border-radius: 6px; border: none; } QPushButton:hover { background-color: #23C343; }</string>
             </property>
             <property name="text">
-             <string>📥 导出报表(CSV)</string>
+             <string>📥 导出考勤明细</string>
             </property>
            </widget>
           </item>
@@ -682,6 +682,9 @@
               </property>
               <property name="gridVisible">
                <bool>true</bool>
+              </property>
+              <property name="verticalHeaderFormat">
+               <enum>QCalendarWidget::VerticalHeaderFormat::NoVerticalHeader</enum>
               </property>
              </widget>
             </item>
@@ -807,7 +810,7 @@
                  <string notr="true">QPushButton { background-color: #3370FF; color: white; border-radius: 16px; border: none; } QPushButton:hover { background-color: #4E83FF; }</string>
                 </property>
                 <property name="text">
-                 <string>搜索</string>
+                 <string>确认</string>
                 </property>
                </widget>
               </item>

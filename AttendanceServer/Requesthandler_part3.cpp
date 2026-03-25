@@ -194,14 +194,15 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
         d = d.addDays(1);
     }
 
-    // 查询所有员工的基本信息
+    // 查询所有员工的基本信息（增加 job_title 字段，并严格屏蔽超管及 admin 账号）
     QSqlQuery userQ(db);
-    userQ.exec("SELECT name, department FROM users WHERE role != '管理员' ORDER BY department, name");
+    userQ.exec("SELECT name, department, job_title FROM users WHERE role != '超级管理员' AND account NOT LIKE '%admin%' ORDER BY department, name");
 
     QJsonArray summary;
     while (userQ.next()) {
         QString empName = userQ.value(0).toString();
         QString empDept = userQ.value(1).toString();
+        QString empJob = userQ.value(2).toString(); 
 
         // 查询该员工当月的所有打卡记录
         QSqlQuery q(db);
@@ -251,6 +252,7 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
         QJsonObject row;
         row["name"] = empName;
         row["dept"] = empDept;
+        row["job_title"] = empJob; 
         row["should_work"] = shouldWork;
         row["actual_work"] = actualWork;
         row["late_count"] = lateCount;
@@ -652,5 +654,117 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
     res["hr_list"] = hrArr;
     res["gm_list"] = gmArr;
     res["mgr_list"] = mgrArr;
+    sendJson(socket, res);
+}
+void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString role = json["role"].toString();
+    QString loginName = json["name"].toString();
+    QString startDate = json["start_date"].toString();
+    QString endDate = json["end_date"].toString();
+
+    QJsonObject res;
+    res["status"] = "fail";
+
+    // 需求 3：零信任模型，服务端实施强制鉴权拦截
+    QString targetDept = "";
+    if (role == "经理") {
+        QSqlQuery dq(db);
+        dq.prepare("SELECT department FROM users WHERE name = :n");
+        dq.bindValue(":n", loginName);
+        if (dq.exec() && dq.next()) {
+            targetDept = dq.value(0).toString();
+        }
+        else {
+            res["msg"] = "未能识别您的所属部门，拦截越权访问。";
+            sendJson(socket, res);
+            return;
+        }
+    }
+    else if (role != "管理员登录" && role != "超级管理员") {
+        res["msg"] = "非管理层角色，拒绝部门级数据查询。";
+        sendJson(socket, res);
+        return;
+    }
+
+    // 计算统计区间内的标准工作日天数
+    int expectedWorkDays = 0;
+    QDate sD = QDate::fromString(startDate, "yyyy-MM-dd");
+    QDate eD = QDate::fromString(endDate, "yyyy-MM-dd");
+    for (QDate d = sD; d <= eD; d = d.addDays(1)) {
+        if (d.dayOfWeek() <= 5) expectedWorkDays++; // 假定双休为标准
+    }
+
+    // 获取需要统计的部门列表
+    QString deptSql = "SELECT department, COUNT(id) FROM users WHERE role != '超级管理员' AND account != 'admin'";
+    if (!targetDept.isEmpty()) {
+        deptSql += QString(" AND department = '%1'").arg(targetDept);
+    }
+    deptSql += " GROUP BY department";
+
+    QJsonArray dataArr;
+    QSqlQuery qDept(db);
+    qDept.exec(deptSql);
+
+    while (qDept.next()) {
+        QString deptName = qDept.value(0).toString();
+        if (deptName.isEmpty()) deptName = "未分配部门";
+        int totalPeople = qDept.value(1).toInt();
+        int expectedManDays = totalPeople * expectedWorkDays;
+
+        // 提取该部门在区间内的所有打卡记录明细进行二次聚合
+        QString recordSql = QString(
+            "SELECT a.status FROM attendance_records a "
+            "JOIN users u ON a.name = u.name "
+            "WHERE u.department = '%1' AND DATE(a.punch_time) BETWEEN '%2' AND '%3'"
+        ).arg(deptName, startDate, endDate);
+
+        QSqlQuery qRec(db);
+        qRec.exec(recordSql);
+
+        int totalLate = 0, totalEarly = 0, totalAbsent = 0, totalLeave = 0, actualNormal = 0;
+        while (qRec.next()) {
+            QString status = qRec.value(0).toString();
+            if (status.contains("迟到")) totalLate++;
+            else if (status.contains("早退")) totalEarly++;
+            else if (status.contains("旷工")) totalAbsent++;
+            else if (status.contains("假")) totalLeave++;
+            else if (status.contains("正常") || status.contains("补卡")) actualNormal++;
+        }
+
+        // 需求 5：严谨计算考核指标，防御除零异常
+        double attendanceRate = 0.0;
+        double abnormalRate = 0.0;
+        double deductHours = 0.0;
+
+        if (expectedManDays > 0) {
+            // 出勤率 = (正常人天 + 迟到/早退按出勤算) / 应出勤人天
+            // 注意：具体公式可依企业制度调整，这里给出通用模板
+            attendanceRate = double(actualNormal + totalLate + totalEarly) / expectedManDays * 100.0;
+
+            // 异常占比 = (迟到 + 早退 + 旷工) / 应出勤人天
+            abnormalRate = double(totalLate + totalEarly + totalAbsent) / expectedManDays * 100.0;
+        }
+
+        // 扣薪工时规则设定 (示例：迟到早退各扣 0.5H，旷工扣 8H)
+        deductHours = (totalLate * 0.5) + (totalEarly * 0.5) + (totalAbsent * 8.0);
+
+        QJsonObject row;
+        row["dept_name"] = deptName;
+        row["total_people"] = totalPeople;
+        row["expected_mandays"] = expectedManDays;
+        row["total_late"] = totalLate;
+        row["total_early"] = totalEarly;
+        row["total_absent"] = totalAbsent;
+        row["total_leave"] = totalLeave;
+        row["abnormal_rate"] = QString::number(abnormalRate, 'f', 1) + "%";
+        row["deduct_hours"] = deductHours;
+        row["attendance_rate"] = QString::number(attendanceRate, 'f', 1) + "%";
+
+        dataArr.append(row);
+    }
+
+    res["status"] = "success";
+    res["data"] = dataArr;
     sendJson(socket, res);
 }

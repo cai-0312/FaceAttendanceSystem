@@ -45,6 +45,7 @@ public:
     static void handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryTodayAttendanceForAi(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    static void handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     // ── 排班规则 ─────────────────────────────────────────────────
     static void handleQueryShiftRule(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleRuleSettings(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);

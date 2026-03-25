@@ -51,11 +51,13 @@ RecordModule::RecordModule(QTableView* tableView, QCalendarWidget* calendar,
     connect(m_calendarWidget, &QCalendarWidget::clicked, this, &RecordModule::onCalendarClicked);
     connect(m_calendarWidget, &QCalendarWidget::currentPageChanged, this, &RecordModule::onCalendarPageChanged);
     if (m_filterBtn) connect(m_filterBtn, &QPushButton::clicked, this, &RecordModule::onFilterClicked);
-    if (m_exportBtn) connect(m_exportBtn, &QPushButton::clicked, this, &RecordModule::onExportClicked);
+    if (m_exportBtn) connect(m_exportBtn, &QPushButton::clicked, this, &RecordModule::onExportPersonal);
     // 初始化时主动同步当前日期的考勤面板及色彩日历矩阵
     m_currentSelectedDate = QDate::currentDate();
     m_calendarWidget->setSelectedDate(m_currentSelectedDate);
     loadMonthlyDataAndColorize(m_currentSelectedDate.year(), m_currentSelectedDate.month());
+    QString currentStyle = m_calendarWidget->styleSheet();
+    m_calendarWidget->setStyleSheet(currentStyle + " QCalendarWidget QAbstractItemView { border: 1px solid #E0E4E8; }");
     onCalendarClicked(m_currentSelectedDate);
 }
 // 动态UI构建：为老旧界面的容器拓展时段筛选控件与请假/申诉工作台导流按钮
@@ -100,33 +102,61 @@ void RecordModule::injectAdvancedUI() {
             lay->insertLayout(tableIndex, filterLayout);
         }
     }
-    // 构造数据导出类扩展按钮
-    m_exportMonthBtn = new QPushButton("导出月度汇总");
-    m_exportMonthBtn->setMinimumHeight(m_exportBtn->minimumHeight());
-    m_exportMonthBtn->setCursor(Qt::PointingHandCursor);
-    m_exportMonthBtn->setStyleSheet("QPushButton { background-color: #FF7D00; color: white; border: none; border-radius: 6px; font-weight: bold; padding: 0 15px; } QPushButton:hover { background-color: #FF9A2E; }");
-    // 构造流程查询扩展按钮
+// 构造“导出中心”下拉菜单父按钮
+    m_exportCenterBtn = new QPushButton("📥 导出中心");
+    m_exportCenterBtn->setMinimumHeight(36);
+    m_exportCenterBtn->setCursor(Qt::PointingHandCursor);
+    m_exportCenterBtn->setStyleSheet(
+        "QPushButton { background-color: #00B42A; color: white; border-radius: 6px; font-weight: bold; padding: 0 15px; }"
+        "QPushButton::menu-indicator { image: none; }" // 隐藏默认的小箭头，保持UI整洁
+        "QPushButton:hover { background-color: #23C343; }"
+    );
+
+    // 实例化原生 QMenu 以保证多分辨率下自动规避屏幕边缘遮挡
+    QMenu* exportMenu = new QMenu(m_exportCenterBtn);
+    exportMenu->setStyleSheet(
+        "QMenu { background-color: white; border: 1px solid #DEE0E3; border-radius: 6px; padding: 4px; box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1); }"
+        "QMenu::item { padding: 10px 25px; color: #1F2329; font-weight: bold; border-radius: 4px; }"
+        "QMenu::item:selected { background-color: #F2F3F5; color: #3370FF; }"
+    );
+
+    QAction* actExportPersonal = new QAction("📄 导出个人明细", this);
+    QAction* actExportDept = new QAction("🏢 导出部门报表", this);
+    QAction* actExportAll = new QAction("📊 导出全员月度汇总", this);
+
+    exportMenu->addAction(actExportPersonal);
+
+    // 权限控制：按层级动态挂载菜单项
+    if (m_role == "管理员登录" || m_role == "经理") {
+        exportMenu->addAction(actExportDept);
+    }
+    if (m_role == "管理员登录") {
+        exportMenu->addAction(actExportAll);
+    }
+
+    m_exportCenterBtn->setMenu(exportMenu);
+
+    // 挂载原有的“我的申请进度”按钮逻辑（保持不变）
     QPushButton* myRequestsBtn = new QPushButton("我的申请进度");
-    myRequestsBtn->setMinimumHeight(m_exportBtn->minimumHeight());
+    myRequestsBtn->setMinimumHeight(36);
     myRequestsBtn->setCursor(Qt::PointingHandCursor);
     myRequestsBtn->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border: none; border-radius: 6px; font-weight: bold; padding: 0 15px; } QPushButton:hover { background-color: #66B1FF; }");
-    // 挂载至底部操作横向流布局中
+
+    // 将新控件挂载至底部操作横向流布局中 (替换掉原来的 m_exportBtn 等)
     if (QWidget* parentE = m_exportBtn->parentWidget()) {
         if (QBoxLayout* lay = qobject_cast<QBoxLayout*>(parentE->layout())) {
             int idx = lay->indexOf(m_exportBtn);
-            lay->insertWidget(idx, m_exportMonthBtn);
-            lay->insertWidget(idx, myRequestsBtn);
+            // 移除或隐藏旧按钮
+            m_exportBtn->hide();
+            lay->insertWidget(idx, m_exportCenterBtn);
+            lay->insertWidget(idx + 1, myRequestsBtn);
         }
     }
-    // 回退普通职工的高阶报表导出权限
-    if (m_role != "管理员登录" && m_role != "经理") {
-        m_exportMonthBtn->hide();
-    }
-    // 为动态生成的控件重新挂载事件调度中心
-    connect(m_statusCombo, &QComboBox::currentTextChanged, this, &RecordModule::onFilterClicked);
-    connect(m_startDateEdit, &QDateEdit::dateChanged, this, &RecordModule::onFilterClicked);
-    connect(m_endDateEdit, &QDateEdit::dateChanged, this, &RecordModule::onFilterClicked);
-    connect(m_exportMonthBtn, &QPushButton::clicked, this, &RecordModule::onExportMonthClicked);
+
+    // 绑定信号槽
+    connect(actExportPersonal, &QAction::triggered, this, &RecordModule::onExportPersonal);
+    connect(actExportDept, &QAction::triggered, this, &RecordModule::onExportDept);
+    connect(actExportAll, &QAction::triggered, this, &RecordModule::onExportAllMonthly);
     // 发起网络请求获取当前用户所发起的请假与申诉流转审批进度
     connect(myRequestsBtn, &QPushButton::clicked, this, [this]() {
         QDialog dlg(m_tableView->window());
@@ -204,6 +234,70 @@ void RecordModule::injectAdvancedUI() {
         layout->addWidget(tabWidget);
         dlg.exec();
         });
+}
+void RecordModule::onExportDept() {
+    QString startDate = m_startDateEdit->date().toString("yyyy-MM-dd");
+    QString endDate = m_endDateEdit->date().toString("yyyy-MM-dd");
+
+    if (m_startDateEdit->date() > m_endDateEdit->date()) {
+        QMessageBox::warning(nullptr, "时间错误", "起始日期不能晚于结束日期！");
+        return;
+    }
+
+    QJsonObject req;
+    req["type"] = "query_dept_summary";
+    req["name"] = m_loginName;
+    req["role"] = m_role;
+    req["start_date"] = startDate;
+    req["end_date"] = endDate;
+
+    QJsonObject res = NetworkHelper::request(req);
+    if (res.isEmpty() || res["status"].toString() != "success") {
+        QMessageBox::warning(nullptr, "请求拦截或失败", res["msg"].toString("无法获取部门报表数据，可能由于权限不足或网络异常。"));
+        return;
+    }
+
+    QJsonArray deptArr = res["data"].toArray();
+    if (deptArr.isEmpty()) {
+        QMessageBox::information(nullptr, "无数据", "所选时间区间内无相关部门考勤数据。");
+        return;
+    }
+
+    QString defaultName = QString("部门考勤宏观报表_%1至%2.csv").arg(startDate, endDate);
+    QString filePath = QFileDialog::getSaveFileName(nullptr, "保存部门报表", defaultName, "CSV Files (*.csv)");
+    if (filePath.isEmpty()) return;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << QString("\xEF\xBB\xBF"); // UTF-8 BOM 头，防止 Excel 乱码
+
+    // 需求 2 & 5：严格对齐的表头维度
+    out << QString("【部门级考勤宏观聚合报表】\n");
+    out << QString("统计区间: %1 至 %2\n").arg(startDate, endDate);
+    out << QString("导出人: %1 (%2)\n\n").arg(m_loginName, m_role);
+
+    out << "部门名称,总计人数,应出勤总人天,迟到总计(次),早退总计(次),旷工总计(天),请假总计(天),异常打卡占比,总计扣薪工时(h),部门平均出勤率\n";
+
+    for (int i = 0; i < deptArr.size(); ++i) {
+        QJsonObject row = deptArr[i].toObject();
+        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10\n")
+            .arg(row["dept_name"].toString())
+            .arg(row["total_people"].toInt())
+            .arg(row["expected_mandays"].toInt())
+            .arg(row["total_late"].toInt())
+            .arg(row["total_early"].toInt())
+            .arg(row["total_absent"].toInt())
+            .arg(row["total_leave"].toInt())
+            .arg(row["abnormal_rate"].toString())
+            .arg(row["deduct_hours"].toDouble(), 0, 'f', 1)
+            .arg(row["attendance_rate"].toString());
+    }
+
+    file.close();
+    QMessageBox::information(nullptr, "导出成功", "部门考勤报表导出完毕！");
 }
 // 供外部父容器主动调度的数据刷新接口
 void RecordModule::refreshData() {
@@ -358,7 +452,7 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
     }
 }
 // 获取当前挂载表格内已加载好的所有序列化明细矩阵，转储为纯文本格式流并输出至本地CSV文件
-void RecordModule::onExportClicked() {
+void RecordModule::onExportPersonal() {
     if (m_tableModel->rowCount() == 0) {
         QMessageBox::warning(nullptr, "提示", "当前表格没有数据，请先筛选出记录再导出。");
         return;
@@ -403,7 +497,7 @@ void RecordModule::onExportClicked() {
         QString("考勤明细已导出！\n共 %1 条记录\n文件：%2").arg(m_tableModel->rowCount()).arg(filePath));
 }
 // 大体量数据的宏观统计导出仅向具有全局总控调度权限的服务端管理系统开放以避免终端堵塞
-void RecordModule::onExportMonthClicked() {
+void RecordModule::onExportAllMonthly() {
     if (m_role != "管理员登录") {
         QMessageBox::warning(nullptr, "权限不足", "仅管理员可导出月度汇总报表。");
         return;
@@ -449,12 +543,13 @@ void RecordModule::onExportMonthClicked() {
     out << QString("导出人员: %1\n").arg(m_loginName);
     out << QString("共 %1 名员工\n\n").arg(summaryArr.size());
 
-    out << "序号,员工姓名,部门,应出勤(天),实出勤(天),迟到(次),早退(次),旷工(天),请假(天),出勤率\n";
+    out << "序号,员工姓名,部门,职务,应出勤(天),实出勤(天),迟到(次),早退(次),旷工(天),请假(天),出勤率\n";
 
     for (int i = 0; i < summaryArr.size(); ++i) {
         QJsonObject row = summaryArr[i].toObject();
         QString name = row["name"].toString();
         QString dept = row["dept"].toString();
+        QString job = row["job_title"].toString(); // 提取职务
         int shouldWork = row["should_work"].toInt();
         int actualWork = row["actual_work"].toInt();
         int lateCount = row["late_count"].toInt();
@@ -465,9 +560,8 @@ void RecordModule::onExportMonthClicked() {
         QString rate = shouldWork > 0
             ? QString::number((double)actualWork / shouldWork * 100.0, 'f', 1) + "%"
             : "0.0%";
-
-        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10\n")
-            .arg(i + 1).arg(name).arg(dept)
+        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11\n")
+            .arg(i + 1).arg(name).arg(dept).arg(job)
             .arg(shouldWork).arg(actualWork)
             .arg(lateCount).arg(earlyCount)
             .arg(absentDays).arg(leaveDays)

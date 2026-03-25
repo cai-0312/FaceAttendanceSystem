@@ -428,6 +428,10 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["query_monthly_summary_all"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryMonthlySummaryAll(db, s, j);
         };
+    // 部门报表路由
+    m_dispatchTable["query_dept_summary"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryDeptSummary(db, s, j);
+        };
     m_dispatchTable["query_attendance_detail"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryAttendanceDetail(db, s, j);
         };

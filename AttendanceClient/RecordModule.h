@@ -17,12 +17,13 @@ public:
     RecordModule(QTableView* tableView, QCalendarWidget* calendar, QLabel* summaryLabel, QLabel* detailDateLabel, QLineEdit* searchNameEdit, QPushButton* filterBtn, QPushButton* exportBtn, QString loginName, QString role, QObject* parent = nullptr); 
     void refreshData();                  // 手动刷新机制：重新拉取日历状态及当前条件下的过滤表格数据
 private slots:
-    void onCalendarClicked(const QDate& date);                                         // 交互响应：处理用户在日历面板上的日期单击事件
-    void onCalendarPageChanged(int year, int month);                                   // 交互响应：处理日历面板翻页事件并重新拉取当月全量考勤宏观数据
-    void onFilterClicked();                                                            // 交互响应：处理多条件综合过滤查询事件
-    void onExportClicked();                                                            // 交互响应：将当前表格中检索出的明细流水导出为本地CSV文件
-    void onExportMonthClicked();                                                       // 交互响应：月度数据宏观导出按钮拦截逻辑
-    void onCustomContextMenu(const QPoint& pos);                                       // 交互响应：处理表格数据右键单击以唤出管理员快捷修改菜单
+    void onCalendarClicked(const QDate& date);
+    void onCalendarPageChanged(int year, int month);
+    void onFilterClicked();
+    void onCustomContextMenu(const QPoint& pos);
+    void onExportPersonal();
+    void onExportDept();
+    void onExportAllMonthly();
 private:
     QTableView* m_tableView;                                         // 界面控件：用于展示考勤打卡流水明细的表格视图
     QCalendarWidget* m_calendarWidget;                                // 界面控件：用于宏观展示当月每日考勤状态颜色的日历面板
@@ -41,5 +42,6 @@ private:
     QPushButton* m_exportMonthBtn;               // 动态控件：针对管理员注入的月度总报表导出按钮
     void loadMonthlyDataAndColorize(int year, int month);                    // 视图渲染：向服务端请求整月打卡状态并利用特定色彩渲染日历单元格
     void injectAdvancedUI();                                                // 视图构建：脱离静态UI文件，通过代码动态注入高级筛选和导航控制面板
+    QPushButton* m_exportCenterBtn; // 导出中心父按钮
 };
 #endif // RECORDMODULE_H
