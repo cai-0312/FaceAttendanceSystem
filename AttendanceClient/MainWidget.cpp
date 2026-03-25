@@ -189,33 +189,26 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
         }
         });
     // 监听子线程人脸处理完成返回的视频帧及识别结果并做后续考勤业务判断
-    connect(aiThread, &FaceProcessThread::frameReady, this, [=](QImage img, QStringList names) {
+    connect(aiThread, &FaceProcessThread::frameReady, this, [=](QImage img, QStringList names, QByteArray currentFeatureBytes) {
         int currentPage = ui->stackedWidget->currentIndex();
         if (currentPage == 1) {
             punchModule->renderFrame(img);
-            QDateTime now = QDateTime::currentDateTime();
+
+            // 实时缓存最新的加密特征，供真正的安全打卡网络发包使用
+            if (!currentFeatureBytes.isEmpty()) {
+                punchModule->updateCurrentFaceFeature(currentFeatureBytes);
+            }
+
+            // 遍历视野内的所有人脸，更新 UI 显示名字
             for (const QString& name : names) {
                 punchModule->updateRecognizedName(name);
-                if (name == "未知访客" || name == "非本人" || name != m_loginName) continue;
-                PunchState& state = m_punchStates[name];
-                // 考勤打卡防抖逻辑判断：连续识别成功3次且距离上次打卡超时方可重新提交
-                if (state.punchCount >= 3) {
-                    if (state.lastPunchTime.isValid() && state.lastPunchTime.secsTo(now) < 120) continue;
-                    else state.punchCount = 0;
-                }
-                if (state.lastPunchTime.isValid() && state.lastPunchTime.secsTo(now) < 5) continue;
-                // 触发打卡网络请求
-                QJsonObject req;
-                req["type"] = "punch_request";
-                req["name"] = name;
-                NetworkHelper::sendAsync(req);
 
-                state.lastPunchTime = now;
-                state.punchCount++;
-
-                if (name == m_loginName) {
-                    QTimer::singleShot(500, punchModule, &PunchModule::loadTodayPunchStatus);
+                // 【严格保留的原有逻辑】：过滤非法人员。如果不是本人，绝不允许进行任何考勤判定！
+                // 界面层会根据这个判定画出红框或报警，此处代码予以保留。
+                if (name == "未知访客" || name == "非本人" || name != m_loginName) {
+                    continue;
                 }
+                // 注意：旧代码中的 m_punchStates 防抖逻辑已移交到底层 aiThread 的 lastPunchTime 冷却机制处理，此处变得极其干净。
             }
         }
         else if (currentPage == 2) {
@@ -225,6 +218,32 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
             }
         }
         });
+    connect(aiThread, &FaceProcessThread::internalPunchSuccess, this, [=](QString name, QDateTime time) {
+        int currentPage = ui->stackedWidget->currentIndex();
+        if (currentPage != 1) return; // 不在打卡页面不发包
+
+        // 【双重保险】：防止底层误发，再次核验必须是本人
+        if (name == "未知访客" || name == "非本人" || name != m_loginName) return;
+
+        // 提取实时加密的特征矩阵字节流
+        QByteArray secureFeature = punchModule->getCurrentFeatureBytes();
+        if (secureFeature.isEmpty()) return;
+
+        // 严格遵循《开题报告》：打卡数据包仅包含加密的 Base64 特征，绝不传递明文姓名或判定结果
+        QJsonObject req;
+        req["type"] = "secure_punch_request";
+        req["feature"] = QString(secureFeature.toBase64());
+
+        // 丢入并发线程池，向服务端发起 1:N 特征盲比对，绝对不卡死 UI 画面
+        QtConcurrent::run([req, this]() {
+            QJsonObject res = NetworkHelper::request(req, 2000, 3000);
+            if (res["status"].toString() == "success") {
+                // 服务端核验特征一致并落库成功，触发前端打卡记录面板刷新
+                QTimer::singleShot(500, punchModule, &PunchModule::loadTodayPunchStatus);
+            }
+            });
+        });
+
     // 监听用户在线状态切换并向服务器上报
     if (ui->comboBox_Status) {
         connect(ui->comboBox_Status, &QComboBox::currentTextChanged, this, &MainWidget::onStatusChanged);

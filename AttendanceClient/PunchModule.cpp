@@ -242,14 +242,20 @@ void PunchModule::onManualPunchClicked() {
             QMessageBox::warning(nullptr, "拒绝", "只能为本人打卡！");
             return;
         }
-        // 鉴权逻辑：确保表单声明身份与摄像头抓取到的人脸身份实时匹配
-        if (claimName == m_currentFaceName && !m_currentFaceName.isEmpty() && m_currentFaceName != "未知访客") {
+        if (claimName == m_currentFaceName && m_currentFaceName != "未知访客" && !m_currentFeatureBytes.isEmpty()) {
+
             QJsonObject req;
-            req["type"] = "punch_request";
-            req["name"] = claimName;
-            NetworkHelper::request(req);
-            speakText("考勤指令已下发");
-            QTimer::singleShot(500, this, &PunchModule::loadTodayPunchStatus);
+            req["type"] = "secure_punch_request"; 
+            req["feature"] = QString(m_currentFeatureBytes.toBase64()); 
+            QJsonObject res = NetworkHelper::request(req);
+            if (res["status"].toString() == "success") {
+                speakText("考勤指令已加密下发，核验通过");
+                QTimer::singleShot(500, this, &PunchModule::loadTodayPunchStatus);
+            }
+            else {
+                QMessageBox::warning(nullptr, "服务端安全拦截", res["msg"].toString());
+                m_cheatCount++;
+            }
         }
         else {
             // 防作弊安全拦截机制处理
@@ -692,7 +698,9 @@ void PunchModule::onTimeUpdate() {
 void PunchModule::renderFrame(const QImage& img) {
     if (m_cameraLabel && !img.isNull()) m_cameraLabel->setPixmap(QPixmap::fromImage(img).scaled(m_cameraLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
-// 供人脸识别层透传人脸辨认结果的绑定接口
+void PunchModule::updateCurrentFaceFeature(const QByteArray& featureBytes) {
+    m_currentFeatureBytes = featureBytes;
+}
 void PunchModule::updateRecognizedName(const QString& name) {
     m_currentFaceName = name;
 }

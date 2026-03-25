@@ -11,13 +11,22 @@
 #include <QTextStream>
 #include <QCoreApplication>
 #include <QRegularExpression>
+#include <QPointer>
+#include <QThread>
 // 将 JSON 转换为紧凑格式并加上换行符，通过跨线程安全发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
-    QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
-    QMetaObject::invokeMethod(socket,
-        [socket, outData]() { socket->write(outData); },
-        Qt::QueuedConnection);
+    if (!socket) return;
+    if (!socket->isValid()) return;
+    if (socket->state() != QAbstractSocket::ConnectedState) return;
+
+    try {
+        QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
+        socket->write(outData);
+        socket->flush();
+    }
+    catch (...) {
+    }
 }
 // 接收并持久化保存 AI 会话的聊天记录（同时落库并生成本地审计文件）
 void RequestHandler::handleAiSaveMessage(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)

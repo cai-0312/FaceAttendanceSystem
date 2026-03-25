@@ -94,10 +94,6 @@ cv::Mat FaceProcessThread::extractFeature(const cv::Mat& frame, const FaceDetect
 }
 
 // ====================== 活体检测（基于RetinaFace 5关键点） ======================
-// pts[0] = 左眼中心, pts[1] = 右眼中心
-// 原理：以眼睛关键点为中心裁切眼部小图，计算连续帧之间的像素绝对差均值，
-//       累积多帧差异后计算标准差。真人自然眨眼会产生明显的帧间波动（标准差>阈值），
-//       照片/屏幕是静态的，帧间差异几乎恒定（标准差≈0）。
 
 cv::Mat FaceProcessThread::cropEyeRegion(const cv::Mat& frame, const cv::Point2f& eyeCenter, float eyeDist) {
     int halfW = (int)(eyeDist * 0.35f);
@@ -226,54 +222,61 @@ void FaceProcessThread::requestAiGreeting(QString name, QDateTime time) {
         });
 }
 
-// ====================== Qwen3-TTS-Flash 语音合成 ======================
-
 void FaceProcessThread::requestQwenTTS(const QString& text) {
     QString apiKey, voice, model;
+    bool ttsOn;
     {
         QMutexLocker locker(&paramMutex);
+        ttsOn = m_ttsEnabled;
         apiKey = m_dashscopeApiKey;
         voice = m_ttsVoice;
         model = m_ttsModel;
     }
 
+    if (!ttsOn) return;
     if (apiKey.isEmpty()) {
-        qWarning() << "[Qwen3-TTS] DashScope API Key not set.";
+        qWarning() << "[Qwen-TTS] API Key not set.";
         return;
     }
 
     QJsonObject input;
     input["text"] = text;
     input["voice"] = voice;
-    input["language_type"] = "Chinese";
 
     QJsonObject body;
     body["model"] = model;
     body["input"] = input;
 
-    QNetworkRequest req(QUrl("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"));
+    QUrl url("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation");
+    QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     req.setRawHeader("Authorization", ("Bearer " + apiKey).toUtf8());
 
     QNetworkReply* reply = m_netManager->post(req, QJsonDocument(body).toJson());
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         if (reply->error() == QNetworkReply::NoError) {
-            QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
-            QString audioUrl = root["output"].toObject()["audio"].toObject()["url"].toString();
-            if (!audioUrl.isEmpty()) {
-                this->downloadAndPlayAudio(audioUrl);
+            QByteArray responseData = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+            if (!doc.isNull()) {
+                QJsonObject root = doc.object();
+                QString audioUrl = root["output"].toObject()["audio"].toObject()["url"].toString();
+                if (!audioUrl.isEmpty()) {
+                    downloadAndPlayAudio(audioUrl);
+                }
+                else {
+                    qWarning() << "[Qwen-TTS] No audio URL in response.";
+                }
             }
             else {
-                qWarning() << "[Qwen3-TTS] Error:" << root["code"].toString() << root["message"].toString();
+                qWarning() << "[Qwen-TTS] Invalid JSON response.";
             }
         }
         else {
-            qWarning() << "[Qwen3-TTS] HTTP failed:" << reply->errorString();
+            qWarning() << "[Qwen-TTS] Network error:" << reply->errorString();
         }
         reply->deleteLater();
         });
 }
-
 // ====================== 音频下载 + 播放 ======================
 
 void FaceProcessThread::downloadAndPlayAudio(const QString& audioUrl) {
@@ -353,6 +356,8 @@ void FaceProcessThread::run() {
 
     struct MatchResult { cv::Rect rect; QString name; bool alive; };
     std::vector<MatchResult> cachedResults;
+    QByteArray currentFeatureBytes;
+    QStringList currentNames;
 
     while (isRunning) {
         cv::Mat frame;
@@ -408,7 +413,10 @@ void FaceProcessThread::run() {
         if (nowMs - lastDetectTime >= 300) {
             std::vector<FaceDetectInfo> faces;
             if (faceEngine) faces = faceEngine->detect(frame, curConf, curNms);
+
             cachedResults.clear();
+            currentFeatureBytes.clear(); 
+            currentNames.clear();        
 
             if (page == 0) {
                 for (const auto& face : faces) {
@@ -425,6 +433,15 @@ void FaceProcessThread::run() {
                             bestName = it->first;
                         }
                     }
+                    if (bestName != "未知访客" && bestName != m_currentUser) {
+                        bestName = "非本人";
+                    }
+
+                    // 👇 新增：提取特征并转存为 Base64 安全上报准备的字节流 👇
+                    if (!feat.empty() && (bestName == m_currentUser || currentFeatureBytes.isEmpty())) {
+                        currentFeatureBytes = QByteArray((const char*)feat.data, feat.total() * feat.elemSize());
+                    }
+                    currentNames.append(bestName);
 
                     // 陌生人告警
                     if (bestName == "未知访客") {
@@ -491,7 +508,8 @@ void FaceProcessThread::run() {
             painter.drawText(res.rect.x, res.rect.y - 10, label);
         }
         painter.end();
-        emit frameReady(finalImg, { m_currentUser });
+        emit frameReady(finalImg, currentNames.isEmpty() ? QStringList{ m_currentUser } : currentNames, currentFeatureBytes);
+
         QThread::msleep(33);
     }
     capture.release();

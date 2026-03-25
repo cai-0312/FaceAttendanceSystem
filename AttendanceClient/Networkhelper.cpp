@@ -2,90 +2,91 @@
 #include <QTcpSocket>
 #include <QThread>
 #include <QtConcurrent>
-// 初始化全局静态变量：默认服务器IP地址与通信端口号
+#include <QMutexLocker>
+
 QString NetworkHelper::s_serverIp = QStringLiteral("127.0.0.1");
 quint16 NetworkHelper::s_serverPort = 9999;
-// 全局网络配置：配置目标服务器的IP地址与通信端口
+QMutex  NetworkHelper::s_requestMutex;
+
 void NetworkHelper::setServer(const QString& ip, quint16 port)
 {
     s_serverIp = ip;
     s_serverPort = port;
 }
-// 获取服务器IP：返回当前系统配置的目标服务器IP地址
-QString NetworkHelper::serverIp() {
-    return s_serverIp;
-}
-// 获取服务器端口：返回当前系统配置的目标服务器端口号
-quint16 NetworkHelper::serverPort() {
-    return s_serverPort;
-}
-// 同步请求核心机制：发起TCP连接，阻塞发送JSON请求体，并等待解析完整的JSON响应数据
-QJsonObject NetworkHelper::request(const QJsonObject& jsonRequest, int connectTimeout, int readTimeout)
+
+QString NetworkHelper::serverIp() { return s_serverIp; }
+quint16 NetworkHelper::serverPort() { return s_serverPort; }
+
+// ==================== 内部工具函数 ====================
+// 完整的连接生命周期：连接 → 发送 → 等响应 → 读取 → 优雅断开
+// 每个调用独立创建socket，不复用，但确保服务端处理完毕后才断开
+static QJsonObject doRequest(const QString& ip, quint16 port,
+    const QJsonObject& jsonRequest,
+    int connectTimeout, int readTimeout)
 {
     QTcpSocket socket;
-    socket.connectToHost(s_serverIp, s_serverPort);
-    QJsonObject responseJson;
-    QString reqType = jsonRequest["type"].toString();
-    // 等待建立TCP连接，超时则直接返回空对象
+    socket.connectToHost(ip, port);
     if (!socket.waitForConnected(connectTimeout)) {
-        return responseJson;
+        return QJsonObject(); // 返回空
     }
-    // 将 JSON 请求体序列化并追加换行符作为数据包边界，写入套接字底层缓冲区
+
+    // 发送请求
     QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
     socket.write(block);
-    socket.waitForBytesWritten(2000);
+    socket.flush(); // 🚩 用 flush 替代 waitForBytesWritten，极大减少事件循环阻塞
+
+    QJsonObject responseJson;
     QByteArray responseData;
-    // 核心读取循环：只要没有超时断开，就持续读取底层数据，直到接收到完整的包尾换行符
-    while (socket.waitForReadyRead(readTimeout)) {
+
+    // 🚩 核心修复：绝对安全的同步读取循环！先处理缓冲区已有数据，再等待新数据
+    while (true) {
         responseData += socket.readAll();
-        // 只要数据包包含了服务端发来的 \n 结束符，就代表接收完成
-        if (responseData.contains("\n")) {
-            QJsonDocument checkDoc = QJsonDocument::fromJson(responseData.trimmed());
-            if (!checkDoc.isNull() && checkDoc.isObject()) {
-                responseJson = checkDoc.object();
-                break;
+        if (responseData.contains('\n')) {
+            QJsonDocument doc = QJsonDocument::fromJson(responseData.trimmed());
+            if (!doc.isNull() && doc.isObject()) {
+                responseJson = doc.object();
             }
+            break; // 成功拿到完整包，跳出
+        }
+
+        // 只有在数据还不完整时，才进入等待
+        if (!socket.waitForReadyRead(readTimeout)) {
+            break; // 真正超时，跳出
         }
     }
-    // 释放资源：断开当前短连接套接字
+
     socket.disconnectFromHost();
+    if (socket.state() != QAbstractSocket::UnconnectedState) {
+        socket.waitForDisconnected(2000);
+    }
+
     return responseJson;
 }
-// 异步发送机制：利用QtConcurrent开启后台独立线程完成网络投递，不阻塞主线程且不等待响应
+
+// ==================== 同步请求 ====================
+// 线程安全：用互斥锁保护，防止多个线程同时创建大量临时连接
+QJsonObject NetworkHelper::request(const QJsonObject& jsonRequest, int connectTimeout, int readTimeout)
+{
+    QMutexLocker locker(&s_requestMutex);
+    return doRequest(s_serverIp, s_serverPort, jsonRequest, connectTimeout, readTimeout);
+}
+
+// ==================== 异步发送 ====================
+// 在后台线程中执行完整的请求-响应周期，不阻塞主线程
 void NetworkHelper::sendAsync(const QJsonObject& jsonRequest)
 {
     QString ip = s_serverIp;
     quint16 port = s_serverPort;
-    QString reqType = jsonRequest["type"].toString();
-    // 开启独立线程作用域进行网络 IO，避免阻塞界面主线程
-    QtConcurrent::run([jsonRequest, ip, port, reqType]() {
-        QTcpSocket socket;
-        socket.connectToHost(ip, port);
-        // 尝试连接并在成功后迅速写入数据
-        if (socket.waitForConnected(1500)) {
-            QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-            socket.write(block);
-            socket.waitForBytesWritten(1000);
-            socket.disconnectFromHost();
-        }
+
+    QtConcurrent::run([jsonRequest, ip, port]() {
+        // 后台线程中也使用完整的请求-响应周期
+        doRequest(ip, port, jsonRequest, 2000, 3000);
         });
 }
-// 可靠同步发送机制：阻塞当前线程，确保大体积JSON数据完整写入底层网卡发送缓冲区后再断开连接
+
+// ==================== 可靠同步发送 ====================
 void NetworkHelper::sendReliable(const QJsonObject& jsonRequest)
 {
-    QTcpSocket socket;
-    socket.connectToHost(s_serverIp, s_serverPort);
-    // 等待连接建立成功
-    if (socket.waitForConnected(1500)) {
-        QByteArray block = QJsonDocument(jsonRequest).toJson(QJsonDocument::Compact) + "\n";
-        socket.write(block);
-        // 循环等待，确保缓冲区内的所有高维特征或文件数据均被物理清空
-        while (socket.bytesToWrite() > 0) {
-            socket.waitForBytesWritten(100);
-        }
-        // 强制刷新缓冲区
-        socket.flush();
-        QThread::msleep(300); // 略微延时以保证底层协议栈的数据物理送达
-        socket.disconnectFromHost();
-    }
+    QMutexLocker locker(&s_requestMutex);
+    doRequest(s_serverIp, s_serverPort, jsonRequest, 2000, 5000);
 }

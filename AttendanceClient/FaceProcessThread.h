@@ -78,7 +78,7 @@ protected:
     void run() override;
 
 signals:
-    void frameReady(QImage img, QStringList recognizedNames);
+    void frameReady(QImage img, QStringList names, QByteArray currentFeature);
     void registerFeatureReady(QString name, QByteArray featureBytes);
     void registerFailed(QString errorMsg);
     void internalPunchSuccess(QString name, QDateTime time);
@@ -120,7 +120,7 @@ private:
 
     QString m_deepseekApiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
 
-    QString m_dashscopeApiKey = "sk-6cf1c1856a1d443b97c7c5b7aa17eeef";
+    QString m_dashscopeApiKey = "sk-5f248bb37a764211a8d3c21c75c262ee";
     QString m_ttsVoice = "Cherry";
     QString m_ttsModel = "qwen3-tts-flash";
 

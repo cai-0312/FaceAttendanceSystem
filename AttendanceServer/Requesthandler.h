@@ -14,6 +14,7 @@ public:
     static void handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handleVerifyUserForRegistration(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    static void handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     // ── 登录 / 在线状态 ───────────────────────────────────────────
     static void handleLogin(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handleStatusUpdate(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
@@ -67,6 +68,8 @@ public:
     static void handleSearchAiHistory(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryAiChatHistory(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleAiAuditFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
+    // ── 定时业务脚本 ──────────────────────────────────────────────
+    static void executeDailyAbsentCheck(QSqlDatabase& db, AttendanceServer* server); // 每日隐性旷工盘点逻辑
 };
 
 #endif // REQUESTHANDLER_H

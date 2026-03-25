@@ -23,6 +23,7 @@ public:
     HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName, QObject* parent = nullptr);         // 初始化首页大屏模块，接收父级布局容器
     ~HomeModule();                                          // 释放首页模块相关资源
     void refreshDashboard();                                // 发起网络请求刷新大屏各项统计数据
+    
 signals:
     void requestQuickLeave();                               // 触发快捷请假流程信号
     void requestQuickAppeal();                             // 触发快捷异常申诉信号
@@ -42,5 +43,6 @@ private:
     QChartView* createPieChart(const QJsonArray& data);                                                                  // 根据考勤状态分布数据动态生成饼状图
     QChartView* createBarChart(const QJsonArray& data);                                                                  // 根据各部门异常统计数据动态生成柱状图
     QChartView* createLineChart(const QJsonArray& data);                                                                 // 根据近期出勤趋势数据动态生成折线图
+    
 };
 #endif // HOMEMODULE_H

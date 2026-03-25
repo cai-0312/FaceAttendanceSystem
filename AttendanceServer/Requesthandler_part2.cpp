@@ -5,13 +5,21 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPointer>
+#include <QThread>
 // 将 JSON 转为紧凑格式，加上换行符后跨线程发送，处理 TCP 粘包
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
-    QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
-    QMetaObject::invokeMethod(socket,
-        [socket, outData]() { socket->write(outData); },
-        Qt::QueuedConnection);
+    if (!socket) return;
+    if (!socket->isValid()) return;
+    if (socket->state() != QAbstractSocket::ConnectedState) return;
+    try {
+        QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
+        socket->write(outData);
+        socket->flush();
+    }
+    catch (...) {
+    }
 }
 // 解码 Base64 文本
 static QString decodeContent(const QString& raw)

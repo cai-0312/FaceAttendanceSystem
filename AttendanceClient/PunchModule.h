@@ -15,6 +15,8 @@ public:
     void renderFrame(const QImage& img);                                          // 视频流渲染：接收底层线程处理完毕的图像帧并更新至UI展示组件
     void updateRecognizedName(const QString& name);                                // 人脸状态同步：接收底层识别计算出的人员姓名，用于辅助后续的打卡防抖判断
     void initRulesTable();                                                         // 初始化方法：预留的排班规则表初始化扩展接口
+    void updateCurrentFaceFeature(const QByteArray& featureBytes); //接收底层算法传递的特征字节流// 暴露当前缓存的人脸特征给外部网络发包使用
+    QByteArray getCurrentFeatureBytes() const { return m_currentFeatureBytes; }
 public slots:
     void onLeaveRequestClicked();                                                  // 界面交互：响应快捷请假按钮，弹出申请表单并校验审批流
     void onLeaveApproveClicked();                                                  // 界面交互：响应请假审批按钮，拉取待办列表并执行审批授权
@@ -52,5 +54,6 @@ private:
     int m_absentMins;                                                // 规则变量：判定为旷工的严重迟到分钟阈值
     int m_cheatCount;                                                // 安全变量：记录因人脸不匹配造成的连续异常请求次数
     QTimer* m_timer;                                                // 核心变量：用于驱动界面时钟更新的循环定时器
+    QByteArray m_currentFeatureBytes;                               // 缓存当前画面中锁定人脸的特征向量
 };
 #endif // PUNCHMODULE_H

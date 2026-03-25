@@ -1,9 +1,10 @@
 #include "AttendanceServer.h"
 #include "ServerLogin.h"  // 引入登录界面的头文件
 #include <QtWidgets/QApplication>
-
+#include <QSslSocket>
 int main(int argc, char* argv[])
 {
+    
     QApplication app(argc, argv);
     // 实例化主窗口和登录窗口
     AttendanceServer mainWindow;
@@ -14,6 +15,7 @@ int main(int argc, char* argv[])
         loginWindow.close();  // 关闭并销毁登录窗口
         });
     // 程序启动时，只显示登录窗口
+
     loginWindow.show();
 
     return app.exec();

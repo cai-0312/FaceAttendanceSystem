@@ -1,6 +1,6 @@
 #include "RequestHandler.h"
 #include "AttendanceServer.h"
-
+#include <opencv2/opencv.hpp>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QJsonDocument>
@@ -9,66 +9,145 @@
 #include <QDateTime>
 #include <QDate>
 #include <QTime>
+#include <QPointer>
+#include <QThread>
 // JSON 转换为紧凑格式并加上换行符，通过跨线程安全发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
-    QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
-    QMetaObject::invokeMethod(socket,
-        [socket, outData]() { socket->write(outData); },
-        Qt::QueuedConnection);
+    if (!socket) return;
+    if (!socket->isValid()) return;
+    if (socket->state() != QAbstractSocket::ConnectedState) return;
+    try {
+        QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
+        socket->write(outData);
+        socket->flush();
+    }
+    catch (...) {
+        // 吞掉所有异常，防止因socket底层已被回收导致的崩溃
+    }
 }
-// 处理客户端发起的正常打卡请求
-void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* /*socket*/,
+void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
-    QString   name = json["name"].toString();
-    // 强制使用服务器本地时间作为打卡时间，防止客户端篡改本地时间作弊
+    if (!socket || !server) return;
+
+    QString name = json["name"].toString();
     QDateTime serverNow = QDateTime::currentDateTime();
-    QString   timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
-    QTime     currentTime = serverNow.time();
-    // 1. 查询该员工所属的部门
+    QString timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
+    QTime currentTime = serverNow.time();
+
+    // 1. 查询部门
     QString dept = "全部";
     QSqlQuery dq(db);
     dq.prepare("SELECT department FROM users WHERE name = :n");
     dq.bindValue(":n", name);
-    if (dq.exec() && dq.next()) dept = dq.value(0).toString();
-    // 2. 读取排班规则（优先匹配具体部门的规则，如果没有则使用"全部"的通用规则）
+    if (dq.exec() && dq.next()) {
+        QString resDept = dq.value(0).toString();
+        if (!resDept.isEmpty()) dept = resDept;
+    }
+
+    // 2. 查询排班规则
     QTime startTime(9, 0), endTime(18, 0);
-    int   absentMins = 120; // 默认超过 120 分钟算旷工
+    int absentMins = 120;
+
     QSqlQuery sq(db);
     sq.prepare("SELECT start_time, end_time, absent_mins FROM shift_rules "
         "WHERE dept = :d OR dept = '全部' ORDER BY (dept = :d) DESC LIMIT 1");
     sq.bindValue(":d", dept);
+
     if (sq.exec() && sq.next()) {
-        startTime = sq.value(0).toTime();
-        endTime = sq.value(1).toTime();
+        // 🚩 核心修复 1：强制转为字符串并显式解析，防止 MySQL 驱动返回默认 00:00:00
+        QString sStr = sq.value(0).toString();
+        QString eStr = sq.value(1).toString();
+
+        QTime pStart = QTime::fromString(sStr, "HH:mm:ss");
+        if (!pStart.isValid()) pStart = QTime::fromString(sStr, "HH:mm");
+        if (pStart.isValid()) startTime = pStart;
+
+        QTime pEnd = QTime::fromString(eStr, "HH:mm:ss");
+        if (!pEnd.isValid()) pEnd = QTime::fromString(eStr, "HH:mm");
+        if (pEnd.isValid()) endTime = pEnd;
+
         absentMins = sq.value(2).toInt();
+        if (absentMins <= 0) absentMins = 120;
     }
-    // 3. 判定当前打卡的考勤状态
-    QString status = "正常打卡";
-    // 简单逻辑：以中午 12 点为界限区分上下班打卡（可根据实际需求优化）
-    if (currentTime < QTime(12, 0)) {
-        // 判定上班打卡是否迟到或旷工
-        int secsLate = startTime.secsTo(currentTime);
-        if (secsLate > 0)
-            status = (secsLate > absentMins * 60) ? "旷工" : "迟到";
+
+    // ---------------------------------------------------------
+    // 🚩 核心修复 2：将绝对时间改为“距离基准线的偏移秒数”，彻底终结跨午夜 Bug
+    // ---------------------------------------------------------
+
+    int secsFromStart = startTime.secsTo(currentTime);
+    // 跨天标准化：保证相对秒数在 -12 小时 到 +12 小时内
+    if (secsFromStart < -12 * 3600) secsFromStart += 24 * 3600;
+    if (secsFromStart > 12 * 3600)  secsFromStart -= 24 * 3600;
+
+    int secsFromEnd = endTime.secsTo(currentTime);
+    if (secsFromEnd < -12 * 3600) secsFromEnd += 24 * 3600;
+    if (secsFromEnd > 12 * 3600)  secsFromEnd -= 24 * 3600;
+
+    // 定义相对边界 (秒)
+    int mWinStartSecs = -4 * 3600;                   // 上班前 4小时内
+    int mWinEndSecs = (absentMins + 30) * 60;      // 上班后 旷工时限+30分钟 内
+
+    int eWinStartSecs = -3 * 3600;                   // 下班前 3小时内
+    int eWinEndSecs = 6 * 3600;                    // 下班后 6小时内
+
+    QString status = "异常打卡";
+    bool validWindow = false;
+
+    // 早班判定区
+    if (secsFromStart >= mWinStartSecs && secsFromStart <= mWinEndSecs) {
+        validWindow = true;
+        if (secsFromStart <= 0) {
+            status = "正常(上班)";
+        }
+        else {
+            int minsLate = secsFromStart / 60;
+            status = (minsLate > absentMins) ? "旷工(迟到超限)" : "迟到";
+        }
     }
-    else {
-        // 判定下班打卡是否早退
-        status = (currentTime < endTime) ? "早退" : "正常下班";
+    // 晚班判定区
+    else if (secsFromEnd >= eWinStartSecs && secsFromEnd <= eWinEndSecs) {
+        validWindow = true;
+        if (secsFromEnd >= 0) {
+            status = "正常(下班)";
+        }
+        else {
+            status = "早退";
+        }
     }
-    // 4. 将考勤记录落库
+
+    // 时间窗拦截
+    if (!validWindow) {
+        QJsonObject res;
+        res["status"] = "fail";
+        res["msg"] = "当前不在有效的上下班打卡时间窗内！";
+        sendJson(socket, res);
+
+        QMetaObject::invokeMethod(server, [server, name, timeStr]() {
+            if (server) server->logMessage(QString("<font color='#E6A23C'>[拦截] 员工 [%1] 在非打卡时段 (%2) 尝试打卡。</font>").arg(name, timeStr));
+            }, Qt::QueuedConnection);
+        return;
+    }
+
+    // 4. 合法记录落库
     QSqlQuery insertQuery(db);
     insertQuery.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (:n, :t, :s)");
     insertQuery.bindValue(":n", name);
     insertQuery.bindValue(":t", timeStr);
     insertQuery.bindValue(":s", status);
+
     if (insertQuery.exec()) {
-        // 记录系统日志并刷新服务端首页的全局考勤数据
+        QJsonObject res;
+        res["status"] = "success";
+        res["msg"] = "打卡成功：" + status;
+        sendJson(socket, res);
+
         QMetaObject::invokeMethod(server, [server, name, status]() {
-            server->logMessage(QString("<font color='#00B42A'>考勤中心: 成功记录 [%1] 的考勤: %2</font>")
-                .arg(name, status));
-            server->loadGlobalRecords();
+            if (server) {
+                server->logMessage(QString("<font color='#00B42A'>考勤成功: [%1] - %2</font>").arg(name, status));
+                server->loadGlobalRecords();
+            }
             }, Qt::QueuedConnection);
     }
 }
@@ -767,4 +846,102 @@ void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket
     res["status"] = "success";
     res["data"] = dataArr;
     sendJson(socket, res);
+}
+// 执行每日隐性旷工盘点批处理 (业务逻辑层)
+void RequestHandler::executeDailyAbsentCheck(QSqlDatabase& db, AttendanceServer* server)
+{
+    QSqlQuery query(db);
+    QString sql =
+        "INSERT INTO attendance_records (name, punch_time, status) "
+        "SELECT u.name, NOW(), '旷工(缺卡)' "
+        "FROM users u "
+        "WHERE u.role != '超级管理员' AND u.account NOT LIKE '%admin%' "
+        "  AND u.name NOT IN (SELECT name FROM attendance_records WHERE DATE(punch_time) = CURDATE()) "
+        "  AND u.name NOT IN (SELECT applicant FROM leave_requests WHERE status='已批准' AND CURDATE() BETWEEN DATE(start_time) AND DATE(end_time))";
+
+    if (query.exec(sql)) {
+        // 业务盘点成功后，调用服务端实例打印日志并刷新全局视图
+        QMetaObject::invokeMethod(server, [server]() {
+            server->logMessage("<font color='red'>系统通知: 每日隐性旷工盘点业务已执行完毕，缺卡人员已记为旷工。</font>");
+            server->loadGlobalRecords();
+            }, Qt::QueuedConnection);
+    }
+}
+void RequestHandler::handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* socket,
+    const QJsonObject& json, AttendanceServer* server)
+{
+    // 【基础安全检查】
+    if (!socket || !socket->isValid() || socket->state() != QAbstractSocket::ConnectedState) return;
+    if (!server) return;
+
+    QString base64Feature = json["feature"].toString();
+    if (base64Feature.isEmpty()) return;
+
+    // 1. 安全解码客户端发来的 Base64 特征
+    QByteArray incomingBytes = QByteArray::fromBase64(base64Feature.toUtf8());
+
+    // 【严苛校验】：ArcFace w600k_r50 提取的特征必须是 512 个 float (2048 字节)
+    const int EXPECTED_FEATURE_BYTES = 512 * sizeof(float); // 2048
+    if (incomingBytes.size() != EXPECTED_FEATURE_BYTES) {
+        QJsonObject res;
+        res["status"] = "fail";
+        res["msg"] = "安全拦截：非法或损坏的人脸特征包！";
+        sendJson(socket, res);
+        return;
+    }
+
+    // 2. 深度拷贝特征到安全的 OpenCV 矩阵
+    cv::Mat incomingMat(1, 512, CV_32F);
+    memcpy(incomingMat.data, incomingBytes.constData(), EXPECTED_FEATURE_BYTES);
+
+    // 3. 服务端内存级 1:N 特征检索
+    QString matchedName = "";
+    double maxSim = 0.0;
+    const double THRESHOLD = 0.6; // 余弦相似度阈值
+
+    QSqlQuery q(db);
+    q.exec("SELECT name, feature FROM users WHERE feature IS NOT NULL");
+    while (q.next()) {
+        QString dbName = q.value(0).toString();
+        QByteArray dbFeatureBytes = q.value(1).toByteArray();
+
+        // 校验数据库里读出的特征长度是否合法
+        if (dbFeatureBytes.size() != EXPECTED_FEATURE_BYTES) continue;
+
+        // 深度拷贝数据库特征到安全的 OpenCV 矩阵
+        cv::Mat dbMat(1, 512, CV_32F);
+        memcpy(dbMat.data, dbFeatureBytes.constData(), EXPECTED_FEATURE_BYTES);
+
+        // 计算点乘（余弦相似度）
+        double sim = incomingMat.dot(dbMat);
+
+        if (sim > maxSim) {
+            maxSim = sim;
+            matchedName = dbName;
+        }
+    }
+
+    // 4. 权威拦截判定
+    if (matchedName.isEmpty() || maxSim < THRESHOLD) {
+        QJsonObject res;
+        res["status"] = "fail";
+        res["msg"] = QString("未识别到匹配员工，或相似度过低 (%1)").arg(maxSim);
+        sendJson(socket, res);
+
+        QMetaObject::invokeMethod(server, [server]() {
+            if (server) server->logMessage("<font color='red'>[防伪拦截] 打卡请求被拒绝，特征匹配失败！</font>");
+            }, Qt::QueuedConnection);
+        return;
+    }
+
+    // 5. 身份核验通过，利用服务端生成的权威身份落库
+    QMetaObject::invokeMethod(server, [server, matchedName, maxSim]() {
+        if (server) server->logMessage(QString("<font color='green'>[特征核验通过] 确认为 [%1]，相似度: %2</font>").arg(matchedName).arg(maxSim));
+        }, Qt::QueuedConnection);
+
+    // 构造内部信任 JSON 丢给落库函数
+    QJsonObject secureJson;
+    secureJson["name"] = matchedName;
+
+    handlePunchRequest(db, socket, secureJson, server);
 }

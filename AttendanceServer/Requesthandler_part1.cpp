@@ -14,16 +14,21 @@
 #include <QTextStream>
 #include <QCoreApplication>
 #include <QRegularExpression>
+#include <QPointer>
+#include <QThread>
 // 发送 JSON 回包（线程安全）
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
-    QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
-    QMetaObject::invokeMethod(socket, [socket, outData]() {
-        if (socket->state() == QAbstractSocket::ConnectedState) {
-            socket->write(outData);
-            socket->flush(); 
-        }
-        }, Qt::QueuedConnection);
+    if (!socket) return;
+    if (!socket->isValid()) return;
+    if (socket->state() != QAbstractSocket::ConnectedState) return;
+    try {
+        QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
+        socket->write(outData);
+        socket->flush();
+    }
+    catch (...) {
+    }
 }
 // 保护聊天内容
 static QString decodeContent(const QString& raw)

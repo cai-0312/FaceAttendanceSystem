@@ -29,6 +29,7 @@ public:
     void registerClient(QTcpSocket* socket, const QString& name, const QString& dept, const QString& jobTitle, const QString& ip); // 终端注册：将通过安全鉴权的新接入客户端实例写入内存级路由表
     bool isClientOnline(const QString& name) const;                                                              // 状态探针：根据指定的员工姓名查询其客户端是否处于活跃在线状态
     QTcpSocket* getSocketByName(const QString& name) const;                                                      // 路由寻址：根据指定的员工姓名检索并返回其绑定的TCP物理通信套接字
+
 private slots:
     void on_btn_StartServer_clicked();                                                                           // 交互响应：触发TCP核心路由引擎绑定指定端口并开启侦听模式
     void on_btn_StopServer_clicked();                                                                            // 交互响应：安全关闭TCP监听并强制断开所有已连接的客户端套接字

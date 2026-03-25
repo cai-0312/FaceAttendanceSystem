@@ -27,6 +27,18 @@ AttendanceServer::AttendanceServer(QWidget* parent)
     // 构建视图树、绑定底层交互模型及指令分发表
     initUI();
     initDispatchTable();
+    QTimer* dailyCheckTimer = new QTimer(this);
+    connect(dailyCheckTimer, &QTimer::timeout, this, [this]() {
+        QTime currentTime = QTime::currentTime();
+        if (currentTime.hour() == 23 && currentTime.minute() == 58) {
+            // 获取当前线程的数据库句柄，交由 RequestHandler 处理业务
+            QSqlDatabase db = QSqlDatabase::database("server_db_connection");
+            if (db.isOpen()) {
+                RequestHandler::executeDailyAbsentCheck(db, this);
+            }
+        }
+        });
+    dailyCheckTimer->start(60000);
 }
 
 AttendanceServer::~AttendanceServer()
@@ -144,6 +156,7 @@ void AttendanceServer::on_btn_StopServer_clicked()
 void AttendanceServer::onNewConnection()
 {
     QTcpSocket* socket = m_tcpServer->nextPendingConnection();
+    socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
     connect(socket, &QTcpSocket::readyRead, this, &AttendanceServer::onReadyRead);
     connect(socket, &QTcpSocket::disconnected, this, &AttendanceServer::onClientDisconnected);
     logMessage(QString("收到新的物理连接请求: %1").arg(socket->peerAddress().toString()));
@@ -155,7 +168,12 @@ void AttendanceServer::onClientDisconnected()
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket) return;
 
-    // 同步清理关联套接字的读写缓冲区，防止产生悬空指针与内存泄漏污染
+    // 立即断开所有信号连接，防止后续排队的信号触发
+    socket->disconnect();
+
+    // 强制中止底层连接（比disconnectFromHost更彻底）
+    socket->abort();
+
     if (m_buffers.contains(socket)) {
         m_buffers.remove(socket);
     }
@@ -164,6 +182,9 @@ void AttendanceServer::onClientDisconnected()
         QString name = m_clients[socket].name;
         logMessage(QString("<font color='#F56C6C'>节点掉线: [%1] 已断开连接。</font>").arg(name));
         m_nameToSocket.remove(name);
+        if (m_nameToSocket.value(name) == socket) {
+            m_nameToSocket.remove(name);
+        }
         m_clients.remove(socket);
         updateOnlineUsersTable();
     }
@@ -174,58 +195,43 @@ void AttendanceServer::onClientDisconnected()
 void AttendanceServer::onReadyRead()
 {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket) return;
-
-    // 利用互斥锁保证在高并发流量下多字节流读写追加的并发安全性
-    static QMutex bufferMutex;
-    QMutexLocker locker(&bufferMutex);
+    //if (!socket || !socket->isValid()) return;
 
     m_buffers[socket].append(socket->readAll());
 
-    while (m_buffers[socket].contains('\n')) {
+    while (m_buffers.contains(socket) && m_buffers[socket].contains('\n')) {
         int pos = m_buffers[socket].indexOf('\n');
         QByteArray data = m_buffers[socket].left(pos).trimmed();
         m_buffers[socket].remove(0, pos + 1);
 
         if (data.isEmpty()) continue;
 
-        // 将组装完毕的完整协议报文投递至底层并发线程池进行无阻塞的业务级路由转发
-        QtConcurrent::run([this, socket, data]() {
-            QJsonDocument doc = QJsonDocument::fromJson(data);
-            if (doc.isNull() || !doc.isObject()) {
-                return;
-            }
+        //// 每轮循环重新检查socket状态
+        //if (!socket->isValid() || socket->state() != QAbstractSocket::ConnectedState) {
+        //    m_buffers.remove(socket);
+        //    return;
+        //}
 
-            QJsonObject json = doc.object();
+        QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (doc.isNull() || !doc.isObject()) continue;
+        QJsonObject json = doc.object();
 
-            // 数据完整性校验：拦截未携带核心身份标识字段的异常改档报文，确保数据库层修改安全
-            if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) {
-                return;
-            }
+        if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) {
+            continue;
+        }
 
-            QString type = json["type"].toString();
-            QString lookupKey = type.startsWith("group_") ? "chat" : type;
+        QString type = json["type"].toString();
+        QString lookupKey = type.startsWith("group_") ? "chat" : type;
 
-            auto it = m_dispatchTable.constFind(lookupKey);
-            if (it == m_dispatchTable.constEnd()) {
-                return;
-            }
+        auto it = m_dispatchTable.constFind(lookupKey);
+        if (it == m_dispatchTable.constEnd()) continue;
 
-            // 获取线程独占的数据库代理通道，执行基于多例程并行的存储介质写入调度
-            QString connName = DatabaseManager::makeThreadConnName();
-            if (!DatabaseManager::openThreadConnection(connName)) {
-                QSqlDatabase::removeDatabase(connName);
-                return;
-            }
-            {
-                QSqlDatabase db = QSqlDatabase::database(connName);
-                it.value()(db, socket, json, data);
-            }
-            QSqlDatabase::removeDatabase(connName);
-            });
+        QSqlDatabase db = QSqlDatabase::database("server_db_connection");
+        if (db.isOpen()) {
+            it.value()(db, socket, json, data);
+        }
     }
 }
-
 // 通过授权逻辑拦截的业务终端进行中心化连接池写入及状态通报
 void AttendanceServer::registerClient(QTcpSocket* socket, const QString& name,
     const QString& dept, const QString& jobTitle,
@@ -415,6 +421,9 @@ void AttendanceServer::initDispatchTable()
     // 构建核心签到判活业务的执行入口分发
     m_dispatchTable["punch_request"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handlePunchRequest(db, s, j, this);
+        };
+    m_dispatchTable["secure_punch_request"] = [this](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleSecurePunchRequest(db, s, j, this);
         };
     m_dispatchTable["punch_cheat"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handlePunchCheat(db, s, j, this);
