@@ -409,66 +409,176 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
 {
     QString role = json["role"].toString();
     QString name = json["name"].toString();
+    QString dept = json["department"].toString();
+    QString jobTitle = json["job_title"].toString();
+    QString timeRange = json["time_range"].toString();
+    QString filterDept = json["filter_dept"].toString();
+
+    // 兜底：如果客户端没传dept/jobTitle，服务端自己查一次
+    if (dept.isEmpty() || jobTitle.isEmpty()) {
+        QSqlQuery uq(db);
+        uq.prepare("SELECT department, job_title FROM users WHERE name = :n OR account = :n");
+        uq.bindValue(":n", name);
+        if (uq.exec() && uq.next()) {
+            if (dept.isEmpty()) dept = uq.value(0).toString();
+            if (jobTitle.isEmpty()) jobTitle = uq.value(1).toString();
+        }
+    }
+    // ===== 权限分级 =====
+    bool isHRManager = (dept == "人力资源部" && jobTitle == "部门经理");
+    bool isDeptManager = (!isHRManager && (jobTitle == "部门经理" || dept == "总经办"));
+    bool isEmployee = (!isHRManager && !isDeptManager);
+    // ===== 时间维度转SQL =====
+    QString timeCondBar, timeCondLine;
+    if (timeRange == "本周") {
+        timeCondBar = "AND DATE(a.punch_time) >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)";
+        timeCondLine = "AND punch_time >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)";
+    }
+    else if (timeRange == "本自然月") {
+        timeCondBar = "AND DATE(a.punch_time) >= DATE_FORMAT(CURDATE(), '%Y-%m-01')";
+        timeCondLine = "AND punch_time >= DATE_FORMAT(CURDATE(), '%Y-%m-01')";
+    }
+    else if (timeRange == "近7天") {
+        timeCondBar = "AND DATE(a.punch_time) >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)";
+        timeCondLine = "AND punch_time >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)";
+    }
+    else {
+        timeCondBar = "AND DATE(a.punch_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
+        timeCondLine = "AND punch_time >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)";
+    }
+
+    // ===== 构建通用过滤条件（不用arg，避免%%转义问题）=====
+    QString nameFilterA = "";   // 用于 a.xxx 表别名
+    QString nameFilterU = "";   // 用于 u.xxx 表别名
+    QString nameFilterPlain = ""; // 用于无别名表
+    if (isEmployee) {
+        nameFilterA = " AND a.name = '" + name + "'";
+        nameFilterU = " AND u.name = '" + name + "'";
+        nameFilterPlain = " AND name = '" + name + "'";
+    }
+    else if (isDeptManager) {
+        nameFilterA = " AND a.name IN (SELECT name FROM users WHERE department = '" + dept + "')";
+        nameFilterU = " AND u.department = '" + dept + "'";
+        nameFilterPlain = " AND name IN (SELECT name FROM users WHERE department = '" + dept + "')";
+    }
+    else if (isHRManager && filterDept != "全部" && !filterDept.isEmpty()) {
+        nameFilterA = " AND a.name IN (SELECT name FROM users WHERE department = '" + filterDept + "')";
+        nameFilterU = " AND u.department = '" + filterDept + "'";
+        nameFilterPlain = " AND name IN (SELECT name FROM users WHERE department = '" + filterDept + "')";
+    }
+
     QJsonObject res;
     res["status"] = "success";
     QJsonObject topCards;
-    QSqlQuery   q(db);
-    // 1. 顶部卡片：统计企业总人数、今日实到打卡人数、异常人数
-    q.exec("SELECT COUNT(*) FROM users WHERE role != '超级管理员'");
-    if (q.next()) topCards["total_expected"] = q.value(0).toInt();
+    QSqlQuery q(db);
 
-    q.exec("SELECT COUNT(DISTINCT name) FROM attendance_records WHERE DATE(punch_time) = CURDATE()");
+    // 1. 顶部卡片：应到人数
+    if (isEmployee) {
+        topCards["total_expected"] = 1;
+    }
+    else if (isDeptManager) {
+        q.exec("SELECT COUNT(*) FROM users WHERE department = '" + dept + "' AND role != '超级管理员'");
+        if (q.next()) topCards["total_expected"] = q.value(0).toInt();
+    }
+    else {
+        QString deptCond = (filterDept != "全部" && !filterDept.isEmpty()) ? " AND department = '" + filterDept + "'" : "";
+        q.exec("SELECT COUNT(*) FROM users WHERE role != '超级管理员'" + deptCond);
+        if (q.next()) topCards["total_expected"] = q.value(0).toInt();
+    }
+
+    // 实到人数
+    q.exec("SELECT COUNT(DISTINCT name) FROM attendance_records WHERE DATE(punch_time) = CURDATE()" + nameFilterPlain);
     if (q.next()) topCards["actual_punched"] = q.value(0).toInt();
 
-    q.exec("SELECT COUNT(DISTINCT name) FROM attendance_records WHERE DATE(punch_time) = CURDATE() AND status NOT LIKE '%正常%'");
+    // 异常人数（剥离请假/调休/外派/修正）
+    q.exec("SELECT COUNT(DISTINCT a.name) FROM attendance_records a "
+        "JOIN users u ON a.name = u.name "
+        "WHERE DATE(a.punch_time) = CURDATE() "
+        "AND a.status NOT LIKE '%正常%' "
+        "AND a.status NOT LIKE '%假%' "
+        "AND a.status NOT LIKE '%调休%' "
+        "AND a.status NOT LIKE '%外派%' "
+        "AND a.status NOT LIKE '%修正%'" + nameFilterA);
     if (q.next()) topCards["abnormal_count"] = q.value(0).toInt();
-    // 管理层显示待审批数量，普通员工显示自己的异常打卡次数
-    if (role.contains("管理员") || role == "经理") {
-        q.exec(QString("SELECT COUNT(*) FROM leave_requests WHERE approver LIKE '%%%1%%' AND status='待审批'").arg(name));
+
+    // 请假人数
+    q.exec("SELECT COUNT(DISTINCT a.name) FROM attendance_records a "
+        "JOIN users u ON a.name = u.name "
+        "WHERE DATE(a.punch_time) = CURDATE() AND a.status LIKE '%假%'" + nameFilterA);
+    if (q.next()) topCards["leave_count"] = q.value(0).toInt();
+
+    // 待审批/个人异常
+    if (!isEmployee) {
+        q.exec("SELECT COUNT(*) FROM leave_requests WHERE (approver = '" + name + "' OR approver LIKE '" + name + ",%') AND status='待审批'");
         if (q.next()) topCards["pending_leaves"] = q.value(0).toInt();
-        q.exec(QString("SELECT COUNT(*) FROM appeals WHERE approver LIKE '%%%1%%' AND status='待审批'").arg(name));
+        q.exec("SELECT COUNT(*) FROM appeals WHERE (approver = '" + name + "' OR approver LIKE '" + name + ",%') AND status='待审批'");
         if (q.next()) topCards["pending_appeals"] = q.value(0).toInt();
     }
     else {
-        q.exec(QString("SELECT COUNT(*) FROM attendance_records WHERE name='%1' AND DATE(punch_time) >= DATE_FORMAT(CURDATE() ,'%%Y-%%m-01') AND status NOT LIKE '%%正常%%'").arg(name));
+        q.exec("SELECT COUNT(*) FROM attendance_records WHERE name='" + name + "' AND DATE(punch_time) >= DATE_FORMAT(CURDATE(),'%Y-%m-01') AND status NOT LIKE '%正常%' AND status NOT LIKE '%假%'");
         if (q.next()) topCards["my_abnormal"] = q.value(0).toInt();
     }
     res["top_cards"] = topCards;
-    // 2. 饼图：今日各打卡状态分布比例
+
+    // 2. 饼图
     QJsonArray pieArr;
-    q.exec("SELECT status, COUNT(*) FROM attendance_records WHERE DATE(punch_time) = CURDATE() GROUP BY status");
+    q.exec("SELECT a.status, COUNT(*) FROM attendance_records a "
+        "JOIN users u ON a.name = u.name "
+        "WHERE DATE(a.punch_time) = CURDATE()" + nameFilterA + " GROUP BY a.status");
     while (q.next()) {
         QJsonObject o; o["status"] = q.value(0).toString(); o["count"] = q.value(1).toInt();
         pieArr.append(o);
     }
     res["pie_chart"] = pieArr;
-    // 3. 柱状图：近30天各部门的异常情况对比
+
+    // 3. 柱状图
     QJsonArray barArr;
-    q.exec("SELECT u.department, COUNT(a.id) FROM users u LEFT JOIN attendance_records a ON u.name = a.name AND a.status NOT LIKE '%正常%' WHERE DATE(a.punch_time) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY u.department");
-    while (q.next()) {
-        QJsonObject o;
-        o["dept"] = q.value(0).toString().isEmpty() ? "未分组" : q.value(0).toString();
-        o["count"] = q.value(1).toInt();
-        barArr.append(o);
+    if (isEmployee) {
+        q.exec("SELECT a.status, COUNT(*) FROM attendance_records a "
+            "WHERE a.name = '" + name + "' " + timeCondBar + " GROUP BY a.status");
+        while (q.next()) {
+            QJsonObject o; o["dept"] = q.value(0).toString(); o["count"] = q.value(1).toInt();
+            barArr.append(o);
+        }
+    }
+    else {
+        QString barDeptCond = isDeptManager ? ("AND u.department='" + dept + "'") :
+            (filterDept != "全部" && !filterDept.isEmpty()) ? ("AND u.department='" + filterDept + "'") : "";
+        q.exec("SELECT u.department, COUNT(a.id) FROM users u "
+            "LEFT JOIN attendance_records a ON u.name = a.name "
+            "AND a.status NOT LIKE '%正常%' AND a.status NOT LIKE '%假%' " + timeCondBar + " "
+            "WHERE u.role != '超级管理员' " + barDeptCond + " GROUP BY u.department");
+        while (q.next()) {
+            QJsonObject o;
+            o["dept"] = q.value(0).toString().isEmpty() ? "未分组" : q.value(0).toString();
+            o["count"] = q.value(1).toInt();
+            barArr.append(o);
+        }
     }
     res["bar_chart"] = barArr;
-    // 4. 折线图：近7天的活跃打卡人数趋势
+
+    // 4. 折线图
     QJsonArray lineArr;
-    q.exec("SELECT DATE_FORMAT(punch_time, '%m-%d'), COUNT(DISTINCT name) FROM attendance_records WHERE punch_time >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(punch_time) ORDER BY DATE(punch_time) ASC");
+    q.exec("SELECT DATE_FORMAT(punch_time, '%m-%d'), COUNT(DISTINCT name) FROM attendance_records "
+        "WHERE 1=1 " + timeCondLine + " " + nameFilterPlain + " GROUP BY DATE(punch_time) ORDER BY DATE(punch_time) ASC");
     while (q.next()) {
         QJsonObject o; o["date"] = q.value(0).toString(); o["count"] = q.value(1).toInt();
         lineArr.append(o);
     }
     res["line_chart"] = lineArr;
-    // 5. 滚动动态流：最近 10 条打卡记录
+
+    // 5. 打卡动态流
     QJsonArray feedArr;
-    q.exec("SELECT DATE_FORMAT(punch_time, '%H:%i:%s'), name, status FROM attendance_records WHERE DATE(punch_time) = CURDATE() ORDER BY punch_time DESC LIMIT 10");
+    q.exec("SELECT DATE_FORMAT(a.punch_time, '%H:%i:%s'), a.name, a.status "
+        "FROM attendance_records a WHERE DATE(a.punch_time) = CURDATE()" + nameFilterA +
+        " ORDER BY a.punch_time DESC LIMIT 15");
     while (q.next()) {
         QJsonObject o; o["time"] = q.value(0).toString(); o["name"] = q.value(1).toString(); o["status"] = q.value(2).toString();
         feedArr.append(o);
     }
     res["feed_list"] = feedArr;
-    // 6. 系统公告栏：获取最新的3条公告
+
+    // 6. 系统公告
     QJsonArray noticeArr;
     q.exec("SELECT content, DATE_FORMAT(publish_time, '%m-%d') FROM system_announcements ORDER BY publish_time DESC LIMIT 3");
     while (q.next()) {

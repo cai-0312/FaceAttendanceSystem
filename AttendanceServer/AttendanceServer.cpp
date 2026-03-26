@@ -417,12 +417,15 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["admin_modify_status"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAdminModifyStatus(db, s, j, this);
         };
+    // 问题3：修改密码
     m_dispatchTable["verify_and_update_password"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleVerifyAndUpdatePassword(db, s, j);
         };
+    // 问题2：人脸重录审批
     m_dispatchTable["face_reregister_request"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleFaceReregisterRequest(db, s, j);
         };
+    // 问题4：头像文件上传/读取
     m_dispatchTable["upload_avatar_file"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleUploadAvatarFile(db, s, j);
         };
@@ -521,5 +524,9 @@ void AttendanceServer::initDispatchTable()
         };
     m_dispatchTable["ai_audit_file"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAiAuditFile(db, s, j, this);
+        };
+    // 首页大屏：部门列表查询（供筛选下拉框用）
+    m_dispatchTable["query_dept_list"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryDeptList(db, s, j);
         };
 }

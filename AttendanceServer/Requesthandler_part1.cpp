@@ -327,15 +327,20 @@ void RequestHandler::handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, c
 void RequestHandler::handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString();
-    QString dept = "全部"; // 默认返回“全部”
+    QString dept, jobTitle, realName = name;
     QSqlQuery dq(db);
-    dq.prepare("SELECT department FROM users WHERE name = :n");
+    dq.prepare("SELECT department, job_title, name FROM users WHERE name = :n OR account = :n");
     dq.bindValue(":n", name);
-    // 若查到结果，覆盖默认值
-    if (dq.exec() && dq.next()) dept = dq.value(0).toString();
+    if (dq.exec() && dq.next()) {
+        dept = dq.value("department").toString();
+        jobTitle = dq.value("job_title").toString();
+        realName = dq.value("name").toString();
+    }
     QJsonObject res;
     res["type"] = "user_dept_reply";
     res["department"] = dept;
+    res["job_title"] = jobTitle;
+    res["real_name"] = realName;
     sendJson(socket, res);
 }
 // 超级管理员强制重置指定用户的密码（默认重置为 123456）
@@ -451,24 +456,53 @@ void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket
     QString avatarData = json["avatar_data"].toString();
     QJsonObject res; res["status"] = "fail";
     if (name.isEmpty() || avatarData.isEmpty()) { res["msg"] = "参数不完整"; sendJson(socket, res); return; }
-    QSqlQuery q(db); q.prepare("SELECT account FROM users WHERE name = :n"); q.bindValue(":n", name);
+
+    // 查询工号(account)和id
+    QSqlQuery q(db);
+    q.prepare("SELECT id, account FROM users WHERE name = :n");
+    q.bindValue(":n", name);
     QString account = "unknown";
-    if (q.exec() && q.next()) account = q.value(0).toString();
+    int userId = 0;
+    if (q.exec() && q.next()) {
+        userId = q.value(0).toInt();
+        account = q.value(1).toString();
+    }
+
+    // 构建路径: avatars/姓名/工号_姓名.jpg（服务端exe同级目录下）
     QString baseDir = QCoreApplication::applicationDirPath() + "/avatars/" + name + "/";
-    QDir().mkpath(baseDir);
-    QString fileName = account + "_" + name + ".jpg";
+    QDir dir;
+    if (!dir.exists(baseDir)) {
+        bool ok = dir.mkpath(baseDir);
+    }
+
+    QString fileName = QString("%1_%2.jpg").arg(account, name);
     QString fullPath = baseDir + fileName;
-    QString relativePath = "avatars/" + name + "/" + fileName;
+    QString relativePath = QString("avatars/%1/%2").arg(name, fileName);
+
+    // 解码Base64并写入文件
     QByteArray imgBytes = QByteArray::fromBase64(avatarData.toUtf8());
+
     QFile file(fullPath);
     if (file.open(QIODevice::WriteOnly)) {
-        file.write(imgBytes); file.close();
-        QSqlQuery uq(db); uq.prepare("UPDATE users SET avatar = :p WHERE name = :n");
-        uq.bindValue(":p", relativePath); uq.bindValue(":n", name);
-        if (uq.exec()) { res["status"] = "success"; }
-        else { res["msg"] = "路径更新失败"; }
+        file.write(imgBytes);
+        file.close();
+
+        // 数据库只存相对路径
+        QSqlQuery uq(db);
+        uq.prepare("UPDATE users SET avatar = :p WHERE name = :n");
+        uq.bindValue(":p", relativePath);
+        uq.bindValue(":n", name);
+        if (uq.exec() && uq.numRowsAffected() > 0) {
+            res["status"] = "success";
+            res["msg"] = "头像已保存: " + relativePath;
+        }
+        else {
+            res["msg"] = "数据库路径更新失败: " + uq.lastError().text();
+        }
     }
-    else { res["msg"] = "文件写入失败"; }
+    else {
+        res["msg"] = "文件写入失败: " + file.errorString() + " 路径: " + fullPath;
+    }
     sendJson(socket, res);
 }
 
@@ -478,11 +512,31 @@ void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* soc
     QString avatarPath = json["avatar_path"].toString();
     QJsonObject res; res["status"] = "fail";
     if (avatarPath.isEmpty()) { res["msg"] = "路径为空"; sendJson(socket, res); return; }
+
     QString fullPath = QCoreApplication::applicationDirPath() + "/" + avatarPath;
+
     QFile file(fullPath);
-    if (file.open(QIODevice::ReadOnly)) {
-        res["status"] = "success"; res["avatar_data"] = QString(file.readAll().toBase64()); file.close();
+    if (file.exists() && file.open(QIODevice::ReadOnly)) {
+        QByteArray data = file.readAll();
+        file.close();
+        res["status"] = "success";
+        res["avatar_data"] = QString(data.toBase64());
     }
-    else { res["msg"] = "头像文件不存在"; }
+    else {
+        res["msg"] = "头像文件不存在: " + fullPath;
+    }
+    sendJson(socket, res);
+}
+
+// ===== 首页大屏：部门列表查询 =====
+void RequestHandler::handleQueryDeptList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& /*json*/)
+{
+    QJsonArray arr;
+    QSqlQuery q(db);
+    q.exec("SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department != '' AND role != '超级管理员' ORDER BY department");
+    while (q.next()) arr.append(q.value(0).toString());
+    QJsonObject res;
+    res["status"] = "success";
+    res["departments"] = arr;
     sendJson(socket, res);
 }

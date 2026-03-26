@@ -44,6 +44,7 @@ public:
     // 问题4：头像文件系统存储
     static void handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    static void handleQueryDeptList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     // ── 考勤核心 ─────────────────────────────────────────────────
     static void handlePunchRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handlePunchCheat(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
