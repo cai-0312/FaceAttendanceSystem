@@ -281,7 +281,7 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
     while (userQ.next()) {
         QString empName = userQ.value(0).toString();
         QString empDept = userQ.value(1).toString();
-        QString empJob = userQ.value(2).toString(); 
+        QString empJob = userQ.value(2).toString();
 
         // 查询该员工当月的所有打卡记录
         QSqlQuery q(db);
@@ -331,7 +331,7 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
         QJsonObject row;
         row["name"] = empName;
         row["dept"] = empDept;
-        row["job_title"] = empJob; 
+        row["job_title"] = empJob;
         row["should_work"] = shouldWork;
         row["actual_work"] = actualWork;
         row["late_count"] = lateCount;
@@ -540,29 +540,85 @@ void RequestHandler::handleLeaveApprove(QSqlDatabase& db, QTcpSocket* /*socket*/
     QString sTimeStr = json["start_time"].toString();
     QString eTimeStr = json["end_time"].toString();
     QString lType = json["leave_type"].toString();
-    // 更新请假单状态为已批准
-    QSqlQuery upd(db);
-    upd.exec(QString("UPDATE leave_requests SET status='已批准' WHERE id=%1").arg(reqId));
-    // 根据请假天数，向考勤流水表中循环插入虚拟的打卡记录
-    QString finalStatus = "假-" + lType;
-    QDate   sDate = QDate::fromString(sTimeStr.left(10), "yyyy-MM-dd");
-    QDate   eDate = QDate::fromString(eTimeStr.left(10), "yyyy-MM-dd");
-    if (sDate.isValid() && eDate.isValid() && sDate <= eDate) {
-        for (QDate d = sDate; d <= eDate; d = d.addDays(1)) {
-            // 设定在早上 09:00 插入一条记录以补全报表数据
-            QString    punchTime = d.toString("yyyy-MM-dd") + " 09:00:00";
-            QSqlQuery  insertQ(db);
-            insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
-            insertQ.addBindValue(applicant);
-            insertQ.addBindValue(punchTime);
-            insertQ.addBindValue(finalStatus);
-            insertQ.exec();
+    QString currentApprover = json["approver"].toString();
+    QString action = json["action"].toString();
+
+    QSqlQuery selQ(db);
+    selQ.prepare("SELECT approver FROM leave_requests WHERE id = :id");
+    selQ.bindValue(":id", reqId);
+    QString fullChain;
+    if (selQ.exec() && selQ.next()) fullChain = selQ.value(0).toString();
+
+    QStringList chain = fullChain.split(",", Qt::SkipEmptyParts);
+    int idx = -1;
+    for (int i = 0; i < chain.size(); i++) {
+        if (chain[i] == currentApprover) { idx = i; break; }
+    }
+    if (idx < 0) {
+        for (int i = 0; i < chain.size(); i++) {
+            if (!chain[i].startsWith("[✓]") && !chain[i].startsWith("[✗]")) { idx = i; break; }
         }
     }
-    QMetaObject::invokeMethod(server, [server, applicant]() {
-        server->logMessage(QString("<font color='#67C23A'>流程审批: [%1] 的请假已获批准，多天流水已连片入库。</font>").arg(applicant));
-        server->loadGlobalRecords();
-        }, Qt::QueuedConnection);
+
+    // ── 驳回分支 ──
+    if (action == "reject") {
+        if (idx >= 0) chain[idx] = "[✗]" + currentApprover;
+        QString rejectReason = json["reject_reason"].toString();
+        QSqlQuery updQ(db);
+        updQ.prepare("UPDATE leave_requests SET status = '已驳回', approver = :a, reject_reason = :r WHERE id = :id");
+        updQ.bindValue(":a", chain.join(","));
+        updQ.bindValue(":r", rejectReason);
+        updQ.bindValue(":id", reqId);
+        updQ.exec();
+        QMetaObject::invokeMethod(server, [server, currentApprover, applicant]() {
+            server->logMessage(QString("<font color='#F56C6C'>请假驳回: [%1] 驳回了 [%2] 的请假。</font>").arg(currentApprover, applicant));
+            }, Qt::QueuedConnection);
+        return;
+    }
+
+    // ── 通过分支 ──
+    if (idx >= 0 && idx < chain.size() - 1) {
+        // 不是最后一个审批人 → 标记已审批，保留完整链
+        chain[idx] = "[✓]" + currentApprover;
+        QSqlQuery updQ(db);
+        updQ.prepare("UPDATE leave_requests SET approver = :a WHERE id = :id");
+        updQ.bindValue(":a", chain.join(","));
+        updQ.bindValue(":id", reqId);
+        updQ.exec();
+
+        QMetaObject::invokeMethod(server, [server, currentApprover, chain, idx]() {
+            server->logMessage(QString("<font color='#E6A23C'>请假审批流转: [%1] 已批准，流转至 [%2]</font>")
+                .arg(currentApprover, chain[idx + 1]));
+            }, Qt::QueuedConnection);
+    }
+    else {
+        // 最后一个审批人 → 终审通过，标记并插入考勤流水
+        if (idx >= 0) chain[idx] = "[✓]" + currentApprover;
+        QSqlQuery upd(db);
+        upd.prepare("UPDATE leave_requests SET status = '已批准', approver = :a WHERE id = :id");
+        upd.bindValue(":a", chain.join(","));
+        upd.bindValue(":id", reqId);
+        upd.exec();
+
+        QString finalStatus = "假-" + lType;
+        QDate sDate = QDate::fromString(sTimeStr.left(10), "yyyy-MM-dd");
+        QDate eDate = QDate::fromString(eTimeStr.left(10), "yyyy-MM-dd");
+        if (sDate.isValid() && eDate.isValid() && sDate <= eDate) {
+            for (QDate d = sDate; d <= eDate; d = d.addDays(1)) {
+                QString punchTime = d.toString("yyyy-MM-dd") + " 09:00:00";
+                QSqlQuery insertQ(db);
+                insertQ.prepare("INSERT INTO attendance_records (name, punch_time, status) VALUES (?, ?, ?)");
+                insertQ.addBindValue(applicant);
+                insertQ.addBindValue(punchTime);
+                insertQ.addBindValue(finalStatus);
+                insertQ.exec();
+            }
+        }
+        QMetaObject::invokeMethod(server, [server, applicant]() {
+            server->logMessage(QString("<font color='#67C23A'>终审通过: [%1] 的请假已全链审批通过。</font>").arg(applicant));
+            server->loadGlobalRecords();
+            }, Qt::QueuedConnection);
+    }
 }
 // 提交异常考勤申诉记录
 void RequestHandler::handleAppealRequest(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
@@ -585,67 +641,147 @@ void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*
     QString applicant = json["applicant"].toString();
     QString aTime = json["abnormal_time"].toString();
     QString aType = json["appeal_type"].toString();
-    // 更新申诉表状态
-    QSqlQuery upd(db);
-    upd.exec(QString("UPDATE appeals SET status='已批准' WHERE id=%1").arg(reqId));
-    // 根据申诉类型精准修正流水表数据
-    if (aType == "整天申诉") {
-        upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
+    QString currentApprover = json["approver"].toString();
+    QString action = json["action"].toString();  // "approve" 或 "reject"
+
+    // 读取数据库中完整的审批链
+    QSqlQuery selQ(db);
+    selQ.prepare("SELECT approver, original_status FROM appeals WHERE id = :id");
+    selQ.bindValue(":id", reqId);
+    QString fullChain, origStatus;
+    if (selQ.exec() && selQ.next()) {
+        fullChain = selQ.value(0).toString();
+        origStatus = selQ.value(1).toString();
+    }
+
+    QStringList chain = fullChain.split(",", Qt::SkipEmptyParts);
+    int idx = -1;
+    for (int i = 0; i < chain.size(); i++) {
+        if (chain[i] == currentApprover) { idx = i; break; }
+    }
+    if (idx < 0) {
+        for (int i = 0; i < chain.size(); i++) {
+            if (!chain[i].startsWith("[✓]") && !chain[i].startsWith("[✗]")) { idx = i; break; }
+        }
+    }
+
+    // ── 驳回分支 ──
+    if (action == "reject") {
+        if (idx >= 0) chain[idx] = "[✗]" + currentApprover;
+        QString rejectReason = json["reject_reason"].toString();
+        QSqlQuery updQ(db);
+        updQ.prepare("UPDATE appeals SET status = '已驳回', approver = :a, reject_reason = :r WHERE id = :id");
+        updQ.bindValue(":a", chain.join(","));
+        updQ.bindValue(":r", rejectReason);
+        updQ.bindValue(":id", reqId);
+        updQ.exec();
+        QMetaObject::invokeMethod(server, [server, currentApprover, applicant]() {
+            server->logMessage(QString("<font color='#F56C6C'>审批驳回: [%1] 驳回了 [%2] 的申诉。</font>")
+                .arg(currentApprover, applicant));
+            }, Qt::QueuedConnection);
+        return;
+    }
+
+    // ── 通过分支 ──
+    if (idx >= 0 && idx < chain.size() - 1) {
+        chain[idx] = "[✓]" + currentApprover;
+        QSqlQuery updQ(db);
+        updQ.prepare("UPDATE appeals SET approver = :a WHERE id = :id");
+        updQ.bindValue(":a", chain.join(","));
+        updQ.bindValue(":id", reqId);
+        updQ.exec();
+        QMetaObject::invokeMethod(server, [server, currentApprover, chain, idx]() {
+            server->logMessage(QString("<font color='#E6A23C'>审批流转: [%1] 已批准，流转至 [%2]</font>")
+                .arg(currentApprover, chain[idx + 1]));
+            }, Qt::QueuedConnection);
     }
     else {
-        upd.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
+        if (idx >= 0) chain[idx] = "[✓]" + currentApprover;
+        QSqlQuery upd(db);
+        upd.prepare("UPDATE appeals SET status = '已批准', approver = :a WHERE id = :id");
+        upd.bindValue(":a", chain.join(","));
+        upd.bindValue(":id", reqId);
+        upd.exec();
+        if (origStatus != "人脸重录") {
+            QSqlQuery fixQ(db);
+            if (aType == "整天申诉") fixQ.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
+            else fixQ.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
+        }
+        QMetaObject::invokeMethod(server, [server, applicant, origStatus]() {
+            server->logMessage(QString("<font color='#67C23A'>终审通过: [%1] 的 [%2] 已全链审批通过。</font>").arg(applicant, origStatus));
+            server->loadGlobalRecords();
+            }, Qt::QueuedConnection);
     }
-    QMetaObject::invokeMethod(server, [server]() {
-        server->loadGlobalRecords();
-        }, Qt::QueuedConnection);
 }
 // 管理层获取分派给自己的待处理请假单
 void RequestHandler::handleQueryPendingLeaves(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString approver = json["approver"].toString();
-    QJsonArray arr;
+    QJsonArray pendingArr, doneArr;
     QSqlQuery q(db);
-    QString sql = QString("SELECT id, applicant, leave_type, start_time, end_time, reason "
-        "FROM leave_requests WHERE approver LIKE '%%%1%%' AND status='待审批'").arg(approver);
-    if (q.exec(sql)) {
-        while (q.next()) {
-            QJsonObject row;
-            row["id"] = q.value(0).toInt();
-            row["applicant"] = q.value(1).toString();
-            row["type"] = q.value(2).toString();
-            row["start"] = q.value(3).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
-            row["end"] = q.value(4).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
-            row["reason"] = q.value(5).toString();
-            arr.append(row);
+    q.exec("SELECT id, applicant, leave_type, start_time, end_time, reason, approver, status, IFNULL(reject_reason,'') FROM leave_requests ORDER BY id DESC");
+    while (q.next()) {
+        QString approverChain = q.value(6).toString();
+        QString status = q.value(7).toString();
+        bool isPending = false, isDone = false;
+        QStringList parts = approverChain.split(",", Qt::SkipEmptyParts);
+        for (int i = 0; i < parts.size(); i++) {
+            if (parts[i] == approver && status == "待审批") { isPending = true; break; }
+            if (parts[i] == "[✓]" + approver || parts[i] == "[✗]" + approver) { isDone = true; break; }
         }
+        QJsonObject row;
+        row["id"] = q.value(0).toInt();
+        row["applicant"] = q.value(1).toString();
+        row["type"] = q.value(2).toString();
+        row["start"] = q.value(3).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
+        row["end"] = q.value(4).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
+        row["reason"] = q.value(5).toString();
+        row["approver_chain"] = approverChain;
+        row["status"] = status;
+        row["reject_reason"] = q.value(8).toString();
+        if (isPending) pendingArr.append(row);
+        else if (isDone) doneArr.append(row);
     }
     QJsonObject res;
     res["status"] = "success";
-    res["data"] = arr;
+    res["data"] = pendingArr;
+    res["done_data"] = doneArr;
     sendJson(socket, res);
 }
-// 管理层获取分派给自己的待处理申诉单
+// 管理层获取分派给自己的待处理申诉单（含已审批记录）
 void RequestHandler::handleQueryPendingAppeals(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString approver = json["approver"].toString();
-    QJsonArray arr;
+    QJsonArray pendingArr, doneArr;
     QSqlQuery q(db);
-    QString sql = QString("SELECT id, applicant, abnormal_time, original_status, reason "
-        "FROM appeals WHERE approver LIKE '%%%1%%' AND status='待审批'").arg(approver);
-    if (q.exec(sql)) {
-        while (q.next()) {
-            QJsonObject row;
-            row["id"] = q.value(0).toInt();
-            row["applicant"] = q.value(1).toString();
-            row["time"] = q.value(2).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
-            row["type"] = q.value(3).toString();
-            row["reason"] = q.value(4).toString();
-            arr.append(row);
+    // 查询所有待审批的申诉单（approver中包含当前用户名）
+    q.exec("SELECT id, applicant, abnormal_time, original_status, reason, approver, status, IFNULL(reject_reason,'') FROM appeals ORDER BY id DESC");
+    while (q.next()) {
+        QString approverChain = q.value(5).toString();
+        QString status = q.value(6).toString();
+        bool isPending = false;
+        bool isDone = false;
+        QStringList parts = approverChain.split(",", Qt::SkipEmptyParts);
+        for (int i = 0; i < parts.size(); i++) {
+            if (parts[i] == approver && status == "待审批") { isPending = true; break; }
+            if (parts[i] == "[✓]" + approver || parts[i] == "[✗]" + approver) { isDone = true; break; }
         }
+        QJsonObject row;
+        row["id"] = q.value(0).toInt();
+        row["applicant"] = q.value(1).toString();
+        row["time"] = q.value(2).toDateTime().toString("yyyy-MM-dd HH:mm:ss");
+        row["type"] = q.value(3).toString();
+        row["reason"] = q.value(4).toString();
+        row["approver_chain"] = approverChain;
+        row["status"] = status;
+        row["reject_reason"] = q.value(7).toString();
+        if (isPending) pendingArr.append(row);
+        else if (isDone) doneArr.append(row);
     }
     QJsonObject res;
     res["status"] = "success";
-    res["data"] = arr;
+    res["data"] = pendingArr;
+    res["done_data"] = doneArr;
     sendJson(socket, res);
 }
 // 员工获取自己发起的流程审批进度历史（含请假和申诉）

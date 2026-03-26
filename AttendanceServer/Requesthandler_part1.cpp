@@ -16,6 +16,7 @@
 #include <QRegularExpression>
 #include <QPointer>
 #include <QThread>
+#include <QCryptographicHash>
 // 发送 JSON 回包（线程安全）
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
@@ -70,7 +71,7 @@ void RequestHandler::handleRegisterFace(QSqlDatabase& db, QTcpSocket* /*socket*/
     q.prepare("UPDATE users SET feature = :f WHERE name = :n");
     q.bindValue(":f", featureData);
     q.bindValue(":n", name);
-    q.exec(); 
+    q.exec();
 }
 // 客户端账号密码角色登录验证
 void RequestHandler::handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
@@ -113,7 +114,7 @@ void RequestHandler::handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* s
         res["status"] = "success";
         QMetaObject::invokeMethod(server, [server, name, role]() {
             server->logMessage(QString("<font color='#E6A23C'>新入职: [%1] 注册了账号，权限为 [%2]。</font>").arg(name, role));
-            server->refreshPermModel(); 
+            server->refreshPermModel();
             }, Qt::QueuedConnection);
     }
     else {
@@ -177,7 +178,7 @@ void RequestHandler::handleLogin(QSqlDatabase& db, QTcpSocket* socket,
             offMsg["filename"] = offlineQ.value(3).toString();
             offMsg["time"] = offlineQ.value(4).toDateTime().toString("HH:mm:ss");
             offMsg["department"] = offlineQ.value(5).toString();
-            offMsg["is_offline"] = true; 
+            offMsg["is_offline"] = true;
             // 将离线消息发送给客户端
             QByteArray outData = QJsonDocument(offMsg).toJson(QJsonDocument::Compact) + "\n";
             QMetaObject::invokeMethod(socket, [socket, outData]() { socket->write(outData); },
@@ -230,7 +231,10 @@ void RequestHandler::handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket
         res["gender"] = q.value(4).toString();
         res["phone"] = q.value(5).toString();
         res["real_name"] = q.value(6).toString();
-        res["avatar_base64"] = q.value(7).toString();
+        // 问题4：区分avatar是文件路径还是旧Base64
+        QString av = q.value(7).toString();
+        if (av.contains("/") && !av.startsWith("/9j/")) { res["avatar_path"] = av; res["avatar_base64"] = ""; }
+        else { res["avatar_base64"] = av; res["avatar_path"] = ""; }
     }
     else {
         res["msg"] = "花名册中找不到该用户信息";
@@ -242,8 +246,8 @@ void RequestHandler::handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket
 void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString().trimmed();
-    QString field = json["field"].toString().trimmed(); 
-    QString value = json["value"].toString();           
+    QString field = json["field"].toString().trimmed();
+    QString value = json["value"].toString();
     QJsonObject res;
     res["status"] = "fail";
     QString dbColumn;
@@ -251,7 +255,7 @@ void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* sock
         dbColumn = "gender";
     }
     else if (field == "phone") {
-        dbColumn = "phone"; 
+        dbColumn = "phone";
     }
     else if (field == "avatar") {
         dbColumn = "avatar";
@@ -268,9 +272,9 @@ void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* sock
     // 使用 %1 动态替换列名，使用 ? 占位符绑定值
     QString sql = QString("UPDATE users SET %1 = ? WHERE name = ? OR account = ?").arg(dbColumn);
     q.prepare(sql);
-    q.addBindValue(value); 
-    q.addBindValue(name);  
-    q.addBindValue(name);  
+    q.addBindValue(value);
+    q.addBindValue(name);
+    q.addBindValue(name);
     if (q.exec()) {
         if (q.numRowsAffected() > 0) {
             res["status"] = "success";
@@ -396,4 +400,89 @@ void RequestHandler::handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* /*soc
             server->loadGlobalRecords();
             }, Qt::QueuedConnection);
     }
+}
+
+// ===== 问题3：修改密码（服务端校验+复杂度检查+MD5哈希存储）=====
+void RequestHandler::handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString name = json["name"].toString().trimmed();
+    QString oldPwd = json["old_pwd"].toString();
+    QString newPwd = json["new_pwd"].toString();
+    QJsonObject res; res["status"] = "fail";
+    if (name.isEmpty() || oldPwd.isEmpty() || newPwd.isEmpty()) { res["msg"] = "参数不完整"; sendJson(socket, res); return; }
+    if (newPwd.length() < 8) { res["msg"] = "新密码长度必须至少8位"; sendJson(socket, res); return; }
+    bool hasL = false, hasD = false;
+    for (const QChar& ch : newPwd) { if (ch.isLetter()) hasL = true; if (ch.isDigit()) hasD = true; }
+    if (!hasL || !hasD) { res["msg"] = "新密码必须同时包含字母和数字"; sendJson(socket, res); return; }
+    QSqlQuery q(db); q.prepare("SELECT password FROM users WHERE name = :n"); q.bindValue(":n", name);
+    if (!q.exec() || !q.next()) { res["msg"] = "用户不存在"; sendJson(socket, res); return; }
+    QString stored = q.value(0).toString();
+    QString oldHash = QString(QCryptographicHash::hash(oldPwd.toUtf8(), QCryptographicHash::Md5).toHex());
+    if (stored != oldPwd && stored != oldHash) { res["msg"] = "旧密码错误"; sendJson(socket, res); return; }
+    if (newPwd == oldPwd) { res["msg"] = "新密码不能与旧密码相同"; sendJson(socket, res); return; }
+    QString newHash = QString(QCryptographicHash::hash(newPwd.toUtf8(), QCryptographicHash::Md5).toHex());
+    QSqlQuery uq(db); uq.prepare("UPDATE users SET password = :p WHERE name = :n");
+    uq.bindValue(":p", newHash); uq.bindValue(":n", name);
+    if (uq.exec()) { res["status"] = "success"; res["msg"] = "密码修改成功"; }
+    else { res["msg"] = "数据库更新失败"; }
+    sendJson(socket, res);
+}
+
+// ===== 问题2：人脸重录审批申请 =====
+void RequestHandler::handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString applicant = json["applicant"].toString().trimmed();
+    QString reason = json["reason"].toString().trimmed();
+    QString approver = json["approver"].toString().trimmed();
+    QJsonObject res; res["status"] = "fail";
+    if (applicant.isEmpty() || reason.isEmpty() || approver.isEmpty()) { res["msg"] = "参数不完整"; sendJson(socket, res); return; }
+    QSqlQuery q(db);
+    q.prepare("INSERT INTO appeals (applicant, abnormal_time, original_status, reason, approver, status) VALUES (?, NOW(), '人脸重录', ?, ?, '待审批')");
+    q.addBindValue(applicant); q.addBindValue(reason); q.addBindValue(approver);
+    if (q.exec()) { res["status"] = "success"; res["msg"] = "人脸重录申请已提交"; }
+    else { res["msg"] = "数据库写入失败: " + q.lastError().text(); }
+    sendJson(socket, res);
+}
+
+// ===== 问题4：头像上传到文件系统（数据库只存路径）=====
+void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString name = json["name"].toString().trimmed();
+    QString avatarData = json["avatar_data"].toString();
+    QJsonObject res; res["status"] = "fail";
+    if (name.isEmpty() || avatarData.isEmpty()) { res["msg"] = "参数不完整"; sendJson(socket, res); return; }
+    QSqlQuery q(db); q.prepare("SELECT account FROM users WHERE name = :n"); q.bindValue(":n", name);
+    QString account = "unknown";
+    if (q.exec() && q.next()) account = q.value(0).toString();
+    QString baseDir = QCoreApplication::applicationDirPath() + "/avatars/" + name + "/";
+    QDir().mkpath(baseDir);
+    QString fileName = account + "_" + name + ".jpg";
+    QString fullPath = baseDir + fileName;
+    QString relativePath = "avatars/" + name + "/" + fileName;
+    QByteArray imgBytes = QByteArray::fromBase64(avatarData.toUtf8());
+    QFile file(fullPath);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(imgBytes); file.close();
+        QSqlQuery uq(db); uq.prepare("UPDATE users SET avatar = :p WHERE name = :n");
+        uq.bindValue(":p", relativePath); uq.bindValue(":n", name);
+        if (uq.exec()) { res["status"] = "success"; }
+        else { res["msg"] = "路径更新失败"; }
+    }
+    else { res["msg"] = "文件写入失败"; }
+    sendJson(socket, res);
+}
+
+// ===== 问题4：根据路径读取头像文件返回Base64 =====
+void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString avatarPath = json["avatar_path"].toString();
+    QJsonObject res; res["status"] = "fail";
+    if (avatarPath.isEmpty()) { res["msg"] = "路径为空"; sendJson(socket, res); return; }
+    QString fullPath = QCoreApplication::applicationDirPath() + "/" + avatarPath;
+    QFile file(fullPath);
+    if (file.open(QIODevice::ReadOnly)) {
+        res["status"] = "success"; res["avatar_data"] = QString(file.readAll().toBase64()); file.close();
+    }
+    else { res["msg"] = "头像文件不存在"; }
+    sendJson(socket, res);
 }

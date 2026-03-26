@@ -79,6 +79,9 @@
     <ClCompile Include="Networkhelper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="qrcodegen.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="MainWidget.h">
@@ -126,6 +129,9 @@
     </ClInclude>
     <ClInclude Include="Networkhelper.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="qrcodegen.hpp">
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

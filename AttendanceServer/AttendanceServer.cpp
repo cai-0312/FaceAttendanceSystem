@@ -417,6 +417,18 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["admin_modify_status"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAdminModifyStatus(db, s, j, this);
         };
+    m_dispatchTable["verify_and_update_password"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleVerifyAndUpdatePassword(db, s, j);
+        };
+    m_dispatchTable["face_reregister_request"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleFaceReregisterRequest(db, s, j);
+        };
+    m_dispatchTable["upload_avatar_file"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleUploadAvatarFile(db, s, j);
+        };
+    m_dispatchTable["query_avatar_file"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryAvatarFile(db, s, j);
+        };
 
     // 构建核心签到判活业务的执行入口分发
     m_dispatchTable["punch_request"] = [this](auto& db, auto* s, auto& j, auto&) {

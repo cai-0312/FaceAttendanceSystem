@@ -120,6 +120,7 @@
     <ClCompile Include="NoticePopup.cpp" />
     <ClCompile Include="ProfileModule.cpp" />
     <ClCompile Include="PunchModule.cpp" />
+    <ClCompile Include="qrcodegen.cpp" />
     <ClCompile Include="RecordModule.cpp" />
     <ClCompile Include="RegisterModule.cpp" />
     <ClCompile Include="RetinaFaceDecoder.cpp" />
@@ -146,6 +147,7 @@
     <QtMoc Include="HomeModule.h" />
     <QtMoc Include="NoticePopup.h" />
     <ClInclude Include="Networkhelper.h" />
+    <ClInclude Include="qrcodegen.hpp" />
     <ClInclude Include="RetinaFaceDecoder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

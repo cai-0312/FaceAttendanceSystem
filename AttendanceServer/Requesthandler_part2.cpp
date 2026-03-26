@@ -69,8 +69,9 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
             // 🚩 核心修复：彻底抛弃 BlockingQueuedConnection 防止死锁！直接获取 Socket！
             QTcpSocket* targetSocket = server->getSocketByName(target);
             if (targetSocket) {
-                QMetaObject::invokeMethod(targetSocket, [targetSocket, rawData]() {
-                    targetSocket->write(rawData);
+                QByteArray forwardData = rawData + "\n";  // 补回\n，确保对方readLine能读到
+                QMetaObject::invokeMethod(targetSocket, [targetSocket, forwardData]() {
+                    targetSocket->write(forwardData);
                     }, Qt::QueuedConnection);
 
                 QMetaObject::invokeMethod(server, [server, fromUser, target, type]() {
@@ -123,8 +124,9 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
         if (isOnline) {
             QTcpSocket* targetSocket = server->getSocketByName(member);
             if (targetSocket) {
-                QMetaObject::invokeMethod(targetSocket, [targetSocket, rawData]() {
-                    targetSocket->write(rawData);
+                QByteArray forwardData = rawData + "\n";
+                QMetaObject::invokeMethod(targetSocket, [targetSocket, forwardData]() {
+                    targetSocket->write(forwardData);
                     }, Qt::QueuedConnection);
             }
         }
@@ -163,7 +165,7 @@ void RequestHandler::handleQueryChatHistory(QSqlDatabase& db, QTcpSocket* socket
             o["content"] = decodeContent(q.value(2).toString());
             o["filename"] = q.value(3).toString();
             o["time"] = q.value(4).toString();
-            o["is_read"] = q.value(5).toInt(); 
+            o["is_read"] = q.value(5).toInt();
             arr.append(o);
         }
     }
@@ -304,8 +306,9 @@ void RequestHandler::handleBroadcast(QSqlDatabase& db, QTcpSocket* /*socket*/,
                 targetSocket = server->getSocketByName(member);
                 }, Qt::BlockingQueuedConnection);
             if (targetSocket) {
-                QMetaObject::invokeMethod(targetSocket, [targetSocket, rawData]() {
-                    targetSocket->write(rawData);
+                QByteArray forwardData = rawData + "\n";
+                QMetaObject::invokeMethod(targetSocket, [targetSocket, forwardData]() {
+                    targetSocket->write(forwardData);
                     }, Qt::QueuedConnection);
                 pushCount++;
             }

@@ -22,8 +22,9 @@
 #include <QDialogButtonBox>
 #include <QDateTime>
 #include <QRandomGenerator> 
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include "qrcodegen.hpp"
+#include <QTextEdit>
+#include <QUrl>
 #include <QtConcurrent>
 #include <QFuture>
 #include <QFutureWatcher>
@@ -84,7 +85,7 @@ void ProfileModule::injectAdvancedUI() {
     gridLay->setObjectName("AdvancedGridLay");
     gridLay->setSpacing(15);
     gridLay->setContentsMargins(5, 20, 5, 5);
-    QString baseStyle ="QPushButton {""   color: #FFFFFF;""   border-radius: 6px;""   font-family: 'Microsoft YaHei';""   font-size: 15px;""   font-weight: bold;""   min-height: 42px;""   border: none;""}""QPushButton:pressed {""   padding-top: 2px;""   padding-left: 2px;""}";
+    QString baseStyle = "QPushButton {""   color: #FFFFFF;""   border-radius: 6px;""   font-family: 'Microsoft YaHei';""   font-size: 15px;""   font-weight: bold;""   min-height: 42px;""   border: none;""}""QPushButton:pressed {""   padding-top: 2px;""   padding-left: 2px;""}";
     m_pwdBtn = new QPushButton("🔑 修改登录密码");
     m_pwdBtn->setCursor(Qt::PointingHandCursor);
     m_pwdBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -157,43 +158,66 @@ void ProfileModule::loadUserProfile(const QString& username) {
         QLabel* roleLabel = window->findChild<QLabel*>("label_ProfileRole");
         if (roleLabel) roleLabel->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
     }
-    // 异步生成并渲染用户的独立电子名片二维码
-    QString cardData = QString("【员工信息】\n姓名: %1\n工号: %2\n部门: %3\n职务: %4\n电话: %5").arg(realName, formattedId, dept, jobTitle, phoneStr);
-    QNetworkAccessManager* mgr = new QNetworkAccessManager(this);
-    QUrl url("http://api.qrserver.com/v1/create-qr-code/?size=150x150&data=" + QUrl::toPercentEncoding(cardData));
-    QNetworkReply* reply = mgr->get(QNetworkRequest(url));
-    connect(reply, &QNetworkReply::finished, this, [this, reply, mgr, window]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (window) {
-                QLabel* qrLabel = window->findChild<QLabel*>("label_QRCode");
-                if (qrLabel) qrLabel->setPixmap(pixmap);
-            }
+    // ===== 问题1：离线生成QR码（纯文本，不依赖网络）=====
+    // 微信扫码点"复制文本内容"可查看，支付宝/系统相机直接展示
+    QString cardData = QString::fromUtf8(
+        "══════════════\n"
+        "  员工电子名片\n"
+        "══════════════\n"
+        "姓名: %1\n"
+        "工号: %2\n"
+        "部门: %3\n"
+        "职务: %4\n"
+        "电话: %5\n"
+        "══════════════")
+        .arg(realName, formattedId, dept, jobTitle, phoneStr);
+    {
+        using namespace qrcodegen;
+        QrCode qr = QrCode::encodeText(cardData.toUtf8().constData(), QrCode::Ecc::LOW);
+        int sz = qr.getSize();
+        int cell = qMax(3, 160 / (sz + 8));
+        int border = 4;
+        int imgPx = (sz + border * 2) * cell;
+        QImage qrImg(imgPx, imgPx, QImage::Format_RGB32);
+        qrImg.fill(Qt::white);
+        QPainter qrP(&qrImg);
+        qrP.setPen(Qt::NoPen);
+        qrP.setBrush(Qt::black);
+        for (int y = 0; y < sz; y++)
+            for (int x = 0; x < sz; x++)
+                if (qr.getModule(x, y))
+                    qrP.drawRect((x + border) * cell, (y + border) * cell, cell, cell);
+        qrP.end();
+        if (window) {
+            QLabel* qrLabel = window->findChild<QLabel*>("label_QRCode");
+            if (qrLabel) qrLabel->setPixmap(QPixmap::fromImage(qrImg));
         }
-        reply->deleteLater();
-        mgr->deleteLater();
-        });
-    // 异步解包并渲染服务器回传的 Base64 头像数据
+    }
+    // ===== 问题4：头像加载（优先文件路径，兼容旧Base64）=====
+    QString avatarPath = res["avatar_path"].toString();
     QString avatarBase64 = res["avatar_base64"].toString();
+    bool hasFilePath = !avatarPath.isEmpty() && avatarPath.contains("/") && !avatarPath.startsWith("/9j/");
+    if (hasFilePath) {
+        QJsonObject avReq;
+        avReq["type"] = "query_avatar_file";
+        avReq["avatar_path"] = avatarPath;
+        QJsonObject avRes = NetworkHelper::request(avReq);
+        if (avRes["status"].toString() == "success") avatarBase64 = avRes["avatar_data"].toString();
+    }
     if (!avatarBase64.isEmpty()) {
         QFuture<QImage> future = QtConcurrent::run([avatarBase64]() -> QImage {
-            QImage result;
-            QImage img;
+            QImage result, img;
             img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
             if (!img.isNull()) {
                 int size = 130;
                 QImage scaledImg = img.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-                int cropX = (scaledImg.width() - size) / 2;
-                int cropY = (scaledImg.height() - size) / 2;
-                QImage squareImg = scaledImg.copy(cropX, cropY, size, size);
+                QImage squareImg = scaledImg.copy((scaledImg.width() - size) / 2, (scaledImg.height() - size) / 2, size, size);
                 result = QImage(size, size, QImage::Format_ARGB32_Premultiplied);
                 result.fill(Qt::transparent);
                 QPainter painter(&result);
                 painter.setRenderHint(QPainter::Antialiasing);
                 painter.setRenderHint(QPainter::SmoothPixmapTransform);
-                QPainterPath path;
-                path.addEllipse(0, 0, size, size);
+                QPainterPath path; path.addEllipse(0, 0, size, size);
                 painter.setClipPath(path);
                 painter.drawImage(0, 0, squareImg);
                 painter.end();
@@ -203,22 +227,13 @@ void ProfileModule::loadUserProfile(const QString& username) {
         QFutureWatcher<QImage>* watcher = new QFutureWatcher<QImage>(this);
         connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher]() {
             QImage resImg = watcher->result();
-            if (!resImg.isNull() && m_avatarLabel) {
-                m_avatarLabel->setPixmap(QPixmap::fromImage(resImg));
-                m_avatarLabel->setScaledContents(true);
-            }
-            else if (m_avatarLabel) {
-                QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
-                m_avatarLabel->setPixmap(defaultAvatar);
-            }
+            if (!resImg.isNull() && m_avatarLabel) { m_avatarLabel->setPixmap(QPixmap::fromImage(resImg)); m_avatarLabel->setScaledContents(true); }
+            else if (m_avatarLabel) { QPixmap d(130, 130); d.fill(Qt::darkCyan); m_avatarLabel->setPixmap(d); }
             watcher->deleteLater();
             });
         watcher->setFuture(future);
     }
-    else if (m_avatarLabel) {
-        QPixmap defaultAvatar(130, 130); defaultAvatar.fill(Qt::darkCyan);
-        m_avatarLabel->setPixmap(defaultAvatar);
-    }
+    else if (m_avatarLabel) { QPixmap d(130, 130); d.fill(Qt::darkCyan); m_avatarLabel->setPixmap(d); }
 }
 // 弹出对应表单修改用户性别属性并同步至服务端
 void ProfileModule::onEditGenderClicked() {
@@ -285,73 +300,80 @@ void ProfileModule::onEditPhoneClicked() {
     }
 }
 // 弹出交互窗口修改系统登录密码
+// ===== 问题3：修改密码（客户端强制复杂度校验）=====
 void ProfileModule::onChangePasswordClicked() {
-    QDialog dialog((QWidget*)this->parent());
+    QWidget* pw = (QWidget*)this->parent();
+    QDialog dialog(pw);
     dialog.setWindowTitle("修改登录密码");
-    dialog.resize(320, 200);
+    dialog.resize(360, 250);
     QFormLayout form(&dialog);
     QLineEdit* oldPwdEdit = new QLineEdit(&dialog); oldPwdEdit->setEchoMode(QLineEdit::Password);
     QLineEdit* newPwdEdit = new QLineEdit(&dialog); newPwdEdit->setEchoMode(QLineEdit::Password);
+    newPwdEdit->setPlaceholderText("至少8位，必须包含字母和数字");
     QLineEdit* confirmPwdEdit = new QLineEdit(&dialog); confirmPwdEdit->setEchoMode(QLineEdit::Password);
     form.addRow("旧密码:", oldPwdEdit);
     form.addRow("新密码:", newPwdEdit);
     form.addRow("确认新密码:", confirmPwdEdit);
+    QLabel* ruleLabel = new QLabel("密码规则: 长度≥8位, 必须同时包含字母和数字");
+    ruleLabel->setStyleSheet("color:#909399;font-size:11px;");
+    form.addRow("", ruleLabel);
     QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     form.addRow(&buttonBox);
     connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
-        // 执行客户端一致性校验
-        if (newPwdEdit->text().isEmpty() || newPwdEdit->text() != confirmPwdEdit->text()) {
-            QMessageBox::warning((QWidget*)this->parent(), "错误", "密码为空或两次输入不一致！");
-            return;
-        }
+        QString oldPwd = oldPwdEdit->text(), newPwd = newPwdEdit->text();
+        if (oldPwd.isEmpty()) { QMessageBox::warning(pw, "错误", "请输入旧密码！"); return; }
+        if (newPwd.isEmpty() || newPwd != confirmPwdEdit->text()) { QMessageBox::warning(pw, "错误", "新密码为空或两次不一致！"); return; }
+        if (newPwd.length() < 8) { QMessageBox::warning(pw, "密码强度不足", "新密码长度必须至少8位！"); return; }
+        bool hasL = false, hasD = false;
+        for (const QChar& ch : newPwd) { if (ch.isLetter()) hasL = true; if (ch.isDigit()) hasD = true; }
+        if (!hasL || !hasD) { QMessageBox::warning(pw, "密码强度不足", "新密码必须同时包含字母和数字！"); return; }
+        if (newPwd == oldPwd) { QMessageBox::warning(pw, "错误", "新密码不能与旧密码相同！"); return; }
         QJsonObject req;
         req["type"] = "verify_and_update_password";
         req["name"] = m_currentUser;
-        req["old_pwd"] = oldPwdEdit->text();
-        req["new_pwd"] = newPwdEdit->text();
+        req["old_pwd"] = oldPwd;
+        req["new_pwd"] = newPwd;
         QJsonObject res = NetworkHelper::request(req);
-        if (res["status"].toString() == "success") {
-            QMessageBox::information((QWidget*)this->parent(), "成功", "密码修改成功！");
-        }
-        else {
-            QMessageBox::warning((QWidget*)this->parent(), "错误", res["msg"].toString());
-        }
+        if (res["status"].toString() == "success") QMessageBox::information(pw, "成功", "密码修改成功！下次登录请使用新密码。");
+        else { QString e = res["msg"].toString(); QMessageBox::warning(pw, "修改失败", e.isEmpty() ? "服务端未响应" : e); }
     }
 }
-// 处理本地图片选取、内存裁剪压缩以及头像数据的服务端持久化上报
+// ===== 问题4：头像上传改为文件系统存储 =====
 void ProfileModule::onChangeAvatarClicked() {
     if (m_currentUser.isEmpty()) return;
-    QString filePath = QFileDialog::getOpenFileName((QWidget*)this->parent(), "选择个人头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
+    QWidget* pw = (QWidget*)this->parent();
+    QString filePath = QFileDialog::getOpenFileName(pw, "选择个人头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
     if (filePath.isEmpty()) return;
     QImage img;
-    if (!img.load(filePath)) {
-        QMessageBox::warning((QWidget*)this->parent(), "错误", "无法加载该图片，请检查格式！");
-        return;
-    }
-    // 缩放图片尺寸以适应系统展示的最高像素需求，避免内存浪费
+    if (!img.load(filePath)) { QMessageBox::warning(pw, "错误", "无法加载该图片！"); return; }
     QImage scaledImg = img.scaled(256, 256, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-    // 居中裁剪构建标准正方形头像数据矩阵
     int side = qMin(scaledImg.width(), scaledImg.height());
     QImage squareImg = scaledImg.copy((scaledImg.width() - side) / 2, (scaledImg.height() - side) / 2, side, side);
-    // 转换为JPG格式并执行强级质量压缩，大幅降低底层网络传输压力与数据库负载
     QByteArray bytes;
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
     squareImg.save(&buffer, "JPG", 70);
+
+    // 客户端本地保存一份到项目源码目录下的 avatars/姓名/
+    QString localDir = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/avatars/" + m_currentUser + "/";
+    QDir().mkpath(localDir);
+    QString localPath = localDir + m_currentUser + ".jpg";
+    QFile localFile(localPath);
+    if (localFile.open(QIODevice::WriteOnly)) {
+        localFile.write(bytes);
+        localFile.close();
+    }
+
+    // 发送给服务端存储
     QJsonObject req;
-    req["type"] = "update_profile_field";
+    req["type"] = "upload_avatar_file";
     req["name"] = m_currentUser;
-    req["field"] = "avatar";
-    req["value"] = QString(bytes.toBase64());
+    req["avatar_data"] = QString(bytes.toBase64());
     QJsonObject res = NetworkHelper::request(req);
-    if (res["status"].toString() != "success") {
-        QMessageBox::warning((QWidget*)this->parent(), "错误", "头像上传失败: " + res["msg"].toString());
-    }
-    else {
-        QMessageBox::information((QWidget*)this->parent(), "成功", "头像已修改。");
-    }
+    if (res["status"].toString() != "success") QMessageBox::warning(pw, "错误", "头像上传失败: " + res["msg"].toString());
+    else QMessageBox::information(pw, "成功", "头像已修改。");
     loadUserProfile(m_currentUser);
 }
 // 调度底层打印引擎，将用户的档案记录以原生绘图模式导出为PDF电子文件
@@ -426,10 +448,138 @@ void ProfileModule::onExportProfilePdfClicked() {
     QMessageBox::information((QWidget*)this->parent(), "导出成功",
         "员工档案已成功导出为 PDF");
 }
-// 抛出相关信号以唤醒外部人脸识别引擎完成底层的特征更新操作
+// ===== 问题2：人脸重采必须走审批流（管理员直接重采）=====
 void ProfileModule::onReRegisterFaceClicked() {
-    if (QMessageBox::question((QWidget*)this->parent(), "重新录入人脸", "点击【Yes】将跳转录入人脸，原有人脸特征将被覆盖。") == QMessageBox::Yes) {
-        emit requestFaceReRegister(m_currentUser);
+    QWidget* pw = (QWidget*)this->parent();
+
+    // 统一使用 query_approval_candidates 获取角色信息和审批人（与PunchModule一致）
+    QJsonObject cReq; cReq["type"] = "query_approval_candidates"; cReq["name"] = m_currentUser;
+    QJsonObject cRes = NetworkHelper::request(cReq);
+    if (cRes.isEmpty() || !cRes.contains("my_role")) {
+        QMessageBox::critical(pw, "错误", "无法获取审批信息，请检查网络！");
+        return;
+    }
+
+    QString role = cRes["my_role"].toString();
+    QString dept = cRes["my_dept"].toString();
+    QString jobTitle = cRes["my_job"].toString();
+    QJsonArray hrArr = cRes["hr_list"].toArray();
+    QJsonArray gmArr = cRes["gm_list"].toArray();
+    QJsonArray mgrArr = cRes["mgr_list"].toArray();
+
+    QDialog dialog(pw);
+    dialog.setWindowTitle("人脸重录申请单");
+    dialog.resize(500, 450);
+    QFormLayout* form = new QFormLayout(&dialog);
+    form->setContentsMargins(25, 25, 25, 25);
+    form->setSpacing(15);
+
+    QString modernInputStyle =
+        "QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
+        "QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
+        "QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
+        "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
+        "QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
+
+    QLabel* tip = new QLabel("人脸特征重采集需经审批通过后方可执行。\n请填写申请理由并选择审批人。");
+    tip->setStyleSheet("color: #E6A23C; font-size: 16px; margin-bottom: 8px; line-height: 1.5;");
+    form->addRow(tip);
+
+    QTextEdit* reasonEdit = new QTextEdit(&dialog);
+    reasonEdit->setPlaceholderText("请输入人脸重录原因（如：面部变化、原照片质量差等）");
+    reasonEdit->setMaximumHeight(80);
+    reasonEdit->setStyleSheet(modernInputStyle);
+    form->addRow("申请理由:", reasonEdit);
+
+    auto fillFromArray = [](QComboBox* cb, const QJsonArray& arr, const QString& prefix) {
+        cb->clear();
+        for (int i = 0; i < arr.size(); ++i) {
+            QString name = arr[i].toString();
+            cb->addItem(prefix + name, name);
+        }
+        };
+
+    QComboBox* app1 = new QComboBox(&dialog), * app2 = new QComboBox(&dialog), * app3 = new QComboBox(&dialog);
+    app1->setStyleSheet(modernInputStyle);
+    app2->setStyleSheet(modernInputStyle);
+    app3->setStyleSheet(modernInputStyle);
+
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: "); };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: "); };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+
+    int levels = 0;
+    if (dept == "总经办" && jobTitle == "总经理") {
+        levels = 1; fillHR(app1);
+        form->addRow("第一审批人(人资经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (dept == "总经办") {
+        levels = 2; fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (dept == "人力资源部" && jobTitle == "部门经理") {
+        levels = 1; fillGM(app1);
+        form->addRow("第一审批人(总经理):", app1);
+        app2->setVisible(false); app3->setVisible(false);
+    }
+    else if (dept == "人力资源部") {
+        levels = 2; fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (jobTitle == "部门经理") {
+        levels = 2; fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else {
+        levels = 3; fillDeptMgr(app1); fillGM(app2); fillHR(app3);
+        form->addRow("第一审批人(部门经理):", app1);
+        form->addRow("第二审批人(总经理):", app2);
+        form->addRow("第三审批人(人资经理):", app3);
+    }
+
+    QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    bb->button(QDialogButtonBox::Ok)->setText("提交申请");
+    bb->button(QDialogButtonBox::Ok)->setStyleSheet("QPushButton { background-color: #67C23A; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #85CE61; }");
+    bb->button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 20px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
+    form->addRow(bb);
+    connect(bb, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        if (app1->count() == 0) {
+            QMessageBox::critical(pw, "失败", "无有效的第一审批人，请联系管理员！");
+            return;
+        }
+        QString reason = reasonEdit->toPlainText().trimmed();
+        if (reason.isEmpty()) { QMessageBox::warning(pw, "提示", "请填写申请理由！"); return; }
+
+        QStringList chainList;
+        chainList << app1->currentData().toString();
+        if (levels >= 2 && app2->count() > 0) chainList << app2->currentData().toString();
+        if (levels >= 3 && app3->count() > 0) chainList << app3->currentData().toString();
+
+        QJsonObject req;
+        req["type"] = "face_reregister_request";
+        req["applicant"] = m_currentUser;
+        req["reason"] = reason;
+        req["approver"] = chainList.join(",");
+
+        QJsonObject res = NetworkHelper::request(req);
+        if (res["status"].toString() == "success") {
+            QMessageBox::information(pw, "申请已提交",
+                QString("人脸重录申请已提交,可在【我的申请进度】查看状态。")
+                .arg(levels).arg(chainList.join(" → ")));
+        }
+        else {
+            QMessageBox::warning(pw, "提交失败", res["msg"].toString());
+        }
     }
 }
 // 唤出本地设置交互面板并将偏好属性持久化至配置文件
