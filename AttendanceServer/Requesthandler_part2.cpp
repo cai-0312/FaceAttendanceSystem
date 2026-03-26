@@ -43,20 +43,17 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
     QString fromUser = json["from"].toString();
     QString content = json["msg"].toString();
     QString fileName = json["filename"].toString();
-    // 判断是否为群聊消息（通过 type 前缀识别）
     bool    isGroup = type.startsWith("group_");
-    // 群聊的目标是部门名称，单聊的目标是用户名
     QString target = isGroup ? json["department"].toString() : json["to"].toString();
-    // Base64 保护聊天文本防止 ODBC 吞表情包
+
     QString dbContent = content;
     if (type == "chat" || type == "group_chat") {
         dbContent = encodeContent(content);
     }
-    // 将所有消息落库到历史记录表
     QSqlQuery histQ(db);
     histQ.prepare(
-        "INSERT INTO chat_history (sender, receiver, msg_type, content, filename, send_time, is_group) "
-        "VALUES (?, ?, ?, ?, ?, NOW(), ?)"
+        "INSERT INTO chat_history (sender, receiver, msg_type, content, filename, send_time, is_group, is_read) "
+        "VALUES (?, ?, ?, ?, ?, NOW(), ?, 0)"
     );
     histQ.addBindValue(fromUser);
     histQ.addBindValue(target);
@@ -68,16 +65,14 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
     // ── 私聊路由 ──────────────────────────────────────────────
     if (!isGroup) {
         bool isOnline = server->isClientOnline(target);
-        // 如果目标在线，直接获取其 Socket 并转发原始数据包
         if (isOnline) {
-            QTcpSocket* targetSocket = nullptr;
-            QMetaObject::invokeMethod(server, [server, target, &targetSocket]() {
-                targetSocket = server->getSocketByName(target);
-                }, Qt::BlockingQueuedConnection);
+            // 🚩 核心修复：彻底抛弃 BlockingQueuedConnection 防止死锁！直接获取 Socket！
+            QTcpSocket* targetSocket = server->getSocketByName(target);
             if (targetSocket) {
                 QMetaObject::invokeMethod(targetSocket, [targetSocket, rawData]() {
                     targetSocket->write(rawData);
                     }, Qt::QueuedConnection);
+
                 QMetaObject::invokeMethod(server, [server, fromUser, target, type]() {
                     server->logMessage(QString("<font color='#E6A23C'>消息转发: [%1] -> [%2] (%3)</font>")
                         .arg(fromUser, target, type));
@@ -85,7 +80,7 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
             }
         }
         else {
-            // 如果目标不在线，拦截消息并存入离线消息表，等待其下次登录时补发
+            // 目标不在线，拦截存入离线信箱
             QSqlQuery offQ(db);
             offQ.prepare(
                 "INSERT INTO offline_messages "
@@ -99,43 +94,34 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
             offQ.bindValue(":f", fileName);
             if (offQ.exec()) {
                 QMetaObject::invokeMethod(server, [server, target, type]() {
-                    server->logMessage(QString("拦截成功: 目标 [%1] 不在线，%2 已转入离线信箱。")
-                        .arg(target, type));
+                    server->logMessage(QString("拦截成功: 目标 [%1] 不在线，%2 已转入离线信箱。").arg(target, type));
                     }, Qt::QueuedConnection);
             }
         }
-        return; // 私聊处理完毕，直接返回
+        return;
     }
     // ── 群发路由 ──────────────────────────────────────────────
-    // 记录群发日志
     QMetaObject::invokeMethod(server, [server, fromUser, target]() {
-        server->logMessage(QString("<font color='#9C27B0'>群发路由: [%1] 向 [%2] 发送了群消息。</font>")
-            .arg(fromUser, target));
+        server->logMessage(QString("<font color='#9C27B0'>群发路由: [%1] 向 [%2] 发送了群消息。</font>").arg(fromUser, target));
         }, Qt::QueuedConnection);
-    // 查询目标群组中的所有成员名单
+
     QSqlQuery groupQ(db);
     if (target == "公司总群") {
-        // 总群查询除超管和 admin 外的所有员工
         groupQ.exec("SELECT name FROM users WHERE role != '超级管理员' AND account != 'admin'");
     }
     else {
-        // 部门群查询对应部门下的员工
         groupQ.prepare("SELECT name FROM users WHERE department = :d AND role != '超级管理员'");
         groupQ.bindValue(":d", target);
         groupQ.exec();
     }
-    // 遍历群成员并逐一分发消息
+
     while (groupQ.next()) {
         QString member = groupQ.value(0).toString().trimmed();
-        // 排除发送者自己
         if (member == fromUser) continue;
+
         bool isOnline = server->isClientOnline(member);
         if (isOnline) {
-            // 成员在线，直接通过 Socket 转发
-            QTcpSocket* targetSocket = nullptr;
-            QMetaObject::invokeMethod(server, [server, member, &targetSocket]() {
-                targetSocket = server->getSocketByName(member);
-                }, Qt::BlockingQueuedConnection);
+            QTcpSocket* targetSocket = server->getSocketByName(member);
             if (targetSocket) {
                 QMetaObject::invokeMethod(targetSocket, [targetSocket, rawData]() {
                     targetSocket->write(rawData);
@@ -143,19 +129,14 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
             }
         }
         else {
-            // 成员离线，存入该成员的离线消息信箱
             QSqlQuery insertQ(db);
             insertQ.prepare(
                 "INSERT INTO offline_messages "
                 "(sender, receiver, department, msg_type, content, filename, send_time) "
                 "VALUES (:s, :r, :d, :t, :c, :f, NOW())"
             );
-            insertQ.bindValue(":s", fromUser);
-            insertQ.bindValue(":r", member);
-            insertQ.bindValue(":d", target);
-            insertQ.bindValue(":t", type);
-            insertQ.bindValue(":c", dbContent);
-            insertQ.bindValue(":f", fileName);
+            insertQ.bindValue(":s", fromUser); insertQ.bindValue(":r", member); insertQ.bindValue(":d", target);
+            insertQ.bindValue(":t", type); insertQ.bindValue(":c", dbContent); insertQ.bindValue(":f", fileName);
             insertQ.exec();
         }
     }
@@ -166,15 +147,12 @@ void RequestHandler::handleQueryChatHistory(QSqlDatabase& db, QTcpSocket* socket
     QString me = json["me"].toString();
     QString target = json["target"].toString();
     bool    isGroup = json["is_group"].toBool();
-    // 根据是否为群聊拼接不同的查询 SQL，格式化时间为 月-日 时:分
     QString sql = isGroup
-        ? QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') "
-            "FROM chat_history WHERE receiver = '%1' AND is_group = 1 "
-            "ORDER BY send_time ASC LIMIT 100").arg(target)
-        : QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i') "
+        ? QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i'), is_read "
+            "FROM chat_history WHERE receiver = '%1' AND is_group = 1 ORDER BY send_time ASC LIMIT 100").arg(target)
+        : QString("SELECT sender, msg_type, content, filename, DATE_FORMAT(send_time, '%m-%d %H:%i'), is_read "
             "FROM chat_history WHERE ((sender='%1' AND receiver='%2') OR (sender='%2' AND receiver='%1')) "
             "AND is_group = 0 ORDER BY send_time ASC LIMIT 100").arg(me, target);
-
     QJsonArray arr;
     QSqlQuery q(db);
     if (q.exec(sql)) {
@@ -185,13 +163,11 @@ void RequestHandler::handleQueryChatHistory(QSqlDatabase& db, QTcpSocket* socket
             o["content"] = decodeContent(q.value(2).toString());
             o["filename"] = q.value(3).toString();
             o["time"] = q.value(4).toString();
+            o["is_read"] = q.value(5).toInt(); 
             arr.append(o);
         }
     }
-    QJsonObject res;
-    res["status"] = "success";
-    res["data"] = arr;
-    sendJson(socket, res);
+    QJsonObject res; res["status"] = "success"; res["data"] = arr; sendJson(socket, res);
 }
 // 查询聊天联系人列表及组织架构
 void RequestHandler::handleQueryChatContacts(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
@@ -264,16 +240,25 @@ void RequestHandler::handleQueryGroupMembers(QSqlDatabase& db, QTcpSocket* socke
     sendJson(socket, res);
 }
 // 处理客户端发回的已读回执
-void RequestHandler::handleReadReceipt(QSqlDatabase& /*db*/, QTcpSocket* /*socket*/,
+void RequestHandler::handleReadReceipt(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
-    QString toUser = json["to"].toString();
-    QTcpSocket* targetSocket = server->getSocketByName(toUser);
-    if (targetSocket) {
-        QByteArray outData = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
-        QMetaObject::invokeMethod(targetSocket, [targetSocket, outData]() {
-            targetSocket->write(outData);
-            }, Qt::QueuedConnection);
+    QString reader = json["from"].toString(); // 当前正在看聊天界面的用户
+    QString senderUser = json["to"].toString(); // 消息的发送方
+    QSqlQuery q(db);
+    q.prepare("UPDATE chat_history SET is_read = 1 WHERE sender = :s AND receiver = :r AND is_read = 0");
+    q.bindValue(":s", senderUser);
+    q.bindValue(":r", reader);
+    q.exec();
+    bool isOnline = server->isClientOnline(senderUser);
+    if (isOnline) {
+        QTcpSocket* targetSocket = server->getSocketByName(senderUser);
+        if (targetSocket) {
+            QByteArray outData = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
+            QMetaObject::invokeMethod(targetSocket, [targetSocket, outData]() {
+                targetSocket->write(outData);
+                }, Qt::QueuedConnection);
+        }
     }
 }
 // 处理系统强制全员广播消息
