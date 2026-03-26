@@ -20,6 +20,7 @@
 #include <QProcess>
 #include <QCheckBox>
 #include <QTimer>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -245,8 +246,8 @@ void PunchModule::onManualPunchClicked() {
         if (claimName == m_currentFaceName && m_currentFaceName != "未知访客" && !m_currentFeatureBytes.isEmpty()) {
 
             QJsonObject req;
-            req["type"] = "secure_punch_request"; 
-            req["feature"] = QString(m_currentFeatureBytes.toBase64()); 
+            req["type"] = "secure_punch_request";
+            req["feature"] = QString(m_currentFeatureBytes.toBase64());
             QJsonObject res = NetworkHelper::request(req);
             if (res["status"].toString() == "success") {
                 speakText("考勤指令已加密下发，核验通过");
@@ -336,41 +337,53 @@ void PunchModule::onAppealRequestClicked() {
     auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
-    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理");
-    bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
-    bool isTwoLevel = false;
-    if (!isGM && !isHRManager) {
-        if (applicantDept == "人力资源部") isTwoLevel = true;
-        else if (applicantJob == "部门经理") isTwoLevel = true;
-        else if (applicantDept == "总经办") isTwoLevel = true;
-    }
+    // 按5场景动态生成审批链
     int approvalLevels = 0;
-    // 动态生成审批人员层级链路
-    if (isGM) {
+    if (applicantDept == "总经办" && applicantJob == "总经理") {
+        // 场景二：总经办总经理 → 人资经理
         approvalLevels = 1;
         fillHR(app1);
         form->addRow("第一审批人(人资经理):", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
-    else if (isHRManager) {
+    else if (applicantDept == "总经办") {
+        // 场景一：总经办非总经理 → 总经理→人资经理
+        approvalLevels = 2;
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
+        // 场景三：人资部门经理 → 总经理
         approvalLevels = 1;
         fillGM(app1);
         form->addRow("第一审批人(总经理):", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
-    else if (isTwoLevel) {
+    else if (applicantDept == "人力资源部") {
+        // 场景四：人资部非经理 → 总经理→人资经理
         approvalLevels = 2;
-        fillHR(app1); fillGM(app2);
-        form->addRow("第一审批人(人资经理):", app1);
-        form->addRow("第二审批人(总经理):", app2);
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (applicantJob == "部门经理") {
+        // 场景六：其余部门的部门经理 → 总经理→人资经理
+        approvalLevels = 2;
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
         app3->setVisible(false);
     }
     else {
+        // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
-        fillDeptMgr(app1); fillHR(app2); fillGM(app3);
+        fillDeptMgr(app1); fillGM(app2); fillHR(app3);
         form->addRow("第一审批人(部门经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
-        form->addRow("第三审批人(总经理):", app3);
+        form->addRow("第二审批人(总经理):", app2);
+        form->addRow("第三审批人(人资经理):", app3);
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申诉");
@@ -501,41 +514,48 @@ void PunchModule::onLeaveRequestClicked()
     auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
-    bool isGM = (applicantDept == "总经办" && applicantJob == "总经理");
-    bool isHRManager = (applicantDept == "人力资源部" && applicantJob == "部门经理");
-    bool isTwoLevel = false;
-    if (!isGM && !isHRManager) {
-        if (applicantDept == "人力资源部") isTwoLevel = true;
-        else if (applicantJob == "部门经理") isTwoLevel = true;
-        else if (applicantDept == "总经办") isTwoLevel = true;
-    }
     int approvalLevels = 0;
-    // 动态生成请假流程的人员审批树结构
-    if (isGM) {
+    if (applicantDept == "总经办" && applicantJob == "总经理") {
         approvalLevels = 1;
         fillHR(app1);
         form->addRow("第一审批人(人资经理):", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
-    else if (isHRManager) {
+    else if (applicantDept == "总经办") {
+        approvalLevels = 2;
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
         approvalLevels = 1;
         fillGM(app1);
         form->addRow("第一审批人(总经理):", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
-    else if (isTwoLevel) {
+    else if (applicantDept == "人力资源部") {
         approvalLevels = 2;
-        fillHR(app1); fillGM(app2);
-        form->addRow("第一审批人(人资经理):", app1);
-        form->addRow("第二审批人(总经理):", app2);
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
+        app3->setVisible(false);
+    }
+    else if (applicantJob == "部门经理") {
+        // 场景六：其余部门的部门经理 → 总经理→人资经理
+        approvalLevels = 2;
+        fillGM(app1); fillHR(app2);
+        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第二审批人(人资经理):", app2);
         app3->setVisible(false);
     }
     else {
+        // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
-        fillDeptMgr(app1); fillHR(app2); fillGM(app3);
+        fillDeptMgr(app1); fillGM(app2); fillHR(app3);
         form->addRow("第一审批人(部门经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
-        form->addRow("第三审批人(总经理):", app3);
+        form->addRow("第二审批人(总经理):", app2);
+        form->addRow("第三审批人(人资经理):", app3);
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申请");
@@ -585,9 +605,14 @@ void PunchModule::onLeaveRequestClicked()
 void PunchModule::onLeaveApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget);
-    apprDlg.setWindowTitle("假条审批");
-    apprDlg.resize(600, 400);
+    apprDlg.setWindowTitle("假条审批中心");
+    apprDlg.resize(800, 550);
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
+
+    QLabel* pendingLabel = new QLabel("📋 待审批");
+    pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
+    layout->addWidget(pendingLabel);
+
     QTableWidget* table = new QTableWidget(&apprDlg);
     table->setColumnCount(6);
     table->setHorizontalHeaderLabels({ "申请人", "类型", "开始时间", "理由", "状态", "操作" });
@@ -612,9 +637,18 @@ void PunchModule::onLeaveApproveClicked() {
             table->setItem(row, 2, new QTableWidgetItem(sTime));
             table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
             table->setItem(row, 4, new QTableWidgetItem("待审批"));
-            QPushButton* btnPass = new QPushButton("批准");
-            btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px;");
-            table->setCellWidget(row, 5, btnPass);
+            // 操作列：通过 + 驳回 双按钮
+            QWidget* opWidget = new QWidget();
+            QHBoxLayout* opLayout = new QHBoxLayout(opWidget);
+            opLayout->setContentsMargins(2, 2, 2, 2);
+            opLayout->setSpacing(4);
+            QPushButton* btnPass = new QPushButton("✅通过");
+            btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
+            QPushButton* btnReject = new QPushButton("❌驳回");
+            btnReject->setStyleSheet("background-color: #F56C6C; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
+            opLayout->addWidget(btnPass);
+            opLayout->addWidget(btnReject);
+            table->setCellWidget(row, 5, opWidget);
             connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {
                 QJsonObject passReq;
                 passReq["type"] = "leave_approve";
@@ -623,12 +657,65 @@ void PunchModule::onLeaveApproveClicked() {
                 passReq["start_time"] = sTime;
                 passReq["end_time"] = eTime;
                 passReq["leave_type"] = lType;
+                passReq["approver"] = m_loginName;
+                passReq["action"] = "approve";
                 NetworkHelper::request(passReq);
+                QMessageBox::information(&apprDlg, "已通过", "请假申请已批准");
+                apprDlg.accept();
+                });
+            connect(btnReject, &QPushButton::clicked, [=, &apprDlg]() {
+                bool ok = false;
+                QString reason = QInputDialog::getMultiLineText(&apprDlg, "驳回理由",
+                    QString("请输入驳回 [%1] 请假申请的理由:").arg(applicant), "", &ok);
+                if (!ok || reason.trimmed().isEmpty()) return;
+                QJsonObject rejReq;
+                rejReq["type"] = "leave_approve";
+                rejReq["reqId"] = reqId;
+                rejReq["applicant"] = applicant;
+                rejReq["approver"] = m_loginName;
+                rejReq["action"] = "reject";
+                rejReq["reject_reason"] = reason.trimmed();
+                NetworkHelper::request(rejReq);
+                QMessageBox::information(&apprDlg, "已驳回", "请假申请已被驳回。");
                 apprDlg.accept();
                 });
         }
     }
     layout->addWidget(table);
+
+    // ── 已审批记录区域 ──
+    QLabel* doneLabel = new QLabel("✅ 已审批的记录");
+    doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
+    layout->addWidget(doneLabel);
+
+    QTableWidget* doneTable = new QTableWidget(&apprDlg);
+    doneTable->setColumnCount(6);
+    doneTable->setHorizontalHeaderLabels({ "申请人", "请假类型", "时间", "审批链", "当前状态", "驳回理由" });
+    doneTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    doneTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    if (res["status"].toString() == "success") {
+        QJsonArray doneArr = res["done_data"].toArray();
+        for (int i = 0; i < doneArr.size(); ++i) {
+            QJsonObject rowObj = doneArr[i].toObject();
+            int row = doneTable->rowCount();
+            doneTable->insertRow(row);
+            doneTable->setItem(row, 0, new QTableWidgetItem(rowObj["applicant"].toString()));
+            doneTable->setItem(row, 1, new QTableWidgetItem(rowObj["type"].toString()));
+            doneTable->setItem(row, 2, new QTableWidgetItem(rowObj["start"].toString()));
+            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✅").replace("[✗]", "❌");
+            doneTable->setItem(row, 3, new QTableWidgetItem(chain));
+            QString st = rowObj["status"].toString();
+            QTableWidgetItem* stItem = new QTableWidgetItem(st);
+            if (st == "已批准") stItem->setForeground(QColor("#67C23A"));
+            else if (st == "已驳回") stItem->setForeground(QColor("#F56C6C"));
+            else stItem->setForeground(QColor("#E6A23C"));
+            doneTable->setItem(row, 4, stItem);
+            doneTable->setItem(row, 5, new QTableWidgetItem(rowObj["reject_reason"].toString()));
+        }
+    }
+    layout->addWidget(doneTable);
+
     apprDlg.exec();
 }
 // 申诉审批工作流：处理员工由于异常打卡提出的申诉，并在通过后重写考勤数据底表
@@ -636,9 +723,15 @@ void PunchModule::onAppealApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget);
     apprDlg.setWindowTitle("申诉审批中心");
-    apprDlg.resize(750, 400);
+    apprDlg.resize(800, 550);
 
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
+
+    // ── 待审批区域 ──
+    QLabel* pendingLabel = new QLabel("📋 待审批");
+    pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
+    layout->addWidget(pendingLabel);
+
     QTableWidget* table = new QTableWidget(&apprDlg);
     table->setColumnCount(6);
     table->setHorizontalHeaderLabels({ "申请人", "异常时间/日期", "申诉类型", "理由", "状态", "操作" });
@@ -647,7 +740,6 @@ void PunchModule::onAppealApproveClicked() {
     QJsonObject req;
     req["type"] = "query_pending_appeals";
     req["approver"] = m_loginName;
-
     QJsonObject res = NetworkHelper::request(req);
 
     if (res["status"].toString() == "success") {
@@ -656,22 +748,26 @@ void PunchModule::onAppealApproveClicked() {
             QJsonObject rowObj = arr[i].toObject();
             int row = table->rowCount();
             table->insertRow(row);
-
             int reqId = rowObj["id"].toInt();
             QString applicant = rowObj["applicant"].toString();
             QString aTime = rowObj["time"].toString();
             QString aType = rowObj["type"].toString();
-
             table->setItem(row, 0, new QTableWidgetItem(applicant));
             table->setItem(row, 1, new QTableWidgetItem(aTime));
             table->setItem(row, 2, new QTableWidgetItem(aType));
             table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
             table->setItem(row, 4, new QTableWidgetItem("待审批"));
-
-            QPushButton* btnPass = new QPushButton("修正记录");
-            btnPass->setStyleSheet("background-color: #409EFF; color: white; border-radius:3px; padding:4px;");
-            table->setCellWidget(row, 5, btnPass);
-
+            QWidget* opWidget = new QWidget();
+            QHBoxLayout* opLayout = new QHBoxLayout(opWidget);
+            opLayout->setContentsMargins(2, 2, 2, 2);
+            opLayout->setSpacing(4);
+            QPushButton* btnPass = new QPushButton("✅通过");
+            btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
+            QPushButton* btnReject = new QPushButton("❌驳回");
+            btnReject->setStyleSheet("background-color: #F56C6C; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
+            opLayout->addWidget(btnPass);
+            opLayout->addWidget(btnReject);
+            table->setCellWidget(row, 5, opWidget);
             connect(btnPass, &QPushButton::clicked, [=, &apprDlg]() {
                 QJsonObject passReq;
                 passReq["type"] = "appeal_approve";
@@ -679,15 +775,64 @@ void PunchModule::onAppealApproveClicked() {
                 passReq["applicant"] = applicant;
                 passReq["abnormal_time"] = aTime;
                 passReq["appeal_type"] = aType;
-
+                passReq["approver"] = m_loginName;
+                passReq["action"] = "approve";
                 NetworkHelper::request(passReq);
-
-                QMessageBox::information(&apprDlg, "已处理", "指令已下发，服务器将完美修正记录！");
+                QMessageBox::information(&apprDlg, "已通过", "申诉已批准");
+                apprDlg.accept();
+                });
+            connect(btnReject, &QPushButton::clicked, [=, &apprDlg]() {
+                bool ok = false;
+                QString reason = QInputDialog::getMultiLineText(&apprDlg, "驳回理由",
+                    QString("请输入驳回 [%1] 申诉的理由:").arg(applicant), "", &ok);
+                if (!ok || reason.trimmed().isEmpty()) return;
+                QJsonObject rejReq;
+                rejReq["type"] = "appeal_approve";
+                rejReq["reqId"] = reqId;
+                rejReq["applicant"] = applicant;
+                rejReq["approver"] = m_loginName;
+                rejReq["action"] = "reject";
+                rejReq["reject_reason"] = reason.trimmed();
+                NetworkHelper::request(rejReq);
+                QMessageBox::information(&apprDlg, "已驳回", "申诉已被驳回");
                 apprDlg.accept();
                 });
         }
     }
     layout->addWidget(table);
+
+    // ── 已审批记录区域 ──
+    QLabel* doneLabel = new QLabel("✅ 已审批记录");
+    doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
+    layout->addWidget(doneLabel);
+
+    QTableWidget* doneTable = new QTableWidget(&apprDlg);
+    doneTable->setColumnCount(6);
+    doneTable->setHorizontalHeaderLabels({ "申请人", "申诉类型", "理由", "审批链", "当前状态", "驳回理由" });
+    doneTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    doneTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    if (res["status"].toString() == "success") {
+        QJsonArray doneArr = res["done_data"].toArray();
+        for (int i = 0; i < doneArr.size(); ++i) {
+            QJsonObject rowObj = doneArr[i].toObject();
+            int row = doneTable->rowCount();
+            doneTable->insertRow(row);
+            doneTable->setItem(row, 0, new QTableWidgetItem(rowObj["applicant"].toString()));
+            doneTable->setItem(row, 1, new QTableWidgetItem(rowObj["type"].toString()));
+            doneTable->setItem(row, 2, new QTableWidgetItem(rowObj["reason"].toString()));
+            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✅").replace("[✗]", "❌");
+            doneTable->setItem(row, 3, new QTableWidgetItem(chain));
+            QString st = rowObj["status"].toString();
+            QTableWidgetItem* stItem = new QTableWidgetItem(st);
+            if (st == "已批准") stItem->setForeground(QColor("#67C23A"));
+            else if (st == "已驳回") stItem->setForeground(QColor("#F56C6C"));
+            else stItem->setForeground(QColor("#E6A23C"));
+            doneTable->setItem(row, 4, stItem);
+            doneTable->setItem(row, 5, new QTableWidgetItem(rowObj["reject_reason"].toString()));
+        }
+    }
+    layout->addWidget(doneTable);
     apprDlg.exec();
 }
 // 界面系统时间驱动函数
