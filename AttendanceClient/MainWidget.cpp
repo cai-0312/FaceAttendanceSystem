@@ -58,8 +58,9 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     registerModule = new RegisterModule(ui->label_Camera_Register, this);
     // 实例化基于大语言模型的智能问答助手模块
     m_aiModule = new AIAssistantModule(ui->textBrowser_AI, ui->lineEdit_AIInput, ui->btn_SendAI, ui->btn_ClearAIHistory, m_loginName, this);
-    // 实例化主页大屏数据可视化模块
-    homeModule = new HomeModule(ui->verticalLayout_Home, m_role, m_loginName, this);
+    // 实例化主页大屏数据可视化模块（问题1：传入部门和职务用于权限过滤）
+    QString jobTitle = uRes["job_title"].toString();
+    homeModule = new HomeModule(ui->verticalLayout_Home, m_role, m_loginName, dept, jobTitle, this);
     // 实例化企业内部即时通讯模块，并建立底层 TCP 长连接
     chatModule = new ChatModule(ui->listWidget_Contacts, ui->textBrowser_Chat, ui->lineEdit_ChatMessage,
         ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
@@ -255,6 +256,16 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     // 启动时触发个人信息及主页大屏数据加载
     if (profileModule) profileModule->loadUserProfile(m_loginName);
     if (homeModule) homeModule->refreshDashboard();
+
+    // 问题4：启动大屏数据自动轮询刷新定时器（30秒周期）
+    QTimer* dashboardTimer = new QTimer(this);
+    connect(dashboardTimer, &QTimer::timeout, this, [this]() {
+        // 仅在首页Tab激活时自动刷新，避免后台无效请求
+        if (ui->stackedWidget->currentIndex() == 0 && homeModule) {
+            homeModule->refreshDashboard();
+        }
+        });
+    dashboardTimer->start(30000);
 }
 // 析构函数：保证多线程被安全释放
 MainWidget::~MainWidget() {
