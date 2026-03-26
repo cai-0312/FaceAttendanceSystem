@@ -187,7 +187,7 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     btnSend->setFixedSize(90, 32);
     wrapperLayout->addWidget(m_textEdit, 0, 0); 
     wrapperLayout->addWidget(btnSend, 0, 0, Qt::AlignBottom | Qt::AlignRight);
-    btnSend->setContentsMargins(10, 10, 15, 15);
+    btnSend->setContentsMargins(15, 15, 15, 15);
     connect(btnSend, &QPushButton::clicked, this, &ChatModule::sendMessage);
     bottomLayout->addWidget(textEditWrapper, 1); 
 
@@ -349,14 +349,24 @@ void ChatModule::onContactSwitched(int currentRow) {
             else {
                 displayMsg = content.toHtmlEscaped();
             }
-            // 根据发送方装配 HTML 气泡格式
+            int isRead = o["is_read"].toInt();
             if (sender == m_myName) {
-                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
-                    "<span style='color:#999999; font-size:12px;'>%2 [我]</span>").arg(msgHash, timeStr);
+                QString readStatusHtml = "";
+                if (!m_isCurrentGroup) {
+                    if (isRead == 0) {
+                        readStatusHtml = "&nbsp;&nbsp;<span style='color:#909399;'>(未读)</span>";
+                    }
+                    else {
+                        readStatusHtml = "&nbsp;&nbsp;<span style='color:#909399;'>(已读)</span>";
+                    }
+                }
+                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px;'>[删除]</a>&nbsp;&nbsp;"
+                    "<span style='color:#999999; font-size:12px;'>%2 [我]</span>%3").arg(msgHash, timeStr, readStatusHtml);
+
                 bubbleHtml = QString(
                     "<div style='text-align:right; margin-bottom:10px;'>"
                     "%1<br>"
-                    "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000;'>%2</span>"
+                    "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000; text-align:left;'>%2</span>"
                     "</div>"
                 ).arg(header, displayMsg);
             }
@@ -394,7 +404,7 @@ void ChatModule::sendMessage() {
         }
     }
     while (m_recentEmojis.size() > 10) m_recentEmojis.removeLast();
-    QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
+    QString timeStr = QDateTime::currentDateTime().toString("MM-dd HH:mm");
     QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString readStatus = m_isCurrentGroup ? "" : QString("<span style='color:#AAAAAA; font-size:12px;'> (未读)</span>");
     // 渲染发送出去的 HTML 气泡
