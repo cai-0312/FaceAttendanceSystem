@@ -33,16 +33,16 @@ public:
     static void handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    // 修改密码
+    static void handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    // 人脸重录审批
+    static void handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
+    // 头像文件系统存储
+    static void handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     // ── 管理员操作 ───────────────────────────────────────────────
     static void handleAdminResetPassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handleAdminDeleteUser(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
     static void handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server);
-    // 问题3：修改密码
-    static void handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
-    // 问题2：人脸重录审批
-    static void handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
-    // 问题4：头像文件系统存储
-    static void handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryDeptList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     // ── 考勤核心 ─────────────────────────────────────────────────

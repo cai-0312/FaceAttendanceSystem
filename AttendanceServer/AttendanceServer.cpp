@@ -417,15 +417,15 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["admin_modify_status"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleAdminModifyStatus(db, s, j, this);
         };
-    // 问题3：修改密码
+    // 修改密码
     m_dispatchTable["verify_and_update_password"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleVerifyAndUpdatePassword(db, s, j);
         };
-    // 问题2：人脸重录审批
+    // 人脸重录审批
     m_dispatchTable["face_reregister_request"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleFaceReregisterRequest(db, s, j);
         };
-    // 问题4：头像文件上传/读取
+    // 头像文件上传/读取
     m_dispatchTable["upload_avatar_file"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleUploadAvatarFile(db, s, j);
         };
