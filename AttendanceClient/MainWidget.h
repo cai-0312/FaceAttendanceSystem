@@ -17,6 +17,7 @@
 #include "NoticePopup.h"
 #include <QTextEdit>
 #include "RetinaFaceDecoder.h"
+class AttendanceClient;
 namespace Ui { class MainWidget; }
 struct PunchState {                                             // 考勤状态结构体用于记录防抖状态
     QDateTime lastPunchTime;                                   // 记录上一次成功触发打卡判定的时间
@@ -27,8 +28,10 @@ class MainWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MainWidget(QString loginName, QString role, QWidget* parent = nullptr);             // 构造函数：初始化主界面与各业务模块
-    ~MainWidget();                                                               // 析构函数：释放主界面对象树及后台线程资源
+    explicit MainWidget(QString loginName, QString role, QWidget* parent = nullptr,
+        AttendanceClient* loginWindow = nullptr);
+    ~MainWidget();
+    void forceNavigateTo(int navIndex);                                      // 强制跳转到指定导航页（问题四：人脸绑定）
 protected:
     void closeEvent(QCloseEvent* event) override;                              // 拦截窗口关闭事件，确保摄像头与线程安全退出
 private slots:
@@ -47,7 +50,8 @@ private:
     ChatModule* chatModule;                                          // 局域网即时通讯与文件分发模块
     AIAssistantModule* m_aiModule;                                    // 基于大语言模型的智能考勤问答模块
     HomeModule* homeModule;                                          // 考勤数据可视化大屏展示模块
-    QNetworkAccessManager* m_netManager;                            // 统一的HTTP网络通信资源管理器
+    QNetworkAccessManager* m_netManager;
+    AttendanceClient* m_loginWindow = nullptr;                 // 保存登录窗口指针用于退出登录
     std::map<QString, PunchState> m_punchStates;                   // 内存状态字典，防止由于高帧率造成的频繁打卡请求
 };
 #endif // MAINWIDGET_H

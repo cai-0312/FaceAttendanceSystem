@@ -61,6 +61,7 @@ void HomeModule::refreshDashboard() {
         if (!fetchedDept.isEmpty()) m_department = fetchedDept;
         if (!fetchedJob.isEmpty()) m_jobTitle = fetchedJob;
         m_deptFetched = true;
+        qDebug() << "[HomeModule] Fetched dept=" << m_department << "jobTitle=" << m_jobTitle;
     }
 
     // 渲染顶部筛选工具栏
@@ -90,29 +91,44 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
     QHBoxLayout* toolLay = new QHBoxLayout();
     toolLay->setSpacing(10);
 
-    QLabel* timeLabel = new QLabel("📅 统计周期:");
+    QString iconBase = "../../AttendanceClient/icon_library/";
+
+    QLabel* timeIcon = new QLabel();
+    timeIcon->setPixmap(QIcon(iconBase + "Home/icon_calendar.svg").pixmap(18, 18));
+    timeIcon->setStyleSheet("border:none;");
+    QLabel* timeLabel = new QLabel("统计周期:");
     timeLabel->setStyleSheet("font-size:13px; font-weight:bold; color:#4E5969; border:none;");
+    toolLay->addWidget(timeIcon);
     toolLay->addWidget(timeLabel);
 
     // 问题2：时间维度切换控件
     m_timeCombo = new QComboBox();
     m_timeCombo->addItems({ "本周", "本自然月", "近7天", "近30天" });
     m_timeCombo->setCurrentText(m_timeRange);
-    m_timeCombo->setStyleSheet("QComboBox { border:1px solid #DCDFE6; border-radius:4px; padding:4px 10px; "
-            "min-width:140px; background:white; color:#303133; font-size:13px; }"
-            "QComboBox:hover { border-color:#409EFF; }"
-            "QComboBox::drop-down { subcontrol-origin:padding; subcontrol-position:top right; width:25px; border-left:none; }"
-        "QComboBox::down-arrow { image:none; border-left:5px solid transparent; border-right:5px solid transparent; border-top:5px solid #909399; }");
+    m_timeCombo->setStyleSheet("QComboBox { border:1px solid #DCDFE6; border-radius:4px; padding:4px 10px; min-width:100px; }");
+    m_timeCombo->setStyleSheet(
+        "QComboBox { border:1px solid #DCDFE6; border-radius:4px; padding:4px 10px; "
+        "min-width:140px; background:white; color:#303133; font-size:13px; }"
+        "QComboBox:hover { border-color:#409EFF; }"
+        "QComboBox::drop-down { subcontrol-origin:padding; subcontrol-position:top right; width:25px; border-left:none; }"
+        "QComboBox::down-arrow { image:none; border-left:5px solid transparent; border-right:5px solid transparent; border-top:5px solid #909399; }"
+    );
     connect(m_timeCombo, &QComboBox::currentTextChanged, this, [this](const QString& text) {
         m_timeRange = text;
         refreshDashboard();
         });
     toolLay->addWidget(m_timeCombo);
 
+    // 问题1：部门筛选控件（仅人资经理可见）
     bool isHRManager = (m_department == "人力资源部" && m_jobTitle == "部门经理");
+    qDebug() << "[HomeModule] dept=" << m_department << "jobTitle=" << m_jobTitle << "isHRManager=" << isHRManager;
     if (isHRManager) {
-        QLabel* deptLabel = new QLabel("🏢 查看部门:");
+        QLabel* deptIcon = new QLabel();
+        deptIcon->setPixmap(QIcon(iconBase + "Home/icon_building.svg").pixmap(18, 18));
+        deptIcon->setStyleSheet("border:none;");
+        QLabel* deptLabel = new QLabel("查看部门:");
         deptLabel->setStyleSheet("font-size:13px; font-weight:bold; color:#4E5969; border:none;");
+        toolLay->addWidget(deptIcon);
         toolLay->addWidget(deptLabel);
 
         m_deptCombo = new QComboBox();
@@ -121,6 +137,7 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
         QJsonObject dReq; dReq["type"] = "query_dept_list";
         QJsonObject dRes = NetworkHelper::request(dReq);
         QJsonArray depts = dRes["departments"].toArray();
+        qDebug() << "[HomeModule] dept list size=" << depts.size();
         for (int i = 0; i < depts.size(); i++) m_deptCombo->addItem(depts[i].toString());
         m_deptCombo->setCurrentText(m_filterDept);
         m_deptCombo->setStyleSheet(
@@ -140,7 +157,9 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
     toolLay->addStretch();
 
     // 手动刷新按钮
-    QPushButton* refreshBtn = new QPushButton("🔄 刷新");
+    QPushButton* refreshBtn = new QPushButton(" 刷新");
+    refreshBtn->setIcon(QIcon(iconBase + "Home/btn_refresh.svg"));
+    refreshBtn->setIconSize(QSize(16, 16));
     refreshBtn->setCursor(Qt::PointingHandCursor);
     refreshBtn->setStyleSheet("QPushButton { background:#165DFF; color:white; border-radius:4px; padding:6px 16px; font-weight:bold; } QPushButton:hover { background:#4080FF; }");
     connect(refreshBtn, &QPushButton::clicked, this, &HomeModule::refreshDashboard);
@@ -199,7 +218,7 @@ void HomeModule::renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject
     chartsLayout->setSpacing(15);
     chartsLayout->addWidget(createPieChart(res["pie_chart"].toArray()), 1);
     chartsLayout->addWidget(createBarChart(res["bar_chart"].toArray(),
-        QString("各部门异常排名 (%1)").arg(m_timeRange)), 1);
+        QString("数据排名 (%1)").arg(m_timeRange)), 1);
     chartsLayout->addWidget(createLineChart(res["line_chart"].toArray(),
         QString("出勤趋势 (%1)").arg(m_timeRange)), 1);
     parentLayout->addLayout(chartsLayout, 3);
@@ -311,8 +330,14 @@ void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& 
     for (int i = 0; i < feedArr.size(); ++i) {
         QJsonObject o = feedArr[i].toObject();
         QString st = o["status"].toString();
-        QString icon = st.contains("正常") ? "🟢" : (st.contains("假") ? "🟡" : "🔴");
-        feedList->addItem(QString("[%1] %2 %3 %4").arg(o["time"].toString(), o["name"].toString(), icon, st));
+        QString iconFile = st.contains("正常") ? "Home/dot_green.svg" : (st.contains("假") ? "Home/dot_yellow.svg" : "Home/dot_red.svg");
+        QString dotLabel = st.contains("正常") ? "●" : (st.contains("假") ? "●" : "●");
+        QString dotColor = st.contains("正常") ? "#00B42A" : (st.contains("假") ? "#FF7D00" : "#F53F3F");
+        feedList->addItem(QString("[%1] %2 %3 %4").arg(o["time"].toString(), o["name"].toString(), dotLabel, st));
+        if (feedList->count() > 0) {
+            QListWidgetItem* lastItem = feedList->item(feedList->count() - 1);
+            lastItem->setForeground(QColor(dotColor));
+        }
     }
     if (feedList->count() == 0) feedList->addItem("今日暂无打卡动态...");
     feedLay->addWidget(feedTitle);
@@ -329,7 +354,7 @@ void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& 
     QJsonArray noticeArr = res["notice_list"].toArray();
     for (int i = 0; i < noticeArr.size(); ++i) {
         QJsonObject o = noticeArr[i].toObject();
-        noticeList->addItem(QString("📢 [%1] %2").arg(o["date"].toString(), o["content"].toString()));
+        noticeList->addItem(QString("[%1] %2").arg(o["date"].toString(), o["content"].toString()));
     }
     if (noticeList->count() == 0) noticeList->addItem("暂无最新公告...");
     rightLay->addWidget(noticeTitle);

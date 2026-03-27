@@ -58,42 +58,42 @@
      </property>
      <item>
       <property name="text">
-       <string>🏠  首页大屏</string>
+       <string>  首页大屏</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>📷  考勤打卡</string>
+       <string>  考勤打卡</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>👤  人脸录入</string>
+       <string>  人脸录入</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>📅  考勤记录</string>
+       <string>  考勤记录</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>👥  员工管理</string>
+       <string>  员工管理</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>💬  局域网聊天</string>
+       <string>  局域网聊天</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>🤖  AI 助手</string>
+       <string>  AI 助手</string>
       </property>
      </item>
      <item>
       <property name="text">
-       <string>⚙️  个人信息</string>
+       <string>  个人信息</string>
       </property>
      </item>
     </widget>
@@ -101,7 +101,7 @@
    <item>
     <widget class="QStackedWidget" name="stackedWidget">
      <property name="currentIndex">
-      <number>5</number>
+      <number>0</number>
      </property>
      <widget class="QWidget" name="page_Home">
       <layout class="QVBoxLayout" name="verticalLayout_Home">
@@ -124,7 +124,7 @@
           <string notr="true">color: #1F2329;</string>
          </property>
          <property name="text">
-          <string>📊 考勤数据可视化控制台</string>
+          <string> 考勤数据可视化控制台</string>
          </property>
         </widget>
        </item>
@@ -296,7 +296,7 @@
             <string notr="true">QPushButton { background-color: #F2E6FF; color: #722ED1; border-radius: 8px; border: none; } QPushButton:hover { background-color: #D3ADFF; }</string>
            </property>
            <property name="text">
-            <string>📝 异常申诉</string>
+            <string>异常申诉</string>
            </property>
           </widget>
          </item>
@@ -322,7 +322,7 @@
             <string notr="true">QPushButton { background-color: #FFECE8; color: #F53F3F; border-radius: 8px; border: none; } QPushButton:hover { background-color: #FFCACA; }</string>
            </property>
            <property name="text">
-            <string>🛡️ 审批申诉</string>
+            <string>审批申诉</string>
            </property>
           </widget>
          </item>
@@ -348,7 +348,7 @@
             <string notr="true">QPushButton { background-color: #E1EAFF; color: #3370FF; border-radius: 8px; border: none; } QPushButton:hover { background-color: #BED0FF; }</string>
            </property>
            <property name="text">
-            <string>📅 申请请假</string>
+            <string> 申请请假</string>
            </property>
           </widget>
          </item>
@@ -374,7 +374,7 @@
             <string notr="true">QPushButton { background-color: #FFF0E6; color: #FA6400; border-radius: 8px; border: none; } QPushButton:hover { background-color: #FFD1B2; }</string>
            </property>
            <property name="text">
-            <string>📝 审批请假</string>
+            <string>审批请假</string>
            </property>
           </widget>
          </item>
@@ -400,7 +400,7 @@
             <string notr="true">QPushButton { background-color: #F2F3F5; color: #1F2329; border-radius: 8px; border: none; } QPushButton:hover { background-color: #E5E6EB; }</string>
            </property>
            <property name="text">
-            <string>⚙️ 考勤规则</string>
+            <string> 考勤规则</string>
            </property>
           </widget>
          </item>
@@ -489,7 +489,7 @@
           <string notr="true">QPushButton { background-color: #FFFFFF; color: #1F2329; border-radius: 8px; border: 1px solid #DEE0E3; } QPushButton:hover { background-color: #F2F3F5; }</string>
          </property>
          <property name="text">
-          <string>无法识别？手动打卡辅助</string>
+          <string>  无法识别？手动打卡辅助</string>
          </property>
         </widget>
        </item>
@@ -552,7 +552,7 @@
             <string notr="true">QPushButton { background-color: #3370FF; color: #FFF; border-radius: 8px; border: none; } QPushButton:hover { background-color: #4E83FF; }</string>
            </property>
            <property name="text">
-            <string>📷 开始拍照录入</string>
+            <string>  开始拍照录入</string>
            </property>
           </widget>
          </item>
@@ -599,7 +599,7 @@
              <string notr="true">color: #1F2329; border: none;</string>
             </property>
             <property name="text">
-             <string>📊 考勤数据简报</string>
+             <string> 考勤数据简报</string>
             </property>
            </widget>
           </item>
@@ -654,7 +654,7 @@
              <string notr="true">QPushButton { background-color: #00B42A; color: white; border-radius: 6px; border: none; } QPushButton:hover { background-color: #23C343; }</string>
             </property>
             <property name="text">
-             <string>📥 导出考勤明细</string>
+             <string> 导出考勤明细</string>
             </property>
            </widget>
           </item>
@@ -696,7 +696,7 @@
                  <string notr="true">border: none; color: #1F2329; font-size: 12px;</string>
                 </property>
                 <property name="text">
-                 <string>🟢 正常</string>
+                 <string>正常</string>
                 </property>
                </widget>
               </item>
@@ -706,7 +706,7 @@
                  <string notr="true">border: none; color: #1F2329; font-size: 12px;</string>
                 </property>
                 <property name="text">
-                 <string>🔴 异常</string>
+                 <string>异常</string>
                 </property>
                </widget>
               </item>
@@ -716,7 +716,7 @@
                  <string notr="true">border: none; color: #1F2329; font-size: 12px;</string>
                 </property>
                 <property name="text">
-                 <string>🟡 请假</string>
+                 <string>请假</string>
                 </property>
                </widget>
               </item>
@@ -762,7 +762,7 @@
                  <string notr="true">border: none; color: #1F2329;</string>
                 </property>
                 <property name="text">
-                 <string>📅 日期明细</string>
+                 <string> 日期明细</string>
                 </property>
                </widget>
               </item>
@@ -791,7 +791,7 @@
                  <string notr="true">QLineEdit { background: #F2F3F5; border: none; border-radius: 16px; padding-left: 15px; color: #1F2329; } QLineEdit:focus { border: 1px solid #3370FF; background: #FFF; }</string>
                 </property>
                 <property name="placeholderText">
-                 <string>🔍 搜索</string>
+                 <string>搜索</string>
                 </property>
                </widget>
               </item>
@@ -978,7 +978,7 @@
              <string notr="true">QLineEdit { background: #F2F3F5; border: none; border-radius: 18px; padding-left: 15px; color: #1F2329; } QLineEdit:focus { background: #FFF; border: 1px solid #3370FF; }</string>
             </property>
             <property name="placeholderText">
-             <string>🔍 搜索联系人</string>
+             <string>搜索联系人</string>
             </property>
            </widget>
           </item>
@@ -1138,7 +1138,7 @@
                   <string notr="true">border: none; font-size: 18px;</string>
                  </property>
                  <property name="text">
-                  <string>📁</string>
+                  <string>文件</string>
                  </property>
                  <property name="flat">
                   <bool>true</bool>
@@ -1286,7 +1286,7 @@
              <string notr="true">border: none; color: #1F2329;</string>
             </property>
             <property name="text">
-             <string>✨ 智能办公 AI 助手</string>
+             <string> 智能办公 AI 助手</string>
             </property>
            </widget>
           </item>
@@ -1317,7 +1317,7 @@
              <string notr="true">QPushButton { color: #8F959E; border: none; background: transparent; padding: 5px 10px; } QPushButton:hover { color: #F53F3F; background: #FFECE8; border-radius: 4px; }</string>
             </property>
             <property name="text">
-             <string>🧹暂时清空内容</string>
+             <string>暂时清空内容</string>
             </property>
            </widget>
           </item>
@@ -1395,19 +1395,6 @@
           <item>
            <layout class="QHBoxLayout" name="horizontalLayout_AISend">
             <item>
-             <spacer name="spacer_aiSend">
-              <property name="orientation">
-               <enum>Qt::Orientation::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>0</width>
-                <height>0</height>
-               </size>
-              </property>
-             </spacer>
-            </item>
-            <item>
              <widget class="QPushButton" name="btn_SendAI">
               <property name="minimumSize">
                <size>
@@ -1429,7 +1416,7 @@
                <string notr="true">QPushButton { background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1456F0, stop:1 #3370FF); color: white; border-radius: 8px; border: none; } QPushButton:hover { background-color: #4E83FF; } QPushButton:disabled { background-color: #DEE0E3; color: #8F959E; }</string>
               </property>
               <property name="text">
-               <string>✨ 发 送</string>
+               <string> 发 送</string>
               </property>
              </widget>
             </item>
@@ -1552,27 +1539,27 @@
                 </property>
                 <item>
                  <property name="text">
-                  <string>🟢 在线</string>
+                  <string>在线</string>
                  </property>
                 </item>
                 <item>
                  <property name="text">
-                  <string>🔴 会议中</string>
+                  <string>会议中</string>
                  </property>
                 </item>
                 <item>
                  <property name="text">
-                  <string>⛔ 请勿打扰</string>
+                  <string>请勿打扰</string>
                  </property>
                 </item>
                 <item>
                  <property name="text">
-                  <string>✈️ 出差中</string>
+                  <string>出差中</string>
                  </property>
                 </item>
                 <item>
                  <property name="text">
-                  <string>🌴 休假中</string>
+                  <string>休假中</string>
                  </property>
                 </item>
                </widget>
@@ -1850,7 +1837,7 @@
                  <string notr="true">color: #8F959E; font-size: 12px; margin-top: 5px;</string>
                 </property>
                 <property name="text">
-                 <string>📱 扫一扫 查看联系人</string>
+                 <string> 扫一扫 查看联系人</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignmentFlag::AlignCenter</set>

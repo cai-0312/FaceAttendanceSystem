@@ -27,7 +27,7 @@ NoticePopup::NoticePopup(const QString& title, const QString& content, QWidget* 
     QVBoxLayout* layout = new QVBoxLayout(bgFrame);
     layout->setContentsMargins(15, 15, 15, 15);
     // 标题组件：展示系统通知的摘要信息
-    QLabel* titleLabel = new QLabel("📢 " + title, bgFrame);
+    QLabel* titleLabel = new QLabel(title, bgFrame);
     titleLabel->setStyleSheet("font-weight: bold; font-size: 14px; color: #F56C6C; border: none;");
     // 正文组件：展示系统通知的详细内容，并支持自动换行
     QLabel* contentLabel = new QLabel(content, bgFrame);

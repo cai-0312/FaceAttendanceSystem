@@ -18,11 +18,72 @@
 #include <QJsonArray>
 #include <QTimer>
 #include <QApplication> 
+#include "AttendanceClient.h"
 // 构造函数：初始化主界面 UI 容器，并依次实例化所有核心业务模块
-MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
-    : QWidget(parent), ui(new Ui::MainWidget), m_loginName(loginName), m_role(role)
+MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, AttendanceClient* loginWindow)
+    : QWidget(parent), ui(new Ui::MainWidget), m_loginName(loginName), m_role(role), m_loginWindow(loginWindow)
 {
     ui->setupUi(this);
+
+    // 为导航栏设置SVG图标（替代emoji文字图标）
+    QString iconBase = "../../AttendanceClient/icon_library/";
+    QStringList navIcons = { "Navigation_Bar/nav_home.svg", "Navigation_Bar/nav_punch.svg",
+                             "Navigation_Bar/nav_face.svg", "Navigation_Bar/nav_record.svg",
+                             "Navigation_Bar/nav_staff.svg", "Navigation_Bar/nav_chat.svg",
+                             "Navigation_Bar/nav_ai.svg", "Navigation_Bar/nav_profile.svg" };
+    ui->listWidget_Nav->setIconSize(QSize(22, 22));
+    for (int i = 0; i < navIcons.size() && i < ui->listWidget_Nav->count(); i++) {
+        QIcon icon(iconBase + navIcons[i]);
+        if (!icon.isNull()) ui->listWidget_Nav->item(i)->setIcon(icon);
+    }
+
+    // 为考勤打卡页按钮设置SVG图标
+    ui->btn_AppealRequest->setIcon(QIcon(iconBase + "Punch/btn_appeal_request.svg"));
+    ui->btn_AppealRequest->setIconSize(QSize(18, 18));
+    ui->btn_AppealApprove->setIcon(QIcon(iconBase + "Punch/btn_appeal_approve.svg"));
+    ui->btn_AppealApprove->setIconSize(QSize(18, 18));
+    ui->btn_LeaveRequest->setIcon(QIcon(iconBase + "Punch/btn_leave_request.svg"));
+    ui->btn_LeaveRequest->setIconSize(QSize(18, 18));
+    ui->btn_LeaveApprove->setIcon(QIcon(iconBase + "Punch/btn_leave_approve.svg"));
+    ui->btn_LeaveApprove->setIconSize(QSize(18, 18));
+    ui->btn_RuleSettings->setIcon(QIcon(iconBase + "Punch/btn_rule.svg"));
+    ui->btn_RuleSettings->setIconSize(QSize(18, 18));
+    ui->btn_manualPunch->setIcon(QIcon(iconBase + "Punch/btn_manual_punch.svg"));
+    ui->btn_manualPunch->setIconSize(QSize(18, 18));
+    // 为人脸录入页按钮设置SVG图标
+    ui->btn_Register->setIcon(QIcon(iconBase + "MainWidget/btn_camera.svg"));
+    ui->btn_Register->setIconSize(QSize(18, 18));
+    // 为考勤记录页图例设置彩色圆点
+    if (ui->leg1) { ui->leg1->setText("<span style='color:#00B42A; font-size:16px;'>●</span> 正常"); }
+    if (ui->leg2) { ui->leg2->setText("<span style='color:#F53F3F; font-size:16px;'>●</span> 异常"); }
+    if (ui->leg3) { ui->leg3->setText("<span style='color:#3370FF; font-size:16px;'>●</span> 请假"); }
+    // 为考勤数据简报标签设置SVG图标
+    if (ui->label_SummaryTitle) {
+        QPixmap reportIcon = QIcon(iconBase + "Record/icon_report.svg").pixmap(20, 20);
+        ui->label_SummaryTitle->setPixmap(reportIcon);
+        ui->label_SummaryTitle->setText("");
+        // 改用带图标的富文本方式无法直接用QLabel，所以在其前面插入一个图标label
+    }
+    // 在简报标题前插入图标（通过父布局）
+    if (ui->label_SummaryTitle && ui->label_SummaryTitle->parentWidget()) {
+        QLayout* parentLay = ui->label_SummaryTitle->parentWidget()->layout();
+        QHBoxLayout* hLay = qobject_cast<QHBoxLayout*>(parentLay);
+        if (hLay) {
+            QLabel* reportIconLabel = new QLabel(this);
+            reportIconLabel->setPixmap(QIcon(iconBase + "Record/icon_report.svg").pixmap(20, 20));
+            reportIconLabel->setFixedSize(24, 24);
+            reportIconLabel->setStyleSheet("border:none;");
+            hLay->insertWidget(0, reportIconLabel);
+            ui->label_SummaryTitle->setText("考勤数据简报");
+        }
+    }
+    if (ui->label_HomeTitle) {
+        ui->label_HomeTitle->setText(
+            "<img src='../../AttendanceClient/icon_library/Home/icon_home_visual_data.svg' width='26' height='26' align='middle'> "
+            "<span style='font-family: \"Microsoft YaHei\"; font-size: 22px; font-weight: bold; color: #1F2329;'>"
+            "考勤数据可视化控制台</span>"
+        );
+    }
     // 发起网络请求获取当前登录用户的部门及真实姓名信息
     QJsonObject uReq;
     uReq["type"] = "query_user_dept";
@@ -66,7 +127,9 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
         ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
     chatModule->connectToServer(NetworkHelper::serverIp(), NetworkHelper::serverPort(), m_loginName);
     // 动态创建并注入个人信息修改按钮
-    QPushButton* btnEditProfile = new QPushButton("✏️ 修改性别与电话", this);
+    QPushButton* btnEditProfile = new QPushButton(" 修改性别与电话", this);
+    btnEditProfile->setIcon(QIcon(iconBase + "MainWidget/btn_edit.svg"));
+    btnEditProfile->setIconSize(QSize(18, 18));
     if (ui->formLayout_Profile) {
         ui->formLayout_Profile->addRow("", btnEditProfile);
     }
@@ -74,7 +137,9 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
     profileModule = new ProfileModule(ui->label_Avatar, ui->label_ProfileName, ui->label_ProfileDept,
         ui->label_ProfileGender, ui->label_ProfilePhone, ui->btn_ChangeAvatar, btnEditProfile, this);
     // 动态创建全局系统广播发布按钮，仅对管理员开放
-    QPushButton* btnBroadcast = new QPushButton("📢 发布系统广播", this);
+    QPushButton* btnBroadcast = new QPushButton(" 发布系统广播", this);
+    btnBroadcast->setIcon(QIcon(iconBase + "MainWidget/btn_broadcast.svg"));
+    btnBroadcast->setIconSize(QSize(18, 18));
     btnBroadcast->setMinimumSize(130, 35);
     btnBroadcast->setCursor(Qt::PointingHandCursor);
     btnBroadcast->setStyleSheet("QPushButton { background-color: #F56C6C; color: white; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #F78989; }");
@@ -266,6 +331,65 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent)
         }
         });
     dashboardTimer->start(30000);
+
+    // ===== 问题一：退出登录按钮（放在左侧导航栏最底部）=====
+    QPushButton* btnLogout = new QPushButton("  退出登录", this);
+    btnLogout->setIcon(QIcon(iconBase + "Navigation_Bar/nav_logout.svg"));
+    btnLogout->setIconSize(QSize(22, 22));
+    btnLogout->setCursor(Qt::PointingHandCursor);
+    btnLogout->setFixedHeight(50);
+    QFont navFont("Microsoft YaHei", 11);
+    navFont.setBold(true);
+    btnLogout->setFont(navFont);
+    btnLogout->setStyleSheet(
+        "QPushButton { background-color: transparent; color: #8F959E; border: none; "
+        "border-radius: 8px; padding-left: 5px; "
+        "text-align: left; margin: 0px 8px 12px 8px; }"
+        "QPushButton:hover { background-color: #2B2F3A; color: #E8EAEF; }"
+    );
+    // 从主布局中取出导航栏，用一个垂直容器包裹导航栏+退出按钮，再放回原位
+    QHBoxLayout* mainHLayout = qobject_cast<QHBoxLayout*>(this->layout());
+    if (mainHLayout) {
+        // 取出 listWidget_Nav
+        mainHLayout->removeWidget(ui->listWidget_Nav);
+        // 创建导航栏容器
+        QWidget* navContainer = new QWidget(this);
+        navContainer->setFixedWidth(170);
+        navContainer->setStyleSheet("background-color: #1C1F2A;");
+        QVBoxLayout* navVLay = new QVBoxLayout(navContainer);
+        navVLay->setContentsMargins(0, 0, 0, 0);
+        navVLay->setSpacing(0);
+        navVLay->addWidget(ui->listWidget_Nav, 1);
+        navVLay->addWidget(btnLogout, 0);
+        // 插入到主布局最前面（左侧）
+        mainHLayout->insertWidget(0, navContainer);
+    }
+    connect(btnLogout, &QPushButton::clicked, this, [this]() {
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle("退出登录");
+        msgBox.setText("确定要退出当前账号吗？\n退出后需要重新登录。");
+        msgBox.setIcon(QMessageBox::Question);
+        QPushButton* btnYes = msgBox.addButton("确定", QMessageBox::YesRole);
+        QPushButton* btnNo = msgBox.addButton("取消", QMessageBox::NoRole);
+        msgBox.setDefaultButton(btnNo);
+        msgBox.exec();
+        if (msgBox.clickedButton() == btnYes) {
+            if (aiThread) {
+                aiThread->forceReleaseCamera();
+                aiThread->stop();
+            }
+            if (chatModule) {
+                QMetaObject::invokeMethod(chatModule, "disconnectFromServer", Qt::DirectConnection);
+            }
+            this->hide();
+            if (m_loginWindow) {
+                m_loginWindow->showLoginReady();
+            }
+            else {
+                qApp->quit();
+            }
+        }
+        });
 }
 // 析构函数：保证多线程被安全释放
 MainWidget::~MainWidget() {
@@ -315,4 +439,11 @@ void MainWidget::closeEvent(QCloseEvent* event) {
         aiThread->wait(500);
     }
     qApp->quit();
+}
+// 问题四：强制跳转到指定导航页面（用于人脸绑定拦截）
+void MainWidget::forceNavigateTo(int navIndex) {
+    if (ui->listWidget_Nav && navIndex >= 0 && navIndex < ui->listWidget_Nav->count()) {
+        ui->listWidget_Nav->setCurrentRow(navIndex);
+        ui->stackedWidget->setCurrentIndex(navIndex);
+    }
 }

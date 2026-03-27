@@ -14,6 +14,7 @@ public:
     explicit AttendanceClient(QWidget* parent = nullptr);
     // 释放UI指针资源
     ~AttendanceClient();
+    void showLoginReady();                                         // 退出登录后重新显示登录界面
 protected:
     void mousePressEvent(QMouseEvent* event) override;             // 记录坐标以实现无边框窗口拖动
     void mouseMoveEvent(QMouseEvent* event) override;              // 计算偏移并实时移动窗口

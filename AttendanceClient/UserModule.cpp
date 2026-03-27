@@ -16,6 +16,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QIcon>
+
 // 构造函数：初始化员工模块，配置纯内存表格模型并挂载原生界面交互事件
 UserModule::UserModule(QTableView* tableView, QComboBox* deptCombo, QPushButton* filterBtn, QWidget* parentWidget)
     : QObject(parentWidget), m_tableView(tableView), m_deptCombo(deptCombo), m_filterBtn(filterBtn), m_parentWidget(parentWidget)
@@ -55,17 +57,29 @@ void UserModule::injectAdvancedUI() {
     }
     QBoxLayout* lay = qobject_cast<QBoxLayout*>(parentW->layout());
     if (!lay) return;
-    // 构造高级模糊检索文本框控件
+
+    // SVG 图标基础路径，与 HomeModule 保持统一的相对路径策略
+    QString iconBase = "../../AttendanceClient/icon_library/";
+
+    // 构造高级模糊检索文本框控件，并为其装配 SVG 搜索图标作为前置装饰元素
     m_searchEdit = new QLineEdit();
     m_searchEdit->setObjectName("UserModule_SearchBox");
-    m_searchEdit->setPlaceholderText("🔍 输入姓名或工号进行模糊搜索...");
+    m_searchEdit->setPlaceholderText("输入姓名或工号进行模糊搜索...");
     m_searchEdit->setMinimumHeight(32);
-    m_searchEdit->setStyleSheet("QLineEdit { border: 1px solid #DCDFE6; border-radius: 15px; padding: 0 15px; background: white; }");
-    // 构造花名册报表导出触发按钮
-    m_exportBtn = new QPushButton("📊 导出企业花名册");
+    m_searchEdit->setStyleSheet(
+        "QLineEdit { border: 1px solid #DCDFE6; border-radius: 15px; padding: 0 15px 0 35px; background: white; }");
+    // 为搜索框左侧添加 SVG 搜索图标（addAction 方式，Qt 5.2+ 原生支持）
+    m_searchEdit->addAction(QIcon(iconBase + "User/icon_search.svg"), QLineEdit::LeadingPosition);
+
+    // 构造花名册报表导出触发按钮，挂载 SVG 导出图标
+    m_exportBtn = new QPushButton(QIcon(iconBase + "User/btn_export_roster.svg"), " 导出企业花名册");
+    m_exportBtn->setIconSize(QSize(18, 18));
     m_exportBtn->setMinimumHeight(32);
     m_exportBtn->setCursor(Qt::PointingHandCursor);
-    m_exportBtn->setStyleSheet("QPushButton { background-color: #00B42A; color: white; border: none; border-radius: 15px; padding: 0 15px; font-weight: bold; } QPushButton:hover { background-color: #23C343; }");
+    m_exportBtn->setStyleSheet(
+        "QPushButton { background-color: #00B42A; color: white; border: none; border-radius: 15px; padding: 0 15px; font-weight: bold; }"
+        " QPushButton:hover { background-color: #23C343; }");
+
     // 计算插入锚点：紧跟在原始部门下拉框及过滤按钮之后执行流式挂载
     int insertIdx = lay->indexOf(m_deptCombo) + 1;
     lay->insertWidget(insertIdx, m_searchEdit);
@@ -73,6 +87,14 @@ void UserModule::injectAdvancedUI() {
     if (m_filterBtn) {
         lay->insertWidget(lay->indexOf(m_filterBtn) + 1, m_exportBtn);
     }
+
+    // 为 UI 设计器中已存在的底部"删除选中员工"按钮追加 SVG 图标
+    QPushButton* deleteBtn = m_parentWidget ? m_parentWidget->findChild<QPushButton*>("btn_deleteUser") : nullptr;
+    if (deleteBtn) {
+        deleteBtn->setIcon(QIcon(iconBase + "User/btn_delete_user.svg"));
+        deleteBtn->setIconSize(QSize(18, 18));
+    }
+
     // 为新增的扩展控制组件绑定对应的底层逻辑处理槽
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &UserModule::onFilterClicked);
     connect(m_exportBtn, &QPushButton::clicked, this, &UserModule::onExportRoster);
@@ -114,15 +136,26 @@ void UserModule::refreshTable(QString filterDept) {
     // 后台列保护机制：将用作业务操作唯一凭证的Account列实施视图级隐藏脱敏
     m_tableView->hideColumn(1);
 }
-// 捕获表格区域右键鼠标操作事件并调出特定权限的快捷管理上下文面板
+// 捕获表格区域右键鼠标操作事件并调出带 SVG 图标的快捷管理上下文面板
 void UserModule::onCustomContextMenu(const QPoint& pos) {
     QModelIndex index = m_tableView->indexAt(pos);
     if (!index.isValid()) return;
     int row = index.row();
     QString empName = m_userModel->item(row, 2)->text();
+
+    // SVG 图标基础路径
+    QString iconBase = "../../AttendanceClient/icon_library/";
+
     QMenu menu(m_tableView);
-    QAction* resetAct = menu.addAction("🔑 重置密码为 123456");
-    QAction* deleteAct = menu.addAction("🗑️ 删除员工 [" + empName + "]");
+    // 为右键菜单设置圆角样式，提升视觉一致性
+    menu.setStyleSheet(
+        "QMenu { background-color: #FFFFFF; border: 1px solid #DEE0E3; border-radius: 8px; padding: 5px 0; }"
+        "QMenu::item { padding: 8px 20px; color: #1F2329; }"
+        "QMenu::item:selected { background-color: #F2F3F5; }"
+        "QMenu::icon { padding-left: 10px; }");
+    // 为右键菜单项挂载对应的 SVG 图标，提升操作辨识度
+    QAction* resetAct = menu.addAction(QIcon(iconBase + "User/btn_reset_pwd.svg"), "重置密码为 123456");
+    QAction* deleteAct = menu.addAction(QIcon(iconBase + "User/btn_delete_user.svg"), "删除员工 [" + empName + "]");
     connect(resetAct, &QAction::triggered, [=]() { onResetPassword(row); });
     connect(deleteAct, &QAction::triggered, [=]() {
         m_tableView->selectRow(row);
@@ -178,7 +211,8 @@ void UserModule::deleteSelectedUser() {
 }
 // 执行本地文件流输出：将挂载至底层表格内存模型中的人员矩阵全量序列化并生成CSV格式持久化文件
 void UserModule::onExportRoster() {
-    QString filePath = QFileDialog::getSaveFileName(m_parentWidget, "导出企业花名册", "Roster_" + QDateTime::currentDateTime().toString("yyyyMMdd") + ".csv", "CSV Files (*.csv)");
+    QString filePath = QFileDialog::getSaveFileName(m_parentWidget, "导出企业花名册",
+        "Roster_" + QDateTime::currentDateTime().toString("yyyyMMdd") + ".csv", "CSV Files (*.csv)");
     if (filePath.isEmpty()) return;
 
     QFile file(filePath);

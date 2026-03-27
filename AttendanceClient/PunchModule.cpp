@@ -164,7 +164,7 @@ QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
 // 排班设置窗口唤起与表单数据处理
 void PunchModule::onRuleSettingsClicked() {
     QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("⚙️ 排班规则设置");
+    dialog.setWindowTitle("排班规则设置");
     dialog.resize(400, 360);
     QFormLayout* form = new QFormLayout(&dialog);
     form->setContentsMargins(30, 25, 30, 25);
@@ -334,9 +334,9 @@ void PunchModule::onAppealRequestClicked() {
             cb->addItem(prefix + name, name);
         }
         };
-    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
-    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
-    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: ");  };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: ");    };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
     // 按5场景动态生成审批链
     int approvalLevels = 0;
     if (applicantDept == "总经办" && applicantJob == "总经理") {
@@ -511,9 +511,9 @@ void PunchModule::onLeaveRequestClicked()
             cb->addItem(prefix + name, name);
         }
         };
-    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: ");  };
-    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: ");    };
-    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: ");  };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: ");    };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
     int approvalLevels = 0;
     if (applicantDept == "总经办" && applicantJob == "总经理") {
         approvalLevels = 1;
@@ -609,7 +609,7 @@ void PunchModule::onLeaveApproveClicked() {
     apprDlg.resize(800, 550);
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
 
-    QLabel* pendingLabel = new QLabel("📋 待审批");
+    QLabel* pendingLabel = new QLabel("待审批");
     pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
     layout->addWidget(pendingLabel);
 
@@ -642,9 +642,9 @@ void PunchModule::onLeaveApproveClicked() {
             QHBoxLayout* opLayout = new QHBoxLayout(opWidget);
             opLayout->setContentsMargins(2, 2, 2, 2);
             opLayout->setSpacing(4);
-            QPushButton* btnPass = new QPushButton("✅通过");
+            QPushButton* btnPass = new QPushButton("通过");
             btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
-            QPushButton* btnReject = new QPushButton("❌驳回");
+            QPushButton* btnReject = new QPushButton("驳回");
             btnReject->setStyleSheet("background-color: #F56C6C; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
             opLayout->addWidget(btnPass);
             opLayout->addWidget(btnReject);
@@ -684,7 +684,7 @@ void PunchModule::onLeaveApproveClicked() {
     layout->addWidget(table);
 
     // ── 已审批记录区域 ──
-    QLabel* doneLabel = new QLabel("✅ 已审批的记录");
+    QLabel* doneLabel = new QLabel("已审批的记录");
     doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
     layout->addWidget(doneLabel);
 
@@ -703,7 +703,7 @@ void PunchModule::onLeaveApproveClicked() {
             doneTable->setItem(row, 0, new QTableWidgetItem(rowObj["applicant"].toString()));
             doneTable->setItem(row, 1, new QTableWidgetItem(rowObj["type"].toString()));
             doneTable->setItem(row, 2, new QTableWidgetItem(rowObj["start"].toString()));
-            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✅").replace("[✗]", "❌");
+            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✓").replace("[✗]", "✗");
             doneTable->setItem(row, 3, new QTableWidgetItem(chain));
             QString st = rowObj["status"].toString();
             QTableWidgetItem* stItem = new QTableWidgetItem(st);
@@ -728,7 +728,7 @@ void PunchModule::onAppealApproveClicked() {
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
 
     // ── 待审批区域 ──
-    QLabel* pendingLabel = new QLabel("📋 待审批");
+    QLabel* pendingLabel = new QLabel("待审批");
     pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
     layout->addWidget(pendingLabel);
 
@@ -761,9 +761,9 @@ void PunchModule::onAppealApproveClicked() {
             QHBoxLayout* opLayout = new QHBoxLayout(opWidget);
             opLayout->setContentsMargins(2, 2, 2, 2);
             opLayout->setSpacing(4);
-            QPushButton* btnPass = new QPushButton("✅通过");
+            QPushButton* btnPass = new QPushButton("通过");
             btnPass->setStyleSheet("background-color: #67C23A; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
-            QPushButton* btnReject = new QPushButton("❌驳回");
+            QPushButton* btnReject = new QPushButton("驳回");
             btnReject->setStyleSheet("background-color: #F56C6C; color: white; border-radius:3px; padding:4px 8px; font-size:12px;");
             opLayout->addWidget(btnPass);
             opLayout->addWidget(btnReject);
@@ -802,7 +802,7 @@ void PunchModule::onAppealApproveClicked() {
     layout->addWidget(table);
 
     // ── 已审批记录区域 ──
-    QLabel* doneLabel = new QLabel("✅ 已审批记录");
+    QLabel* doneLabel = new QLabel("已审批记录");
     doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
     layout->addWidget(doneLabel);
 
@@ -821,7 +821,7 @@ void PunchModule::onAppealApproveClicked() {
             doneTable->setItem(row, 0, new QTableWidgetItem(rowObj["applicant"].toString()));
             doneTable->setItem(row, 1, new QTableWidgetItem(rowObj["type"].toString()));
             doneTable->setItem(row, 2, new QTableWidgetItem(rowObj["reason"].toString()));
-            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✅").replace("[✗]", "❌");
+            QString chain = rowObj["approver_chain"].toString().replace("[✓]", "✓").replace("[✗]", "✗");
             doneTable->setItem(row, 3, new QTableWidgetItem(chain));
             QString st = rowObj["status"].toString();
             QTableWidgetItem* stItem = new QTableWidgetItem(st);

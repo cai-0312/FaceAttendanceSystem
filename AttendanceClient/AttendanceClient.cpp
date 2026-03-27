@@ -12,52 +12,99 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QIcon>
-// 提取为静态工具函数：用于将文本图标转换为QIcon格式，方便程序启动和点击时随时调用
-static QIcon createEmojiIcon(const QString& text, const QString& colorHex) {
-    QPixmap pix(26, 26);
-    pix.fill(Qt::transparent);
-    QPainter painter(&pix);
-    painter.setRenderHint(QPainter::TextAntialiasing);
-    painter.setPen(QColor(colorHex));
-    QFont font = painter.font();
-    font.setPixelSize(16);
-    painter.setFont(font);
-    painter.drawText(pix.rect(), Qt::AlignCenter, text);
-    return QIcon(pix);
+#include <QAction>
+#include <QCryptographicHash>
+
+// 工具函数：SHA-256哈希（密码传输加密）
+static QString hashPassword(const QString& plainPwd) {
+    QByteArray hash = QCryptographicHash::hash(plainPwd.toUtf8(), QCryptographicHash::Sha256);
+    return QString(hash.toHex());
 }
-// 构造函数：初始化UI界面、设置无边框阴影效果、绑定信号与槽以及初始化部门职位联动逻辑
+
+// 构造函数
 AttendanceClient::AttendanceClient(QWidget* parent) :
     QWidget(parent),
     ui(new Ui::AttendanceClientClass)
 {
     ui->setupUi(this);
-    // 设置无边框窗口以及透明背景
     this->setWindowFlags(Qt::FramelessWindowHint);
     this->setAttribute(Qt::WA_TranslucentBackground);
-    // 为主背景框架添加外阴影效果以增强立体感
+
+    // 添加窗口高级阴影
     QGraphicsDropShadowEffect* shadow = new QGraphicsDropShadowEffect(this);
     shadow->setOffset(0, 0);
     shadow->setColor(QColor(0, 0, 0, 80));
     shadow->setBlurRadius(25);
     ui->frame_Background->setGraphicsEffect(shadow);
-    // 绑定窗口控制按钮事件
+
     connect(ui->btn_Close, &QPushButton::clicked, this, &AttendanceClient::on_btn_Close_clicked);
     connect(ui->btn_Min, &QPushButton::clicked, this, &AttendanceClient::on_btn_Min_clicked);
-    // 默认显示登录页面
     ui->stackedWidget->setCurrentIndex(0);
-    // 初始化密码输入框的回显模式与可视状态切换按钮
+
+    // 统一资源路径（绝对限定在 AttendanceClient 文件夹下）
+    QString iconBase = "../../AttendanceClient/icon_library/AttendanceClient/";
+
+    // ==========================================================
+    // 1. ⭐️ 核心：注入 SVG 图标，并实现“输入时隐藏图标”的微交互
+    // ==========================================================
+    // --- 登录页 ---
+    QAction* actLogAcc = ui->lineEdit_Account->addAction(QIcon(iconBase + "icon_account.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_Account, &QLineEdit::textChanged, this, [=](const QString& text) { actLogAcc->setVisible(text.isEmpty()); });
+
+    QAction* actLogPwd = ui->lineEdit_pwd->addAction(QIcon(iconBase + "icon_password.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_pwd, &QLineEdit::textChanged, this, [=](const QString& text) { actLogPwd->setVisible(text.isEmpty()); });
+
+    // --- 注册页 ---
+    QAction* actRegAcc = ui->lineEdit_RegAccount->addAction(QIcon(iconBase + "icon_account.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_RegAccount, &QLineEdit::textChanged, this, [=](const QString& text) { actRegAcc->setVisible(text.isEmpty()); });
+
+    QAction* actRegName = ui->lineEdit_RegName->addAction(QIcon(iconBase + "icon_name.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_RegName, &QLineEdit::textChanged, this, [=](const QString& text) { actRegName->setVisible(text.isEmpty()); });
+
+    QAction* actRegPwd = ui->lineEdit_RegPwd->addAction(QIcon(iconBase + "icon_password.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_RegPwd, &QLineEdit::textChanged, this, [=](const QString& text) { actRegPwd->setVisible(text.isEmpty()); });
+
+    QAction* actRegPhone = ui->lineEdit_RegPhone->addAction(QIcon(iconBase + "icon_phone.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_RegPhone, &QLineEdit::textChanged, this, [=](const QString& text) { actRegPhone->setVisible(text.isEmpty()); });
+
+    // ==========================================================
+    // 2. 清理按钮硬编码 Emoji 并绑定 SVG 图标
+    // ==========================================================
+    ui->btn_Login->setText(" 立即登录");
+    ui->btn_Login->setIcon(QIcon(iconBase + "btn_login.svg"));
+    ui->btn_Login->setIconSize(QSize(18, 18));
+
+    ui->btn_ConfirmRegister->setText(" 确认注册");
+    ui->btn_ConfirmRegister->setIcon(QIcon(iconBase + "btn_register.svg"));
+    ui->btn_ConfirmRegister->setIconSize(QSize(18, 18));
+
+    ui->btn_BackLogin->setText(" 返回登录");
+    ui->btn_GoRegister->setText(" 立即注册");
+
+    // ==========================================================
+    // 3. 密码显隐小眼睛及表单联动代理配置
+    // ==========================================================
     m_isPwdVisible = false;
     ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
-    m_pwdAction = ui->lineEdit_pwd->addAction(createEmojiIcon("🙈", "#86909C"), QLineEdit::TrailingPosition);
+    m_pwdAction = ui->lineEdit_pwd->addAction(QIcon(iconBase + "icon_eye_closed.svg"), QLineEdit::TrailingPosition);
     m_pwdAction->setToolTip("显示密码");
     connect(m_pwdAction, &QAction::triggered, this, &AttendanceClient::togglePasswordVisibility);
     ui->lineEdit_pwd->setCursor(Qt::IBeamCursor);
-    // 优化下拉框的样式显示
+
     ui->comboBox_Role->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegGender->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegDept->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegJobTitle->setItemDelegate(new QStyledItemDelegate(this));
-    // 根据用户选择的部门，动态更新职务下拉框的内容列表
+    for (int i = 0; i < ui->comboBox_Role->count(); ++i) {
+        if (ui->comboBox_Role->itemText(i).contains("管理员")) {
+            ui->comboBox_Role->setItemIcon(i, QIcon(iconBase + "icon_admin.svg"));
+        }
+        else {
+            ui->comboBox_Role->setItemIcon(i, QIcon(iconBase + "icon_staff.svg"));
+        }
+    }
+    ui->comboBox_Role->setIconSize(QSize(16, 16));
+    // 部门-职务联动
     connect(ui->comboBox_RegDept, &QComboBox::currentTextChanged, this, [=](const QString& dept) {
         ui->comboBox_RegJobTitle->clear();
         if (dept == "总经办") {
@@ -82,58 +129,63 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
             ui->comboBox_RegJobTitle->addItems({ "部门经理", "客户服务代表", "技术支持" });
         }
         });
-    // 手动触发一次部门文本改变信号，以初始化默认职务列表
     emit ui->comboBox_RegDept->currentTextChanged(ui->comboBox_RegDept->currentText());
 }
-// 析构函数：释放UI资源
+
 AttendanceClient::~AttendanceClient() {
     delete ui;
 }
-// 密码可见性切换逻辑：根据当前状态切换密码输入框的回显模式，并更新对应图标状态
+
+// 退出登录后重新显示登录界面
+void AttendanceClient::showLoginReady() {
+    ui->lineEdit_Account->clear();
+    ui->lineEdit_pwd->clear();
+    ui->stackedWidget->setCurrentIndex(0);
+    if (mainWindow) {
+        mainWindow->deleteLater();
+        mainWindow = nullptr;
+    }
+    this->show();
+    this->activateWindow();
+}
+
+// 切换密码可见状态
 void AttendanceClient::togglePasswordVisibility() {
     m_isPwdVisible = !m_isPwdVisible;
+    QString iconBase = "../../AttendanceClient/icon_library/AttendanceClient/";
     if (m_isPwdVisible) {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Normal);
-        m_pwdAction->setIcon(createEmojiIcon("👀", "#165DFF"));
+        m_pwdAction->setIcon(QIcon(iconBase + "icon_eye_open.svg"));
         m_pwdAction->setToolTip("隐藏密码");
     }
     else {
         ui->lineEdit_pwd->setEchoMode(QLineEdit::Password);
-        m_pwdAction->setIcon(createEmojiIcon("🙈", "#86909C"));
+        m_pwdAction->setIcon(QIcon(iconBase + "icon_eye_closed.svg"));
         m_pwdAction->setToolTip("显示密码");
     }
 }
-// 鼠标按下事件：记录当前鼠标位置，用于无边框窗口的拖拽计算
+
+// 无边框窗口拖拽支持
 void AttendanceClient::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         m_dragPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
         event->accept();
     }
 }
-// 鼠标移动事件：根据鼠标移动的偏移量实时更新窗口位置
+
 void AttendanceClient::mouseMoveEvent(QMouseEvent* event) {
     if (event->buttons() & Qt::LeftButton) {
         move(event->globalPosition().toPoint() - m_dragPos);
         event->accept();
     }
 }
-// 窗口控制：关闭当前窗口
-void AttendanceClient::on_btn_Close_clicked() {
-    this->close();
-}
-// 窗口控制：最小化当前窗口
-void AttendanceClient::on_btn_Min_clicked() {
-    this->showMinimized();
-}
-// 界面跳转：切换至注册页面视图
-void AttendanceClient::on_btn_GoRegister_clicked() {
-    ui->stackedWidget->setCurrentIndex(1);
-}
-// 界面跳转：切换回登录页面视图
-void AttendanceClient::on_btn_BackLogin_clicked() {
-    ui->stackedWidget->setCurrentIndex(0);
-}
-// 登录验证逻辑：获取输入信息，向服务端发送验证请求，并根据结果处理跳转
+
+void AttendanceClient::on_btn_Close_clicked() { this->close(); }
+void AttendanceClient::on_btn_Min_clicked() { this->showMinimized(); }
+void AttendanceClient::on_btn_GoRegister_clicked() { ui->stackedWidget->setCurrentIndex(1); }
+void AttendanceClient::on_btn_BackLogin_clicked() { ui->stackedWidget->setCurrentIndex(0); }
+
+// 登录校验与 SHA-256 哈希加密
 void AttendanceClient::on_btn_Login_clicked() {
     QString account = ui->lineEdit_Account->text().trimmed();
     QString pwd = ui->lineEdit_pwd->text().trimmed();
@@ -145,15 +197,21 @@ void AttendanceClient::on_btn_Login_clicked() {
     QJsonObject req;
     req["type"] = "client_login_auth";
     req["account"] = account;
-    req["pwd"] = pwd;
+    req["pwd"] = hashPassword(pwd);
     req["role"] = role;
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
         QString realName = res["real_name"].toString();
-        QMessageBox::information(this, "成功", "登录成功！欢迎"+ realName);
-        mainWindow = new MainWidget(realName, role);
+        bool hasFace = res["has_face"].toBool(true);
+        QMessageBox::information(this, "成功", "登录成功！欢迎 " + realName);
+        mainWindow = new MainWidget(realName, role, nullptr, this);
         mainWindow->show();
         this->hide();
+        if (!hasFace) {
+            QMessageBox::warning(mainWindow, "人脸绑定提醒",
+                "检测到您尚未录入人脸特征，无法进行人脸打卡！\n系统将自动跳转至人脸录入页面，请先完成人脸采集。");
+            mainWindow->forceNavigateTo(2);
+        }
     }
     else {
         if (res.isEmpty()) {
@@ -164,7 +222,8 @@ void AttendanceClient::on_btn_Login_clicked() {
         }
     }
 }
-// 注册账号逻辑：校验用户填写的表单信息，分配默认角色，并发送至服务端进行注册
+
+// 注册时强制普通权限 + 密码复杂度校验 + SHA-256哈希
 void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     QString account = ui->lineEdit_RegAccount->text().trimmed();
     QString name = ui->lineEdit_RegName->text().trimmed();
@@ -182,23 +241,28 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
         QMessageBox::warning(this, "格式错误", "员工账号不允许包含中文字符，请使用字母或数字！");
         return;
     }
+    if (pwd.length() < 8) {
+        QMessageBox::warning(this, "密码强度不足", "密码长度不能少于8位！");
+        return;
+    }
+    QRegularExpression reLetter("[a-zA-Z]");
+    QRegularExpression reDigit("[0-9]");
+    if (!reLetter.match(pwd).hasMatch() || !reDigit.match(pwd).hasMatch()) {
+        QMessageBox::warning(this, "密码强度不足", "密码必须同时包含英文字母和数字！");
+        return;
+    }
     QRegularExpression rePhone("^\\d{11}$");
     if (!phone.isEmpty() && !rePhone.match(phone).hasMatch()) {
         QMessageBox::warning(this, "格式错误", "手机号码格式不正确，必须为11位纯数字！");
         return;
     }
-    if (phone.isEmpty()) {
-        phone = "未设置";
-    }
-    // 根据部门或职务进行权限自动定级
+    if (phone.isEmpty()) phone = "未设置";
+
     QString assignRole = "普通登录";
-    if (dept == "总经办" || dept == "财务部" || jobTitle.contains("部门经理") || jobTitle == "总经理" || jobTitle == "财务总监") {
-        assignRole = "管理员登录";
-    }
     QJsonObject req;
     req["type"] = "client_register_account";
     req["account"] = account;
-    req["pwd"] = pwd;
+    req["pwd"] = hashPassword(pwd);
     req["name"] = name;
     req["role"] = assignRole;
     req["dept"] = dept;
@@ -207,9 +271,13 @@ void AttendanceClient::on_btn_ConfirmRegister_clicked() {
     req["gender"] = gender;
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
-        QString successMsg = QString("账号注册成功！\n系统已根据您的部门及职务自动为您分配 [%1] 权限。\n已为您跳转至登录页。").arg(assignRole);
+        QString successMsg = QString(
+            "账号注册成功！\n"
+            "系统已为您分配默认权限 [普通登录]。\n"
+            "如需管理权限，请联系人资经理进行审批授权。\n"
+            "已为您跳转至登录页。"
+        );
         QMessageBox::information(this, "注册成功", successMsg);
-        // 清空注册信息表单内容并跳转回登录页面
         ui->lineEdit_RegAccount->clear();
         ui->lineEdit_RegName->clear();
         ui->lineEdit_RegPwd->clear();

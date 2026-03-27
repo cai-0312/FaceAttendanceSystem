@@ -102,8 +102,11 @@ void RecordModule::injectAdvancedUI() {
             lay->insertLayout(tableIndex, filterLayout);
         }
     }
-// 构造“导出中心”下拉菜单父按钮
-    m_exportCenterBtn = new QPushButton("📥 导出中心");
+    // 构造“导出中心”下拉菜单父按钮
+    QString iconBase = "../../AttendanceClient/icon_library/";
+    m_exportCenterBtn = new QPushButton(" 导出中心");
+    m_exportCenterBtn->setIcon(QIcon(iconBase + "Record/btn_export.svg"));
+    m_exportCenterBtn->setIconSize(QSize(18, 18));
     m_exportCenterBtn->setMinimumHeight(36);
     m_exportCenterBtn->setCursor(Qt::PointingHandCursor);
     m_exportCenterBtn->setStyleSheet(
@@ -120,9 +123,9 @@ void RecordModule::injectAdvancedUI() {
         "QMenu::item:selected { background-color: #F2F3F5; color: #3370FF; }"
     );
 
-    QAction* actExportPersonal = new QAction("📄 导出个人明细", this);
-    QAction* actExportDept = new QAction("🏢 导出部门报表", this);
-    QAction* actExportAll = new QAction("📊 导出全员月度汇总", this);
+    QAction* actExportPersonal = new QAction(QIcon(iconBase + "Record/btn_export_personal.svg"), "导出个人明细", this);
+    QAction* actExportDept = new QAction(QIcon(iconBase + "Record/btn_export_dept.svg"), "导出部门报表", this);
+    QAction* actExportAll = new QAction(QIcon(iconBase + "Record/btn_export_all.svg"), "导出全员月度汇总", this);
 
     exportMenu->addAction(actExportPersonal);
 
@@ -416,7 +419,7 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
     if (empName == m_loginName && !status.contains("正常") && !status.contains("假")) {
         QAction* appealAct = menu.addAction("对此异常记录发起申诉");
         connect(appealAct, &QAction::triggered, [=]() {
-            QMessageBox::information(nullptr, "快捷申诉", QString("请前往【首页大屏】点击【异常申诉】。\n您要申诉的记录为：%1 [%2]").arg(timeStr, status));
+            QMessageBox::information(nullptr, "快捷申诉", QString("请前往【异常申诉】。\n您要申诉的记录为：%1 [%2]").arg(timeStr, status));
             });
     }
     // 针对管理员阶层提供更底层的权限，允许直接对考勤数据库实施硬级别的状态字段覆写修改
@@ -549,7 +552,7 @@ void RecordModule::onExportAllMonthly() {
         QJsonObject row = summaryArr[i].toObject();
         QString name = row["name"].toString();
         QString dept = row["dept"].toString();
-        QString job = row["job_title"].toString(); // 提取职务
+        QString job = row["job_title"].toString(); 
         int shouldWork = row["should_work"].toInt();
         int actualWork = row["actual_work"].toInt();
         int lateCount = row["late_count"].toInt();

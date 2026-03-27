@@ -8,6 +8,9 @@
 #include <QAction>
 #include <QScrollBar>
 #include <QDesktopServices> 
+#include <QWidgetAction>
+#include <QGridLayout>
+#include <QScrollArea>
 #include <QUrl>
 #include <QDir>
 #include <QDialog>
@@ -77,19 +80,19 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
             "QMenu::item:disabled { color: #C0C4CC; background-color: transparent; }"
             "QMenu::separator { height: 1px; background: #EBEEF5; margin: 4px 8px; }"
         );
-        QAction* actCopy = menu.addAction("📄 复制选中文本");
+        QAction* actCopy = menu.addAction("复制选中文本");
         actCopy->setEnabled(m_textBrowser->textCursor().hasSelection());
         connect(actCopy, &QAction::triggered, m_textBrowser, &QTextBrowser::copy);
         QString anchor = m_textBrowser->anchorAt(pos);
         if (!anchor.isEmpty() && !anchor.startsWith("del:")) {
-            QAction* actCopyPath = menu.addAction("📁 复制附件路径");
+            QAction* actCopyPath = menu.addAction("复制附件路径");
             connect(actCopyPath, &QAction::triggered, [anchor]() {
                 QApplication::clipboard()->setText(QUrl(anchor).toLocalFile());
                 });
         }
         if (anchor.startsWith("del:")) {
             menu.addSeparator();
-            QAction* actDelMsg = menu.addAction("🗑️ 删除该条记录 (仅本地)");
+            QAction* actDelMsg = menu.addAction("删除该条记录 (仅本地)");
             connect(actDelMsg, &QAction::triggered, [this, anchor]() {
                 QString hash = anchor.mid(4);
                 QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
@@ -103,7 +106,7 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
                 });
         }
         menu.addSeparator();
-        QAction* actSelectAll = menu.addAction("🔳 全选所有内容");
+        QAction* actSelectAll = menu.addAction("全选所有内容");
         connect(actSelectAll, &QAction::triggered, m_textBrowser, &QTextBrowser::selectAll);
 
         menu.exec(m_textBrowser->mapToGlobal(pos));
@@ -120,7 +123,14 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     connect(m_btnMoreOpt, &QPushButton::clicked, this, &ChatModule::onBtnMoreOptClicked);
     m_targetLabel->setText("请在左侧选择联系人开始聊天");
     // 绑定通讯录过滤搜索功能
-    m_searchEdit->setPlaceholderText("🔍 搜索联系人...");
+    m_searchEdit->setPlaceholderText("搜索联系人...");
+    QAction* searchAction = new QAction(m_searchEdit);
+    searchAction->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_search.svg"));
+    m_searchEdit->addAction(searchAction, QLineEdit::LeadingPosition);
+    m_searchEdit->setStyleSheet(
+        "QLineEdit { background: #F2F3F5; border: none; border-radius: 18px; padding-left: 5px; color: #1F2329; }"
+        "QLineEdit:focus { background: #FFF; border: 1px solid #3370FF; }"
+    );
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString& keyword) {
         QString kw = keyword.trimmed().toLower();
         for (int i = 0; i < m_contactsList->count(); ++i) {
@@ -152,15 +162,37 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
     QVBoxLayout* bottomLayout = new QVBoxLayout(bottomWidget);
     bottomLayout->setContentsMargins(0, 5, 0, 0);
     bottomLayout->setSpacing(5);
-
+    // 注入工具栏 SVG 图标
+    QString toolBtnStyle =
+        "QPushButton { background: transparent; color: #4E5969; border-radius: 6px; padding: 6px 12px; font-weight: bold; border: none; font-size: 13px; }"
+        "QPushButton:hover { background: #E5E6EB; color: #165DFF; }";
+    // 1. 表情按钮 (清除原有硬编码的😀，并应用统一样式)
+    m_btnEmoji->setText(" 表情");
+    m_btnEmoji->setCursor(Qt::PointingHandCursor);
+    m_btnEmoji->setStyleSheet(toolBtnStyle);
+    m_btnEmoji->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_emoji.svg"));
+     m_btnEmoji->setIconSize(QSize(18, 18));
+    // 2. 文件按钮
+    m_btnFolder->setText(" 文件");
+    m_btnFolder->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_folder.svg"));
+    m_btnFolder->setIconSize(QSize(18, 18));
+    m_btnFolder->setCursor(Qt::PointingHandCursor);
+    m_btnFolder->setStyleSheet(toolBtnStyle);
+    // 3. 历史记录按钮
+    m_btnHistory->setText(" 历史");
+    m_btnHistory->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_history.svg"));
+    m_btnHistory->setIconSize(QSize(18, 18));
+    m_btnHistory->setCursor(Qt::PointingHandCursor);
+    m_btnHistory->setStyleSheet(toolBtnStyle);
     // ── 顶部工具栏 layout (只放表情、文件夹、历史按钮) ────────────────
     QHBoxLayout* toolLayout = new QHBoxLayout();
+    toolLayout->setContentsMargins(5, 5, 5, 5); // 增加呼吸感内边距
+    toolLayout->setSpacing(8);                  // 控制按钮间的完美间距
     toolLayout->addWidget(m_btnEmoji);
     toolLayout->addWidget(m_btnFolder);
     toolLayout->addWidget(m_btnHistory);
-    toolLayout->addStretch(); // 弹簧把按钮靠左
-
-    bottomLayout->addLayout(toolLayout); // 添加工具栏
+    toolLayout->addStretch();                   // 弹簧：把三个按钮死死顶在左边，不再凌乱
+    bottomLayout->addLayout(toolLayout);
 
     // ── 🚩 核心修改：文本框与发送按钮的叠加容器 ──
     QWidget* textEditWrapper = new QWidget(bottomWidget);
@@ -185,11 +217,11 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
         "QPushButton:pressed { background-color: #2458CC; }"
     );
     btnSend->setFixedSize(90, 32);
-    wrapperLayout->addWidget(m_textEdit, 0, 0); 
+    wrapperLayout->addWidget(m_textEdit, 0, 0);
     wrapperLayout->addWidget(btnSend, 0, 0, Qt::AlignBottom | Qt::AlignRight);
     btnSend->setContentsMargins(15, 15, 15, 15);
     connect(btnSend, &QPushButton::clicked, this, &ChatModule::sendMessage);
-    bottomLayout->addWidget(textEditWrapper, 1); 
+    bottomLayout->addWidget(textEditWrapper, 1);
 
     // 5. 组装到分割器
     splitter->addWidget(m_textBrowser);
@@ -242,19 +274,21 @@ void ChatModule::loadContactsFromDatabase() {
     QString myDept = res["my_dept"].toString();
     QString myLocalFolder = res["my_folder"].toString();
     this->setProperty("localFolder", myLocalFolder);
-    // 插入全局广播总群
-    QListWidgetItem* allGroupItem = new QListWidgetItem("📢 【公司总群】");
+    // 1. 插入全局广播总群 (使用大喇叭 SVG)
+    QListWidgetItem* allGroupItem = new QListWidgetItem(" 【公司总群】");
+    allGroupItem->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_megaphone.svg"));
     allGroupItem->setData(Qt::UserRole, "GROUP_公司总群");
     m_contactsList->addItem(allGroupItem);
-    // 插入部门群聊
+    // 2. 插入部门群聊 (使用部门群组 SVG)
     QJsonArray deptArr = res["departments"].toArray();
     for (int i = 0; i < deptArr.size(); ++i) {
         QString dept = deptArr[i].toString();
-        QListWidgetItem* item = new QListWidgetItem(QString("👨‍👩‍👧‍👦 【部门群】%1").arg(dept));
+        QListWidgetItem* item = new QListWidgetItem(QString(" 【部门群】%1").arg(dept));
+        item->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_department_group.svg"));
         item->setData(Qt::UserRole, "GROUP_" + dept);
         m_contactsList->addItem(item);
     }
-    // 插入独立用户列表
+    // 3. 插入独立用户列表 (区分管理员与普通员工 SVG)
     QJsonArray userArr = res["users"].toArray();
     for (int i = 0; i < userArr.size(); ++i) {
         QJsonObject u = userArr[i].toObject();
@@ -262,12 +296,18 @@ void ChatModule::loadContactsFromDatabase() {
         QString dept = u["department"].toString();
         QString role = u["role"].toString();
         QString formattedId = QString("%1").arg(u["id"].toInt(), 3, 10, QChar('0'));
-        QString icon = (role.contains("管理员")) ? "👨‍💼" : "👨‍💻";
-
-        QListWidgetItem* item = new QListWidgetItem(QString("%1 %2 [%3] (%4)").arg(icon, name, formattedId, dept));
+        QListWidgetItem* item = new QListWidgetItem(QString(" %1 [%2] (%3)").arg(name, formattedId, dept));
+        // 动态判定图标
+        if (role.contains("管理员")) {
+            item->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_admin.svg"));
+        }
+        else {
+            item->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_staff.svg"));
+        }
         item->setData(Qt::UserRole, name);
         m_contactsList->addItem(item);
     }
+    m_contactsList->setIconSize(QSize(24, 24));
 }
 // 切换左侧列表时的对话上下文处理（读取本地缓存与服务端历史）
 void ChatModule::onContactSwitched(int currentRow) {
@@ -342,7 +382,7 @@ void ChatModule::onContactSwitched(int currentRow) {
                     displayMsg = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击查看原图)</a>").arg(fileUrl, suffix, content);
                 }
                 else {
-                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 历史附件: %2<br><span style='font-size:12px;'>(点击打开文件)</span></a>").arg(fileUrl, fName);
+                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>历史附件: %2<br><span style='font-size:12px;'>(点击打开文件)</span></a>").arg(fileUrl, fName);
                 }
             }
             // 处理纯文本消息渲染
@@ -360,7 +400,7 @@ void ChatModule::onContactSwitched(int currentRow) {
                         readStatusHtml = "&nbsp;&nbsp;<span style='color:#909399;'>(已读)</span>";
                     }
                 }
-                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px;'>[删除]</a>&nbsp;&nbsp;"
+                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>"
                     "<span style='color:#999999; font-size:12px;'>%2 [我]</span>%3").arg(msgHash, timeStr, readStatusHtml);
 
                 bubbleHtml = QString(
@@ -372,7 +412,7 @@ void ChatModule::onContactSwitched(int currentRow) {
             }
             else {
                 QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2</span>"
-                    "<a href='del:%3' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'>[删除]</a>").arg(sender, timeStr, msgHash);
+                    "<a href='del:%4' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>").arg(sender, timeStr, msgHash);
                 bubbleHtml = QString(
                     "<div style='text-align:left; margin-bottom:10px;'>"
                     "%1<br>"
@@ -395,8 +435,18 @@ void ChatModule::onContactSwitched(int currentRow) {
 void ChatModule::sendMessage() {
     QString msg = m_textEdit->toPlainText().trimmed();
     if (msg.isEmpty() || m_currentTarget.isEmpty()) return;
-    // 更新最近使用过的Emoji缓存
-    QStringList allEmojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉", "🔥", "💼", "🏢", "☕", "❌", "✔️" };
+    // 1. 同步扩充用于记录历史的动态 Emoji 库
+    QStringList allEmojis = {
+        "😀","😃","😄","😁","😆","😅","🤣","😂",
+        "🙂","🙃","😉","😊","😇","🥰","😍","🤩",
+        "😘","😗","😚","😙","😋","😛","😜","🤪",
+        "😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨",
+        "😐","😑","😶","😏","😒","🙄","😬","🤥",
+        "😌","😔","😪","🤤","😴","😷","🤒","🤕",
+        "🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯",
+        "👍","👎","👏","🙌","👐","🤲","🤝","🙏",
+        "💪","✨","🔥","🎉","💼","💻","☕","🚀"
+    };
     for (const QString& em : allEmojis) {
         if (msg.contains(em)) {
             m_recentEmojis.removeAll(em);
@@ -407,14 +457,17 @@ void ChatModule::sendMessage() {
     QString timeStr = QDateTime::currentDateTime().toString("MM-dd HH:mm");
     QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString readStatus = m_isCurrentGroup ? "" : QString("<span style='color:#AAAAAA; font-size:12px;'> (未读)</span>");
-    // 渲染发送出去的 HTML 气泡
+    // 2. 将硬编码的 [删除] 替换为 SVG 矢量图
     QString msgHash = QString::number(qHash(timeStr + m_myName + msg));
-    QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
+    QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>"
+        "<img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>"
         "<span style='color:#999999; font-size:12px;'>%2 [我] </span> %3").arg(msgHash, timeStr, readStatus);
+
     QString myMsgHtml = "<div style='text-align:right; margin-bottom:10px;'>"
         + header + "<br>"
         "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000000;'>"
         + msg.toHtmlEscaped() + "</span></div>";
+
     m_chatHistories[m_currentTarget] += myMsgHtml;
     m_textBrowser->setHtml(m_chatHistories[m_currentTarget]);
     m_textBrowser->moveCursor(QTextCursor::End);
@@ -483,7 +536,7 @@ void ChatModule::onBtnFolderClicked() {
             displayContent = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, base64Data);
         }
         else {
-            displayContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 已发送文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fi.fileName());
+            displayContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>已发送文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fi.fileName());
         }
         QString msgHash = QString::number(qHash(timeStr + m_myName + base64Data));
         QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
@@ -531,7 +584,7 @@ void ChatModule::onReadyRead() {
             QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
             QString receiveHtml = "<div style='text-align:center; margin-bottom:10px;'>"
                 "<span style='background-color:#F56C6C; color:#FFF; padding:6px 12px; border-radius:6px; font-size:12px;'>"
-                "📢 <b>全局系统广播</b> [" + fromUser + "] " + timeStr + "<br><br>" + content.toHtmlEscaped() + "</span></div>";
+                "<b>全局系统广播</b> [" + fromUser + "] " + timeStr + "<br><br>" + content.toHtmlEscaped() + "</span></div>";
             m_chatHistories["公司总群"] += receiveHtml;
             if (m_currentTarget == "公司总群") {
                 m_textBrowser->setHtml(m_chatHistories["公司总群"]);
@@ -578,7 +631,7 @@ void ChatModule::onReadyRead() {
                 htmlContent = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, content);
             }
             else {
-                htmlContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>📁 收到文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, originalFileName);
+                htmlContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>收到文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, originalFileName);
             }
         }
         QString msgHash = QString::number(qHash(timeStr + fromUser + content));
@@ -606,14 +659,65 @@ void ChatModule::onReadyRead() {
 }
 // 唤出 Emoji 表情选择菜单
 void ChatModule::onBtnEmojiClicked() {
-    QMenu emojiMenu;
-    QStringList emojis = { "😀", "😂", "😶", "😊", "😍", "😭", "😡", "👍", "🙏", "🎉", "🔥", "💼", "🏢", "☕", "❌", "✔️" };
-    for (const auto& em : emojis) {
-        QAction* act = emojiMenu.addAction(em);
-        connect(act, &QAction::triggered, this, [=]() { m_textEdit->insertPlainText(em); });
+    // 1. 创建自定义的无边框菜单
+    QMenu* emojiMenu = new QMenu(m_textEdit);
+    emojiMenu->setStyleSheet(
+        "QMenu { background-color: #FFFFFF; border: 1px solid #E5E6EB; border-radius: 8px; padding: 4px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }"
+    );
+    // 2. 创建网格容器
+    QWidget* gridWidget = new QWidget(emojiMenu);
+    QGridLayout* gridLayout = new QGridLayout(gridWidget);
+    gridLayout->setSpacing(2);
+    gridLayout->setContentsMargins(4, 4, 4, 4);
+    // 3. 扩充我们的动态表情库 (Windows 会自动将它们渲染为微软原生彩色表情)
+    QStringList dynamicEmojis = {
+        "😀","😃","😄","😁","😆","😅","🤣","😂",
+        "🙂","🙃","😉","😊","😇","🥰","😍","🤩",
+        "😘","😗","😚","😙","😋","😛","😜","🤪",
+        "😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨",
+        "😐","😑","😶","😏","😒","🙄","😬","🤥",
+        "😌","😔","😪","🤤","😴","😷","🤒","🤕",
+        "🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯",
+        "👍","👎","👏","🙌","👐","🤲","🤝","🙏",
+        "💪","✨","🔥","🎉","💼","💻","☕","🚀"
+    };
+    // 4. 将表情动态生成为 8列 x 多行 的网格按钮
+    int row = 0, col = 0;
+    for (const QString& em : dynamicEmojis) {
+        QPushButton* btn = new QPushButton(em, gridWidget);
+        btn->setFixedSize(38, 38); // 扩大点击区域
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(
+            "QPushButton { font-size: 22px; border: none; background: transparent; border-radius: 8px; }"
+            "QPushButton:hover { background-color: #F2F3F5; }"
+        );
+        // 点击后插入文本框，并关闭菜单
+        connect(btn, &QPushButton::clicked, this, [=]() {
+            m_textEdit->insertPlainText(em);
+            emojiMenu->close();
+            });
+        gridLayout->addWidget(btn, row, col);
+        col++;
+        if (col >= 8) { // 每行限制 8 个表情
+            col = 0;
+            row++;
+        }
     }
-    emojiMenu.setStyleSheet("QMenu { font-size: 20px; padding: 5px; } QMenu::item { padding: 8px; }");
-    emojiMenu.exec(QCursor::pos());
+    // 5. 将网格容器包装进 QWidgetAction，使其能在 QMenu 中显示
+    QWidgetAction* widgetAction = new QWidgetAction(emojiMenu);
+    widgetAction->setDefaultWidget(gridWidget);
+    emojiMenu->addAction(widgetAction);
+    // 6. 精准计算弹出位置 (让面板在表情按钮的正上方弹出)
+    QPoint btnPos = m_btnEmoji->mapToGlobal(QPoint(0, 0));
+    int menuWidth = gridLayout->columnCount() * 40 + 8;
+    int menuHeight = gridLayout->rowCount() * 40 + 8;
+    QPoint popupPos(
+        btnPos.x() - menuWidth / 2 + m_btnEmoji->width() / 2, // 水平居中对齐按钮
+        btnPos.y() - menuHeight - 10                          // 垂直偏上 10px 悬浮
+    );
+    // 弹出自定义表情库面板
+    emojiMenu->exec(popupPos);
+    delete emojiMenu;
 }
 // 响应按钮操作：唤出历史常用表情快捷面板
 void ChatModule::onBtnHistoryClicked() {
@@ -661,7 +765,7 @@ void ChatModule::onBtnMoreOptClicked() {
                 QString dept = u["dept"].toString();
                 QString job = u["job"].toString();
 
-                QListWidgetItem* item = new QListWidgetItem(QString("👤 %1 (%2 - %3)").arg(name, dept, job));
+                QListWidgetItem* item = new QListWidgetItem(QString("%1 (%2 - %3)").arg(name, dept, job));
                 item->setData(Qt::UserRole, name); // 存储用户名
                 listWidget->addItem(item);
                 count++;
@@ -669,13 +773,13 @@ void ChatModule::onBtnMoreOptClicked() {
         }
 
         dialog.setWindowTitle(QString("群成员列表 - %1 (%2人)").arg(m_currentTarget).arg(count));
-        dialog.setStyleSheet( "QDialog {""   background-color: #FFFFFF;""   border-radius: 10px;""}"
+        dialog.setStyleSheet("QDialog {""   background-color: #FFFFFF;""   border-radius: 10px;""}"
         );
         // 点击成员时显示个人信息
         connect(listWidget, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
             QString userName = item->data(Qt::UserRole).toString();
             if (!userName.isEmpty()) {
-                showUserInfo(userName); 
+                showUserInfo(userName);
             }
             });
         QPushButton* closeBtn = new QPushButton("关闭", &dialog);
@@ -760,7 +864,7 @@ void ChatModule::showUserInfo(const QString& userName)
             avatarLabel->setPixmap(QPixmap::fromImage(result));
         }
         else {
-            avatarLabel->setText("👤");
+            avatarLabel->setText("");
             avatarLabel->setFont(QFont("Microsoft YaHei", 36));
         }
 
@@ -771,7 +875,7 @@ void ChatModule::showUserInfo(const QString& userName)
         form->addRow("电话:", new QLabel(p.isEmpty() ? "未设置" : p, &dialog));
     }
     else {
-        avatarLabel->setText("❌");
+        avatarLabel->setText("");
         form->addRow(new QLabel("无法获取该用户信息", &dialog));
     }
 

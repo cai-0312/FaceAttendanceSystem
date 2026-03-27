@@ -63,6 +63,21 @@ bool ProfileModule::eventFilter(QObject* watched, QEvent* event) {
 void ProfileModule::injectAdvancedUI() {
     if (!m_editBtn || !m_editBtn->parentWidget()) return;
     QWidget* parentW = m_editBtn->parentWidget();
+    QComboBox* statusCombo = parentW->window()->findChild<QComboBox*>("comboBox_Status");
+    if (statusCombo) {
+        statusCombo->clear(); 
+        statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_online.svg"), "在线");
+        statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_meeting.svg"), "会议中");
+        statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_not_disturb.svg"), "请勿打扰");
+        statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_on_business_trip.svg"), "出差中");
+        statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_on_vacation.svg"), "休假中");
+        statusCombo->setIconSize(QSize(16, 16)); 
+        statusCombo->setCursor(Qt::PointingHandCursor);
+    }
+    QLabel* qrTitleLabel = parentW->window()->findChild<QLabel*>("label_QRTitle");
+    if (qrTitleLabel) {
+        qrTitleLabel->setText("<img src='../../AttendanceClient/icon_library/Profile/icon_phone.svg' width='14' height='14' align='middle'> 扫一扫 查看联系人");
+    }
     if (m_editBtn) m_editBtn->hide();
     QPushButton* oldPwdBtn = parentW->window()->findChild<QPushButton*>("btn_ChangePassword");
     if (oldPwdBtn) oldPwdBtn->hide();
@@ -86,19 +101,27 @@ void ProfileModule::injectAdvancedUI() {
     gridLay->setSpacing(15);
     gridLay->setContentsMargins(5, 20, 5, 5);
     QString baseStyle = "QPushButton {""   color: #FFFFFF;""   border-radius: 6px;""   font-family: 'Microsoft YaHei';""   font-size: 15px;""   font-weight: bold;""   min-height: 42px;""   border: none;""}""QPushButton:pressed {""   padding-top: 2px;""   padding-left: 2px;""}";
-    m_pwdBtn = new QPushButton("🔑 修改登录密码");
+    m_pwdBtn = new QPushButton(" 修改登录密码");
+    m_pwdBtn->setIcon(QIcon("../../AttendanceClient/icon_library/Profile/btn_password.svg"));
+    m_pwdBtn->setIconSize(QSize(18, 18));
     m_pwdBtn->setCursor(Qt::PointingHandCursor);
     m_pwdBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_pwdBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #F56C6C; } QPushButton:hover { background-color: #F78989; }");
-    m_faceBtn = new QPushButton("🔄 重新采集人脸");
+    m_faceBtn = new QPushButton(" 重新采集人脸");
+    m_faceBtn->setIcon(QIcon("../../AttendanceClient/icon_library/Profile/btn_face_redo.svg"));
+    m_faceBtn->setIconSize(QSize(18, 18));
     m_faceBtn->setCursor(Qt::PointingHandCursor);
     m_faceBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_faceBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #67C23A; } QPushButton:hover { background-color: #85CE61; }");
-    m_exportPdfBtn = new QPushButton("🖨️ 导出个人入职档案");
+    m_exportPdfBtn = new QPushButton(" 导出个人入职档案");
+    m_exportPdfBtn->setIcon(QIcon("../../AttendanceClient/icon_library/Profile/btn_export_personal.svg"));
+    m_exportPdfBtn->setIconSize(QSize(18, 18));
     m_exportPdfBtn->setCursor(Qt::PointingHandCursor);
     m_exportPdfBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_exportPdfBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #E6A23C; } QPushButton:hover { background-color: #EBB563; }");
-    m_settingsBtn = new QPushButton("🎨 系统设置");
+    m_settingsBtn = new QPushButton(" 系统设置");
+    m_settingsBtn->setIcon(QIcon("../../AttendanceClient/icon_library/Profile/btn_preference.svg"));
+    m_settingsBtn->setIconSize(QSize(18, 18));
     m_settingsBtn->setCursor(Qt::PointingHandCursor);
     m_settingsBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_settingsBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #722ED1; } QPushButton:hover { background-color: #8D51DE; }");
@@ -117,24 +140,24 @@ void ProfileModule::loadUserProfile(const QString& username) {
     m_currentUser = username;
     // 验证当前上下文中的用户标识是否合法传递
     if (m_currentUser.isEmpty()) {
-        if (m_nameLabel) m_nameLabel->setText("❌ 错误：登录名丢失，未能获取数据！");
+        if (m_nameLabel) m_nameLabel->setText("错误：登录名丢失，未能获取数据！");
         return;
     }
-    if (m_nameLabel) m_nameLabel->setText("⏳ 正在努力向服务器拉取数据...");
+    if (m_nameLabel) m_nameLabel->setText("正在努力拉取数据...");
     QJsonObject req;
     req["type"] = "query_user_profile";
     req["name"] = username;
     QJsonObject res = NetworkHelper::request(req);
     // 验证网络层响应结果的完整性
     if (res.isEmpty()) {
-        if (m_nameLabel) m_nameLabel->setText("❌ 错误：网络断开或服务器未响应！");
+        if (m_nameLabel) m_nameLabel->setText("错误：网络断开或服务器未响应！");
         return;
     }
     // 校验服务端业务层级是否返回正常状态
     if (res["status"].toString() != "success") {
         QString errMsg = res["msg"].toString();
         if (errMsg.isEmpty()) errMsg = "未知数据库错误，请检查服务端状态！";
-        if (m_nameLabel) m_nameLabel->setText(QString("<font color='red'>❌ 服务端拒绝: %1</font>").arg(errMsg));
+        if (m_nameLabel) m_nameLabel->setText(QString("<font color='red'>服务端拒绝: %1</font>").arg(errMsg));
         return;
     }
     // 解析档案数据字段
@@ -146,11 +169,31 @@ void ProfileModule::loadUserProfile(const QString& username) {
     QString phoneStr = res["phone"].toString().isEmpty() ? "未设置" : res["phone"].toString();
     QString realName = res["real_name"].toString();
     if (realName.isEmpty()) realName = username;
-    // 同步渲染基础文本信息到指定的 UI 控件
-    if (m_nameLabel) m_nameLabel->setText("👤 姓名: " + realName);
+    QString iconPath = "";
+    int iconSize = 24; 
+    if (role.contains("管理员")) {
+        iconPath = "../../AttendanceClient/icon_library/Profile/icon_admin.svg";
+        iconSize = 30; 
+    }
+    else {
+        iconPath = "../../AttendanceClient/icon_library/Profile/icon_staff.svg";
+        iconSize = 24; 
+    }
+    if (m_nameLabel) {
+        m_nameLabel->setText(QString(
+            "<img src='%1' width='%2' height='%3' align='middle'>&nbsp;"
+            "<span style='font-family: \"Microsoft YaHei\"; font-size: 20px; font-weight: bold; color: #1F2329;'>"
+            "姓名: %4</span>").arg(iconPath).arg(iconSize).arg(iconSize).arg(realName));
+    }
     if (m_deptLabel) m_deptLabel->setText(dept);
-    if (m_genderLabel) m_genderLabel->setText(QString("%1 &nbsp;<a href='edit_gender' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(genderStr));
-    if (m_phoneLabel) m_phoneLabel->setText(QString("%1 &nbsp;<a href='edit_phone' style='color:#1456F0; text-decoration:none; font-size:13px;'>[✎修改]</a>").arg(phoneStr));
+    if (m_genderLabel) {
+        m_genderLabel->setText(QString("%1 &nbsp;<a href='edit_gender' style='color:#1456F0; text-decoration:none; font-size:13px;'>"
+            "<img src='../../AttendanceClient/icon_library/Profile/btn_edit.svg' width='14' height='14' align='middle'> 修改</a>").arg(genderStr));
+    }
+    if (m_phoneLabel) {
+        m_phoneLabel->setText(QString("%1 &nbsp;<a href='edit_phone' style='color:#1456F0; text-decoration:none; font-size:13px;'>"
+            "<img src='../../AttendanceClient/icon_library/Profile/btn_edit.svg' width='14' height='14' align='middle'> 修改</a>").arg(phoneStr));
+    }
     QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
     if (window) {
         QLabel* idLabel = window->findChild<QLabel*>("label_ProfileEmpId");
@@ -158,8 +201,6 @@ void ProfileModule::loadUserProfile(const QString& username) {
         QLabel* roleLabel = window->findChild<QLabel*>("label_ProfileRole");
         if (roleLabel) roleLabel->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
     }
-    // ===== 问题1：离线生成QR码（纯文本，不依赖网络）=====
-    // 微信扫码点"复制文本内容"可查看，支付宝/系统相机直接展示
     QString cardData = QString::fromUtf8(
         "══════════════\n"
         "  员工电子名片\n"
@@ -300,12 +341,11 @@ void ProfileModule::onEditPhoneClicked() {
     }
 }
 // 弹出交互窗口修改系统登录密码
-// ===== 问题3：修改密码（客户端强制复杂度校验）=====
 void ProfileModule::onChangePasswordClicked() {
     QWidget* pw = (QWidget*)this->parent();
     QDialog dialog(pw);
     dialog.setWindowTitle("修改登录密码");
-    dialog.resize(360, 250);
+    dialog.resize(360, 140);
     QFormLayout form(&dialog);
     QLineEdit* oldPwdEdit = new QLineEdit(&dialog); oldPwdEdit->setEchoMode(QLineEdit::Password);
     QLineEdit* newPwdEdit = new QLineEdit(&dialog); newPwdEdit->setEchoMode(QLineEdit::Password);
@@ -504,9 +544,9 @@ void ProfileModule::onReRegisterFaceClicked() {
     app2->setStyleSheet(modernInputStyle);
     app3->setStyleSheet(modernInputStyle);
 
-    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "🏢 人资经理: "); };
-    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "👑 总经理: "); };
-    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "👨‍💼 部门经理: "); };
+    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: "); };
+    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: "); };
+    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
 
     int levels = 0;
     if (dept == "总经办" && jobTitle == "总经理") {
@@ -585,22 +625,57 @@ void ProfileModule::onReRegisterFaceClicked() {
 // 唤出本地设置交互面板并将偏好属性持久化至配置文件
 void ProfileModule::onPreferencesClicked() {
     QDialog dialog((QWidget*)this->parent());
-    dialog.setWindowTitle("🎨 系统偏好设置");
-    dialog.resize(300, 150);
+    // 顺手把标题的 Emoji 换成了更正式的文本，并设置窗口图标
+    dialog.setWindowTitle("系统偏好设置");
+    dialog.setWindowIcon(QIcon("../../AttendanceClient/icon_library/Profile/btn_preference.svg"));
+    dialog.resize(320, 160);
     QVBoxLayout layout(&dialog);
+    layout.setSpacing(15);
+    layout.setContentsMargins(20, 20, 20, 20);
     QSettings settings("config.ini", QSettings::IniFormat);
     bool voiceEnabled = settings.value("Preferences/VoiceEnabled", true).toBool();
     bool popupEnabled = settings.value("Preferences/PopupEnabled", true).toBool();
-    QCheckBox* voiceCheck = new QCheckBox("🔊 开启打卡成功/失败语音播报");
+    QCheckBox* voiceCheck = new QCheckBox(" 开启打卡成功/失败语音播报");
     voiceCheck->setChecked(voiceEnabled);
-    QCheckBox* popupCheck = new QCheckBox("📢 接收系统全局广播弹窗");
+    voiceCheck->setCursor(Qt::PointingHandCursor);
+    // 注入 SVG 样式表，替换原生的勾选框
+    QString customCheckStyle =
+        "QCheckBox {"
+        "   spacing: 10px;"
+        "   font-family: 'Microsoft YaHei';"
+        "   font-size: 14px;"
+        "   color: #303133;"
+        "}"
+        "QCheckBox::indicator {"
+        "   width: 24px;"
+        "   height: 24px;"
+        "}"
+        "QCheckBox::indicator:unchecked {"
+        "   image: url(../../AttendanceClient/icon_library/Profile/icon_voice_off.svg);"
+        "}"
+        "QCheckBox::indicator:checked {"
+        "   image: url(../../AttendanceClient/icon_library/Profile/icon_voice_on.svg);"
+        "}";
+    voiceCheck->setStyleSheet(customCheckStyle);
+    QCheckBox* popupCheck = new QCheckBox(" 接收系统全局广播弹窗");
     popupCheck->setChecked(popupEnabled);
+    // 建议：为了视觉统一，全局广播弹窗也可以用普通样式修饰一下，或者未来补充对应的SVG
+    popupCheck->setStyleSheet("QCheckBox { spacing: 10px; font-family: 'Microsoft YaHei'; font-size: 14px; color: #303133; }");
+    popupCheck->setCursor(Qt::PointingHandCursor);
+
     layout.addWidget(voiceCheck);
     layout.addWidget(popupCheck);
+
     QDialogButtonBox buttonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    // 美化一下按钮
+    buttonBox.button(QDialogButtonBox::Save)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 15px; border: none; } QPushButton:hover { background-color: #66b1ff; }");
+    buttonBox.button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 15px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
+
     layout.addWidget(&buttonBox);
+
     connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
     if (dialog.exec() == QDialog::Accepted) {
         settings.setValue("Preferences/VoiceEnabled", voiceCheck->isChecked());
         settings.setValue("Preferences/PopupEnabled", popupCheck->isChecked());
