@@ -440,7 +440,6 @@ void MainWidget::closeEvent(QCloseEvent* event) {
     }
     qApp->quit();
 }
-// 问题四：强制跳转到指定导航页面（用于人脸绑定拦截）
 void MainWidget::forceNavigateTo(int navIndex) {
     if (ui->listWidget_Nav && navIndex >= 0 && navIndex < ui->listWidget_Nav->count()) {
         ui->listWidget_Nav->setCurrentRow(navIndex);

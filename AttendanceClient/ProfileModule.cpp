@@ -80,7 +80,7 @@ void ProfileModule::injectAdvancedUI() {
     QComboBox* statusCombo = parentW->window()->findChild<QComboBox*>("comboBox_Status");
     QPushButton* btnChangeAvatar = parentW->window()->findChild<QPushButton*>("btn_ChangeAvatar");
     QFormLayout* formLay = parentW->window()->findChild<QFormLayout*>("formLayout_Profile");
-
+    QString iconBase = "../../AttendanceClient/icon_library/Profile/";
     // 获取二维码相关的控件，准备迁移
     QLabel* qrCodeLabel = parentW->window()->findChild<QLabel*>("label_QRCode");
     QLabel* qrTitleLabel = parentW->window()->findChild<QLabel*>("label_QRTitle");
@@ -189,7 +189,6 @@ void ProfileModule::injectAdvancedUI() {
     hLayHeader->addLayout(infoLay, 1);
 
     QHBoxLayout* topActionLay = new QHBoxLayout();
-    QString iconBase = "../../AttendanceClient/icon_library/Profile/";
     QPushButton* helpBtn = new QPushButton(" 操作指引与考勤规范");
     helpBtn->setIcon(QIcon(iconBase + "icon_operation.svg")); 
     helpBtn->setIconSize(QSize(16, 16)); // 设置合适的图标尺寸
@@ -308,6 +307,10 @@ void ProfileModule::injectAdvancedUI() {
     m_exportPdfBtn = new QPushButton(" 导出个人入职档案");
     m_exportPdfBtn->setIcon(QIcon(iconBase + "icon_export_personal.svg"));
     m_exportPdfBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #E6A23C; } QPushButton:hover { background-color: #EBB563; }");
+    QPushButton* payslipBtn = new QPushButton(" 智能工资条");
+    payslipBtn->setIcon(QIcon(iconBase + "btn_payslip.svg")); 
+    payslipBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #165DFF; } QPushButton:hover { background-color: #4080FF; }");
+    payslipBtn->setCursor(Qt::PointingHandCursor);
     m_settingsBtn = new QPushButton(" 系统设置");
     m_settingsBtn->setIcon(QIcon(iconBase + "btn_preference.svg"));
     m_settingsBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #722ED1; } QPushButton:hover { background-color: #8D51DE; }");
@@ -315,10 +318,13 @@ void ProfileModule::injectAdvancedUI() {
     footerLay->addWidget(m_pwdBtn);
     footerLay->addWidget(m_exportPdfBtn);
     footerLay->addStretch();
+    footerLay->addWidget(payslipBtn);
     footerLay->addWidget(m_settingsBtn);
 
     mainCardLay->insertWidget(2, footerFrame);
-
+    connect(payslipBtn, &QPushButton::clicked, this, [this]() {
+        QMessageBox::information((QWidget*)this->parent(), "智能工资条", "薪资明细与确认功能正在开发中，敬请期待！");
+        });
     connect(m_pwdBtn, &QPushButton::clicked, this, &ProfileModule::onChangePasswordClicked);
     connect(m_faceBtn, &QPushButton::clicked, this, &ProfileModule::onReRegisterFaceClicked);
     connect(m_exportPdfBtn, &QPushButton::clicked, this, &ProfileModule::onExportProfilePdfClicked);

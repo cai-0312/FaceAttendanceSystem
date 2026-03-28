@@ -68,12 +68,19 @@ void AIAssistantModule::rebuildAdvancedUI() {
     // 创建主水平布局和分割器
     QHBoxLayout* mainLayout = new QHBoxLayout(parentW);
     QSplitter* mainSplitter = new QSplitter(Qt::Horizontal, parentW);
+    mainSplitter->setHandleWidth(1);
+    mainSplitter->setStyleSheet(
+        "QSplitter::handle { background-color: #DEE0E3; }"
+        "QSplitter::handle:horizontal:hover { background-color: #409EFF; }"
+    );
     // 左侧侧边栏设置
-    m_leftWidget = new QWidget();
+    m_leftWidget = new QFrame(mainSplitter);
+    m_leftWidget->setObjectName("aiLeftFrame");
+    m_leftWidget->setStyleSheet("QFrame#aiLeftFrame { background-color: #F7F8FA; border-right: 1px solid #DEE0E3; }");
     m_leftWidget->setMinimumWidth(220);
     m_leftWidget->setMaximumWidth(280);
     QVBoxLayout* leftLay = new QVBoxLayout(m_leftWidget);
-    leftLay->setContentsMargins(0, 0, 10, 0);
+    leftLay->setContentsMargins(0, 0, 0, 0);
     // 新建对话按钮
     m_newSessionBtn = new QPushButton(" 新建对话");
     m_newSessionBtn->setIcon(QIcon("../../AttendanceClient/icon_library/AIAssistant/btn_new_chat.svg"));
@@ -113,8 +120,10 @@ void AIAssistantModule::rebuildAdvancedUI() {
     leftLay->addWidget(m_searchBox);
     leftLay->addWidget(m_sessionList);
     // 右侧主聊天区域设置
-    QWidget* rightWidget = new QWidget();
-    QVBoxLayout* rightLay = new QVBoxLayout(rightWidget);
+    QFrame* rightFrame = new QFrame(mainSplitter);
+    rightFrame->setObjectName("aiRightFrame");
+    rightFrame->setStyleSheet("QFrame#aiRightFrame { background-color: #FFFFFF; }");
+    QVBoxLayout* rightLay = new QVBoxLayout(rightFrame);
     rightLay->setContentsMargins(0, 0, 0, 0);
     // 顶部控制栏（侧边栏开关、语音开关）
     QHBoxLayout* topControlLay = new QHBoxLayout();
@@ -134,7 +143,7 @@ void AIAssistantModule::rebuildAdvancedUI() {
     topControlLay->addStretch();
     topControlLay->addWidget(m_voiceBtn);
     if (m_clearBtn) {
-        m_clearBtn->setParent(rightWidget);               
+        m_clearBtn->setParent(rightFrame);
         m_clearBtn->setText(" 暂时清空内容");               
         m_clearBtn->setIcon(QIcon("../../AttendanceClient/icon_library/AIAssistant/icon_clear.svg"));
         m_clearBtn->setIconSize(QSize(16, 16));
@@ -143,7 +152,12 @@ void AIAssistantModule::rebuildAdvancedUI() {
         topControlLay->addWidget(m_clearBtn);
     }
     // 右侧内容分割器（上面是聊天记录，下面是输入框）
-    QSplitter* rightSplitter = new QSplitter(Qt::Vertical, rightWidget);
+    QSplitter* rightSplitter = new QSplitter(Qt::Vertical, rightFrame);
+    rightSplitter->setHandleWidth(1);
+    rightSplitter->setStyleSheet(
+        "QSplitter::handle { background-color: transparent; }" 
+        "QSplitter::handle:vertical:hover { background-color: #DEE0E3; }" 
+    );
     // 聊天记录显示区域配置
     m_textBrowser->setOpenExternalLinks(true);
     m_textBrowser->setStyleSheet("border: none; background: transparent;");
@@ -269,7 +283,7 @@ void AIAssistantModule::rebuildAdvancedUI() {
     actionLay->addWidget(m_sendBtn);
 
     inLay->addLayout(actionLay);
-    rightLay->setContentsMargins(5, 5, 5, 5); // 给底部和右侧留出 15px 的悬浮呼吸感
+    rightLay->setContentsMargins(0, 5, 5, 0); // 给底部和右侧留出 15px 的悬浮呼吸感
     rightLay->setSpacing(10); // 设置聊天框和输入框的缝隙
     rightLay->addLayout(topControlLay);
     rightLay->addWidget(m_textBrowser, 1); // 1 代表占据所有多余高度 [cite: 1]
@@ -278,7 +292,7 @@ void AIAssistantModule::rebuildAdvancedUI() {
     // 组装最终的主布局
     mainLayout->setContentsMargins(0, 0, 0, 0); // 消除最外层丑陋的白边 [cite: 1]
     mainSplitter->addWidget(m_leftWidget);
-    mainSplitter->addWidget(rightWidget);
+    mainSplitter->addWidget(rightFrame);
     mainSplitter->setStretchFactor(0, 0); // 左侧栏不拉伸 [cite: 1]
     mainSplitter->setStretchFactor(1, 1); // 右侧聊天区自由拉伸 [cite: 1]
     mainLayout->addWidget(mainSplitter);

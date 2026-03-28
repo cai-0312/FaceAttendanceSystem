@@ -71,7 +71,7 @@ void RecordModule::injectAdvancedUI() {
         "QDateEdit::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #333333; width: 0px; height: 0px; margin-right: 10px; }";
     // 构造高级状态过滤下拉框
     m_statusCombo = new QComboBox();
-    m_statusCombo->addItems({ "全部状态", "正常", "迟到", "早退", "旷工", "请假", "补卡" });
+    m_statusCombo->addItems({ "全部状态", "正常", "迟到", "早退", "旷工","作弊", "请假", "补卡"});
     m_statusCombo->setMinimumHeight(32);
     m_statusCombo->setCursor(Qt::PointingHandCursor);
     m_statusCombo->setStyleSheet(comboQss);
@@ -237,6 +237,41 @@ void RecordModule::injectAdvancedUI() {
         layout->addWidget(tabWidget);
         dlg.exec();
         });
+    // ==========================================================
+    // ⭐️ 动态注入：在日历下方添加“薪资核算”工作台入口 (严格部门鉴权)
+    // ==========================================================
+    if (QWidget* calParent = m_calendarWidget->parentWidget()) {
+        if (QVBoxLayout* calLay = qobject_cast<QVBoxLayout*>(calParent->layout())) {
+
+            QPushButton* btnSalaryCalc = new QPushButton(" 智能薪资核算", calParent);
+            btnSalaryCalc->setIcon(QIcon("../../AttendanceClient/icon_library/Record/btn_salary.svg"));
+            btnSalaryCalc->setMinimumHeight(40);
+            btnSalaryCalc->setCursor(Qt::PointingHandCursor);
+            btnSalaryCalc->setStyleSheet(
+                "QPushButton { background-color: #FF7D00; color: white; border-radius: 8px; font-weight: bold; font-size: 13px; margin-top: 10px; }"
+                "QPushButton:hover { background-color: #FF9A2E; }"
+            );
+            QJsonObject dReq;
+            dReq["type"] = "query_user_dept";
+            dReq["name"] = m_loginName;
+            QJsonObject dRes = NetworkHelper::request(dReq);
+            QString myDept = dRes["department"].toString();
+            QString myJob = dRes["job_title"].toString();
+            bool isHRManager = (myDept == "人力资源部" && (myJob == "部门经理" ));
+            if (isHRManager) {
+                calLay->addWidget(btnSalaryCalc);
+                connect(btnSalaryCalc, &QPushButton::clicked, this, [this]() {
+                    QMessageBox::information(m_tableView->window(), "薪资核算",
+                        "智能薪资核算引擎接入中...\n即将支持结合考勤、迟到扣薪、请假天数进行自动化算薪。");
+                    });
+            }
+            else {
+                // 非人资经理或管理员，直接销毁控件，防止通过 UI 树越权调出
+                btnSalaryCalc->hide();
+                btnSalaryCalc->deleteLater();
+            }
+        }
+    }
 }
 void RecordModule::onExportDept() {
     QString startDate = m_startDateEdit->date().toString("yyyy-MM-dd");
@@ -282,16 +317,17 @@ void RecordModule::onExportDept() {
     out << QString("统计区间: %1 至 %2\n").arg(startDate, endDate);
     out << QString("导出人: %1 (%2)\n\n").arg(m_loginName, m_role);
 
-    out << "部门名称,总计人数,应出勤总人天,迟到总计(次),早退总计(次),旷工总计(天),请假总计(天),异常打卡占比,总计扣薪工时(h),部门平均出勤率\n";
+    out << "部门名称,总计人数,应出勤总人天,迟到总计(次),早退总计(次),作弊总计(次),旷工总计(天),请假总计(天),异常打卡占比,总计扣薪工时(h),部门平均出勤率\n";
 
     for (int i = 0; i < deptArr.size(); ++i) {
         QJsonObject row = deptArr[i].toObject();
-        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10\n")
+        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11\n")
             .arg(row["dept_name"].toString())
             .arg(row["total_people"].toInt())
             .arg(row["expected_mandays"].toInt())
             .arg(row["total_late"].toInt())
             .arg(row["total_early"].toInt())
+            .arg(row["total_cheat"].toInt())
             .arg(row["total_absent"].toInt())
             .arg(row["total_leave"].toInt())
             .arg(row["abnormal_rate"].toString())
@@ -335,7 +371,7 @@ void RecordModule::loadMonthlyDataAndColorize(int year, int month) {
             else if (state == "late" || state == "absent") m_calendarWidget->setDateTextFormat(d, lateF);
             else if (state == "normal") m_calendarWidget->setDateTextFormat(d, normalF);
         }
-        m_summaryLabel->setText(QString("出勤: <b><font color='#00B42A'>%1 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 迟到/早退: <b><font color='#FA6400'>%2 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 请假: <b><font color='#3370FF'>%3 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 旷工: <b><font color='#F53F3F'>%4 天</font></b>").arg(normalDays).arg(lateDays).arg(leaveDays).arg(absentDays));
+        m_summaryLabel->setText(QString("出勤: <b><font color='#00B42A'>%1 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 迟到/早退/作弊: <b><font color='#FA6400'>%2 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 请假: <b><font color='#3370FF'>%3 天</font></b> &nbsp;&nbsp;|&nbsp;&nbsp; 旷工: <b><font color='#F53F3F'>%4 天</font></b>").arg(normalDays).arg(lateDays).arg(leaveDays).arg(absentDays));
     }
 }
 // 挂钩日历翻页组件，当展示月份变更时主动发包重拉最新数据集
@@ -379,11 +415,11 @@ void RecordModule::onFilterClicked() {
             rowItems << new QStandardItem(rowObj["time"].toString());
             QString st = rowObj["status"].toString();
             QStandardItem* statusItem = new QStandardItem(st);
-            if (st.contains("迟到") || st.contains("早退")) {
+            if (st.contains("迟到") || st.contains("早退") ) {
                 statusItem->setForeground(QBrush(QColor("#FA6400")));
                 statusItem->setFont(QFont("Microsoft YaHei", 9, QFont::Bold));
             }
-            else if (st.contains("旷工")) {
+            else if (st.contains("旷工") || st.contains("作弊")) {
                 statusItem->setForeground(QBrush(QColor("#F53F3F")));
                 statusItem->setFont(QFont("Microsoft YaHei", 9, QFont::Bold));
             }
@@ -433,7 +469,7 @@ void RecordModule::onCustomContextMenu(const QPoint& pos) {
             QAction* editAct = menu.addAction("管理员：强制修改状态 / 补卡");
             connect(editAct, &QAction::triggered, [=]() {
                 bool ok;
-                QStringList items = { "正常(补卡)", "迟到", "早退", "旷工" };
+                QStringList items = { "正常(补卡)", "迟到", "早退", "旷工" , "作弊打卡"};
                 QString newStatus = QInputDialog::getItem(nullptr, "修改考勤状态", QString("正在修改【%1】于 %2 的记录：").arg(empName, timeStr), items, 0, false, &ok);
                 if (ok && !newStatus.isEmpty()) {
                     QJsonObject req;
@@ -546,7 +582,7 @@ void RecordModule::onExportAllMonthly() {
     out << QString("导出人员: %1\n").arg(m_loginName);
     out << QString("共 %1 名员工\n\n").arg(summaryArr.size());
 
-    out << "序号,员工姓名,部门,职务,应出勤(天),实出勤(天),迟到(次),早退(次),旷工(天),请假(天),出勤率\n";
+    out << "序号,员工姓名,部门,职务,应出勤(天),实出勤(天),迟到(次),早退(次),作弊(次),旷工(天),请假(天),出勤率\n";
 
     for (int i = 0; i < summaryArr.size(); ++i) {
         QJsonObject row = summaryArr[i].toObject();
@@ -557,22 +593,23 @@ void RecordModule::onExportAllMonthly() {
         int actualWork = row["actual_work"].toInt();
         int lateCount = row["late_count"].toInt();
         int earlyCount = row["early_count"].toInt();
+        int cheatCount = row["cheatCount"].toInt();
         int absentDays = row["absent_days"].toInt();
         int leaveDays = row["leave_days"].toInt();
 
         QString rate = shouldWork > 0
             ? QString::number((double)actualWork / shouldWork * 100.0, 'f', 1) + "%"
             : "0.0%";
-        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11\n")
+        out << QString("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12\n")
             .arg(i + 1).arg(name).arg(dept).arg(job)
             .arg(shouldWork).arg(actualWork)
             .arg(lateCount).arg(earlyCount)
-            .arg(absentDays).arg(leaveDays)
-            .arg(rate);
+            .arg(cheatCount).arg(absentDays)
+            .arg(leaveDays).arg(rate);
     }
 
     file.close();
     QMessageBox::information(nullptr, "导出成功",
-        QString("月度汇总已导出！\n%1年%2月，共%3名员工\n文件：%4")
+        QString("%1年%2月,月度汇总已导出！")
         .arg(year).arg(month).arg(summaryArr.size()).arg(filePath));
 }
