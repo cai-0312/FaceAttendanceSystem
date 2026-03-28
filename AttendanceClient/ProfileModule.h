@@ -5,6 +5,12 @@
 #include <QPushButton>
 #include <QString>
 #include <QPixmap>
+#include <QNetworkInterface>
+#include <QMediaDevices>
+#include <QCameraDevice>
+#include <QTimer>
+#include <QTextBrowser>
+#include <QFrame>
 #include <QByteArray>
 #include <QEvent>
 class ProfileModule : public QObject
@@ -27,6 +33,9 @@ private slots:
     void onEditPhoneClicked();                                      // 响应操作：校验并更新用户的联系电话字段
 private:
     void injectAdvancedUI();                                                         // 动态注入：移除原生按钮并动态生成高级交互控制面板
+    void renderDiagnosticsCard();
+    void renderHelpAccordion();
+
     QLabel* m_avatarLabel;                                                           // 界面控件：用于展示用户Base64头像数据的标签
     QLabel* m_nameLabel;                                                             // 界面控件：用于展示用户真实姓名的标签
     QLabel* m_deptLabel;                                                             // 界面控件：用于展示用户所属部门的标签

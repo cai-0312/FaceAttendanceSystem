@@ -167,19 +167,19 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
         "QPushButton { background: transparent; color: #4E5969; border-radius: 6px; padding: 6px 12px; font-weight: bold; border: none; font-size: 13px; }"
         "QPushButton:hover { background: #E5E6EB; color: #165DFF; }";
     // 1. 表情按钮 (清除原有硬编码的😀，并应用统一样式)
-    m_btnEmoji->setText(" 表情");
+    m_btnEmoji->setText("");
     m_btnEmoji->setCursor(Qt::PointingHandCursor);
     m_btnEmoji->setStyleSheet(toolBtnStyle);
     m_btnEmoji->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_emoji.svg"));
      m_btnEmoji->setIconSize(QSize(18, 18));
     // 2. 文件按钮
-    m_btnFolder->setText(" 文件");
+    m_btnFolder->setText("");
     m_btnFolder->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_folder.svg"));
     m_btnFolder->setIconSize(QSize(18, 18));
     m_btnFolder->setCursor(Qt::PointingHandCursor);
     m_btnFolder->setStyleSheet(toolBtnStyle);
     // 3. 历史记录按钮
-    m_btnHistory->setText(" 历史");
+    m_btnHistory->setText("");
     m_btnHistory->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_history.svg"));
     m_btnHistory->setIconSize(QSize(18, 18));
     m_btnHistory->setCursor(Qt::PointingHandCursor);
@@ -295,8 +295,11 @@ void ChatModule::loadContactsFromDatabase() {
         QString name = u["name"].toString();
         QString dept = u["department"].toString();
         QString role = u["role"].toString();
+        QString jobTitle = u["job_title"].toString();
+        if (jobTitle.isEmpty() || jobTitle == "未分配") jobTitle = "员工";
         QString formattedId = QString("%1").arg(u["id"].toInt(), 3, 10, QChar('0'));
-        QListWidgetItem* item = new QListWidgetItem(QString(" %1 [%2] (%3)").arg(name, formattedId, dept));
+        QListWidgetItem* item = new QListWidgetItem(
+            QString(" %1 [%2] (%3-%4)").arg(name, formattedId, dept, jobTitle));
         // 动态判定图标
         if (role.contains("管理员")) {
             item->setIcon(QIcon("../../AttendanceClient/icon_library/Chat/icon_admin.svg"));
