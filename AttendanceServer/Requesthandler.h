@@ -33,9 +33,7 @@ public:
     static void handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     static void handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
-    // 修改密码
     static void handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
-    // 人脸重录审批
     static void handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);
     // 头像文件系统存储
     static void handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json);

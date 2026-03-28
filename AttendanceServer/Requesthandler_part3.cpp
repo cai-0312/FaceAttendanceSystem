@@ -234,17 +234,17 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
             QString dateStr = q.value(0).toDate().toString("yyyy-MM-dd");
             QString status = q.value(1).toString();
             QString existing = dayStatus.value(dateStr, "");
-            // 状态优先级判定逻辑：旷工 > 迟到/早退 > 请假 > 正常
+            // 状态优先级判定逻辑：旷工 > 作弊/迟到/早退 > 请假 > 正常
             if (status.contains("旷工")) {
                 dayStatus[dateStr] = "absent";
             }
-            else if (status.contains("迟到") || status.contains("早退")) {
+            else if (status.contains("迟到") || status.contains("早退") || status.contains("作弊")) {
                 if (existing != "absent") dayStatus[dateStr] = "late";
             }
             else if (status.contains("假")) {
                 if (existing != "absent" && existing != "late") dayStatus[dateStr] = "leave";
             }
-            else if (status.contains("正常") || status.contains("下班")) {
+            else if (status.contains("正常") || status.contains("下班") || status.contains("补卡")) {
                 if (existing.isEmpty()) dayStatus[dateStr] = "normal";
             }
         }
@@ -315,6 +315,9 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
             if (status.contains("旷工")) {
                 dayStatus[dateStr] = "absent";
             }
+            else if (status.contains("作弊")) {
+                dayStatus[dateStr] = "late";
+            }
             else if (status.contains("迟到") || status.contains("早退")) {
                 if (existing != "absent") dayStatus[dateStr] = "late";
             }
@@ -327,7 +330,7 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
         }
 
         // 统计各项指标
-        int actualWork = 0, lateCount = 0, earlyCount = 0, absentDays = 0, leaveDays = 0;
+        int actualWork = 0, lateCount = 0, earlyCount = 0, cheatCount = 0, absentDays = 0, leaveDays = 0;
         for (auto it = dayStatus.begin(); it != dayStatus.end(); ++it) {
             if (it.value() == "normal")  actualWork++;
             else if (it.value() == "late") { actualWork++; lateCount++; }
@@ -342,6 +345,12 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
             "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' AND status LIKE '%%早退%%'"
         ).arg(empName, startDate, endDate));
         if (earlyQ.next()) earlyCount = earlyQ.value(0).toInt();
+        QSqlQuery cheatQ(db);
+        cheatQ.exec(QString(
+            "SELECT COUNT(id) FROM attendance_records "
+            "WHERE name = '%1' AND DATE(punch_time) BETWEEN '%2' AND '%3' AND status LIKE '%%作弊%%'"
+        ).arg(empName, startDate, endDate));
+        if (cheatQ.next()) cheatCount = cheatQ.value(0).toInt();
 
         QJsonObject row;
         row["name"] = empName;
@@ -351,6 +360,7 @@ void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* 
         row["actual_work"] = actualWork;
         row["late_count"] = lateCount;
         row["early_count"] = earlyCount;
+        row["cheatCount"] = cheatCount;
         row["absent_days"] = absentDays;
         row["leave_days"] = leaveDays;
         summary.append(row);
@@ -1146,12 +1156,13 @@ void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket
         QSqlQuery qRec(db);
         qRec.exec(recordSql);
 
-        int totalLate = 0, totalEarly = 0, totalAbsent = 0, totalLeave = 0, actualNormal = 0;
+        int totalLate = 0, totalEarly = 0, totalAbsent = 0, totalLeave = 0, actualNormal = 0, totalCheat = 0;
         while (qRec.next()) {
             QString status = qRec.value(0).toString();
             if (status.contains("迟到")) totalLate++;
             else if (status.contains("早退")) totalEarly++;
             else if (status.contains("旷工")) totalAbsent++;
+            else if (status.contains("作弊")) totalCheat++; 
             else if (status.contains("假")) totalLeave++;
             else if (status.contains("正常") || status.contains("补卡")) actualNormal++;
         }
@@ -1166,12 +1177,11 @@ void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket
             // 注意：具体公式可依企业制度调整，这里给出通用模板
             attendanceRate = double(actualNormal + totalLate + totalEarly) / expectedManDays * 100.0;
 
-            // 异常占比 = (迟到 + 早退 + 旷工) / 应出勤人天
-            abnormalRate = double(totalLate + totalEarly + totalAbsent) / expectedManDays * 100.0;
+            abnormalRate = double(totalLate + totalEarly + totalAbsent + totalCheat) / expectedManDays * 100.0;
         }
 
-        // 扣薪工时规则设定 (示例：迟到早退各扣 0.5H，旷工扣 8H)
-        deductHours = (totalLate * 0.5) + (totalEarly * 0.5) + (totalAbsent * 8.0);
+        // ⭐️ 4. 扣薪工时规则：作弊性质恶劣，可以直接设定作弊一次按旷工一天（扣 8H）处理
+        deductHours = (totalLate * 0.5) + (totalEarly * 0.5) + (totalAbsent * 8.0) + (totalCheat * 8.0);
 
         QJsonObject row;
         row["dept_name"] = deptName;
@@ -1181,6 +1191,7 @@ void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket
         row["total_early"] = totalEarly;
         row["total_absent"] = totalAbsent;
         row["total_leave"] = totalLeave;
+        row["total_cheat"] = totalCheat; 
         row["abnormal_rate"] = QString::number(abnormalRate, 'f', 1) + "%";
         row["deduct_hours"] = deductHours;
         row["attendance_rate"] = QString::number(attendanceRate, 'f', 1) + "%";
