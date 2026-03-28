@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QSqlQuery>
+#include <QGraphicsDropShadowEffect>
 // 构造函数：初始化登录界面指针并配置无边框透明窗口属性
 ServerLogin::ServerLogin(QWidget* parent) :
     QWidget(parent),
@@ -15,9 +16,54 @@ ServerLogin::ServerLogin(QWidget* parent) :
     // 隐藏系统默认边框并启用背景透明，支持自定义UI绘制
     this->setWindowFlags(Qt::FramelessWindowHint);
     this->setAttribute(Qt::WA_TranslucentBackground);
+
+    if (ui->lbl_AdminWarning) {
+        QString iconBase = "../../AttendanceServer/icon_library/";
+        ui->lbl_AdminWarning->setText(
+            "<img src='" + iconBase + "icon_warning.svg' width='14' height='14' align='middle'>&nbsp;"
+            "<span style='color: #F56C6C; font-weight: bold;'>仅限拥有操作权限的超级管理员登录</span>"
+        );
+    }
+    if (ui->frame_Background) {
+        QGraphicsDropShadowEffect* shadow = new QGraphicsDropShadowEffect(this);
+        shadow->setOffset(0, 0);
+        shadow->setColor(QColor(0, 0, 0, 80));
+        shadow->setBlurRadius(25);
+        ui->frame_Background->setGraphicsEffect(shadow);
+    }
+
     // 绑定右上角最小化和关闭按钮的基础窗口调度功能
     connect(ui->btn_Min, &QPushButton::clicked, this, &QWidget::showMinimized);
     connect(ui->btn_Close, &QPushButton::clicked, this, &QWidget::close);
+
+    // ==========================================================
+    // ⭐️ 核心：服务端 SVG 注入与输入隐藏微交互
+    // ==========================================================
+    QString iconBase = "../../AttendanceServer/icon_library/";
+
+    // 1. 强行清除 .ui 文件里可能存在的 Emoji 提示词
+    ui->lineEdit_DBHost->setPlaceholderText("数据库主机地址 (如 127.0.0.1)");
+    ui->lineEdit_DBPort->setPlaceholderText("数据库端口 (如 3305)");
+    ui->lineEdit_DBUser->setPlaceholderText("超级管理员账号");
+    ui->lineEdit_DBPwd->setPlaceholderText("超级管理员密码");
+
+    // 2. 注入 SVG 图标，并绑定“文字变动 -> 图标隐藏”事件
+    QAction* actHost = ui->lineEdit_DBHost->addAction(QIcon(iconBase + "icon_host.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_DBHost, &QLineEdit::textChanged, this, [=](const QString& text) { actHost->setVisible(text.isEmpty()); });
+
+    QAction* actPort = ui->lineEdit_DBPort->addAction(QIcon(iconBase + "icon_port.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_DBPort, &QLineEdit::textChanged, this, [=](const QString& text) { actPort->setVisible(text.isEmpty()); });
+
+    QAction* actUser = ui->lineEdit_DBUser->addAction(QIcon(iconBase + "icon_account.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_DBUser, &QLineEdit::textChanged, this, [=](const QString& text) { actUser->setVisible(text.isEmpty()); });
+
+    QAction* actPwd = ui->lineEdit_DBPwd->addAction(QIcon(iconBase + "icon_password.svg"), QLineEdit::LeadingPosition);
+    connect(ui->lineEdit_DBPwd, &QLineEdit::textChanged, this, [=](const QString& text) { actPwd->setVisible(text.isEmpty()); });
+
+    // 3. 升级启动按钮
+    ui->btn_ServerLogin->setText(" 连 接 并 启 动 服 务 器");
+    ui->btn_ServerLogin->setIcon(QIcon(iconBase + "btn_login.svg"));
+    ui->btn_ServerLogin->setIconSize(QSize(18, 18));
 }
 // 析构函数：释放自动生成的UI对象内存
 ServerLogin::~ServerLogin()

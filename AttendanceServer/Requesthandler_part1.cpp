@@ -77,17 +77,26 @@ void RequestHandler::handleRegisterFace(QSqlDatabase& db, QTcpSocket* /*socket*/
 void RequestHandler::handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString account = json["account"].toString();
-    QString pwd = json["pwd"].toString();
+    QString pwd = json["pwd"].toString();         // 客户端传来的SHA-256哈希值
     QString role = json["role"].toString();
     QJsonObject res;
-    res["status"] = "fail"; // 默认状态为失败
+    res["status"] = "fail";
     QSqlQuery q(db);
-    // 直接使用 QString::arg 拼接 SQL 进行查询验证匹配
-    QString sql = QString("SELECT name FROM users WHERE account = '%1' AND password = '%2' AND role = '%3'")
-        .arg(account, pwd, role);
+    // 兼容旧明文密码：数据库中如果存的是明文，用MySQL的SHA2()函数算出哈希后比对
+    // 如果数据库中已经存了哈希，则直接比对
+    QString sql = "SELECT name, feature FROM users WHERE account = '" + account + "' AND role = '" + role + "'"
+        " AND (password = '" + pwd + "' OR SHA2(password, 256) = '" + pwd + "')";
+    qDebug() << "[LoginAuth] account=" << account << "role=" << role;
     if (q.exec(sql) && q.next()) {
         res["status"] = "success";
-        res["real_name"] = q.value(0).toString(); // 取出真实姓名返回给客户端使用
+        res["real_name"] = q.value("name").toString();
+        // 问题四：检查人脸特征是否存在
+        QByteArray feat = q.value("feature").toByteArray();
+        res["has_face"] = !feat.isNull() && !feat.isEmpty();
+        qDebug() << "[LoginAuth] SUCCESS, name=" << res["real_name"].toString() << "has_face=" << res["has_face"].toBool();
+    }
+    else {
+        qDebug() << "[LoginAuth] FAILED, sql error:" << q.lastError().text();
     }
     sendJson(socket, res);
 }
@@ -96,21 +105,28 @@ void RequestHandler::handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* s
     const QJsonObject& json, AttendanceServer* server)
 {
     QString account = json["account"].toString();
-    QString pwd = json["pwd"].toString();
+    QString pwd = json["pwd"].toString();           // 已经是SHA-256哈希
     QString name = json["name"].toString();
-    QString role = json["role"].toString();
     QString dept = json["dept"].toString();
     QString jobTitle = json["job_title"].toString();
     QString phone = json["phone"].toString();
     QString gender = json["gender"].toString();
+    // 问题二：服务端强制所有新注册用户为"普通登录"，无视客户端传来的role
+    QString role = "普通登录";
     QJsonObject res;
     res["status"] = "fail";
-    QString sql = QString(
-        "INSERT INTO users (account, password, name, role, department, job_title, phone, gender) "
-        "VALUES ('%1', '%2', '%3', '%4', '%5', '%6', '%7', '%8')"
-    ).arg(account, pwd, name, role, dept, jobTitle, phone, gender);
     QSqlQuery q(db);
-    if (q.exec(sql)) {
+    q.prepare("INSERT INTO users (account, password, name, role, department, job_title, phone, gender) "
+        "VALUES (:acc, :pwd, :name, :role, :dept, :job, :phone, :gender)");
+    q.bindValue(":acc", account);
+    q.bindValue(":pwd", pwd);
+    q.bindValue(":name", name);
+    q.bindValue(":role", role);
+    q.bindValue(":dept", dept);
+    q.bindValue(":job", jobTitle);
+    q.bindValue(":phone", phone);
+    q.bindValue(":gender", gender);
+    if (q.exec()) {
         res["status"] = "success";
         QMetaObject::invokeMethod(server, [server, name, role]() {
             server->logMessage(QString("<font color='#E6A23C'>新入职: [%1] 注册了账号，权限为 [%2]。</font>").arg(name, role));
@@ -118,7 +134,6 @@ void RequestHandler::handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* s
             }, Qt::QueuedConnection);
     }
     else {
-        // 如果注册失败（例如账号冲突等），将数据库错误信息返回给客户端
         res["msg"] = q.lastError().text();
     }
     sendJson(socket, res);
@@ -231,10 +246,26 @@ void RequestHandler::handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket
         res["gender"] = q.value(4).toString();
         res["phone"] = q.value(5).toString();
         res["real_name"] = q.value(6).toString();
-        // 问题4：区分avatar是文件路径还是旧Base64
+        // 头像处理：区分文件路径和旧Base64
         QString av = q.value(7).toString();
-        if (av.contains("/") && !av.startsWith("/9j/")) { res["avatar_path"] = av; res["avatar_base64"] = ""; }
-        else { res["avatar_base64"] = av; res["avatar_path"] = ""; }
+        if (av.contains("/") && !av.startsWith("/9j/")) {
+            // 文件路径模式：读取文件转Base64返回
+            QString fullPath = QCoreApplication::applicationDirPath() + "/" + av;
+            QFile avatarFile(fullPath);
+            if (avatarFile.open(QIODevice::ReadOnly)) {
+                QByteArray fileData = avatarFile.readAll();
+                avatarFile.close();
+                res["avatar_base64"] = QString(fileData.toBase64());
+            }
+            else {
+                res["avatar_base64"] = "";
+            }
+            res["avatar_path"] = av;
+        }
+        else {
+            res["avatar_base64"] = av;
+            res["avatar_path"] = "";
+        }
     }
     else {
         res["msg"] = "花名册中找不到该用户信息";
@@ -336,6 +367,7 @@ void RequestHandler::handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, c
         jobTitle = dq.value("job_title").toString();
         realName = dq.value("name").toString();
     }
+    qDebug() << "[QueryUserDept] input=" << name << "dept=" << dept << "jobTitle=" << jobTitle << "realName=" << realName;
     QJsonObject res;
     res["type"] = "user_dept_reply";
     res["department"] = dept;
@@ -473,6 +505,7 @@ void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket
     QDir dir;
     if (!dir.exists(baseDir)) {
         bool ok = dir.mkpath(baseDir);
+        qDebug() << "[Avatar] mkpath:" << baseDir << "result:" << ok;
     }
 
     QString fileName = QString("%1_%2.jpg").arg(account, name);
@@ -481,6 +514,7 @@ void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket
 
     // 解码Base64并写入文件
     QByteArray imgBytes = QByteArray::fromBase64(avatarData.toUtf8());
+    qDebug() << "[Avatar] Writing" << imgBytes.size() << "bytes to:" << fullPath;
 
     QFile file(fullPath);
     if (file.open(QIODevice::WriteOnly)) {
@@ -514,6 +548,7 @@ void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* soc
     if (avatarPath.isEmpty()) { res["msg"] = "路径为空"; sendJson(socket, res); return; }
 
     QString fullPath = QCoreApplication::applicationDirPath() + "/" + avatarPath;
+    qDebug() << "[Avatar] Reading from:" << fullPath;
 
     QFile file(fullPath);
     if (file.exists() && file.open(QIODevice::ReadOnly)) {
@@ -521,9 +556,11 @@ void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* soc
         file.close();
         res["status"] = "success";
         res["avatar_data"] = QString(data.toBase64());
+        qDebug() << "[Avatar] Read OK," << data.size() << "bytes";
     }
     else {
         res["msg"] = "头像文件不存在: " + fullPath;
+        qDebug() << "[Avatar] File not found:" << fullPath;
     }
     sendJson(socket, res);
 }

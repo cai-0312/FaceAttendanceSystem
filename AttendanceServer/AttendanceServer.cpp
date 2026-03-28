@@ -5,6 +5,8 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlRecord>
+#include <QProcess>
+#include <QApplication>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QTextStream>
@@ -20,7 +22,40 @@ AttendanceServer::AttendanceServer(QWidget* parent)
     : QWidget(parent), ui(new Ui::AttendanceServerClass)
 {
     ui->setupUi(this);
+    if (ui->tabWidget_Main) {
+        QString iconBase = "../../AttendanceServer/icon_library/";
 
+        // 覆盖原有的 Emoji 标题，换成干净的文本
+        ui->tabWidget_Main->setTabText(0, "运行总览");
+        ui->tabWidget_Main->setTabText(1, "考勤流水账");
+        ui->tabWidget_Main->setTabText(2, "权限控制中心");
+
+        // 绑定企业级 SVG 图标
+        ui->tabWidget_Main->setTabIcon(0, QIcon(iconBase + "icon_dashboard.svg"));
+        ui->tabWidget_Main->setTabIcon(1, QIcon(iconBase + "icon_records.svg"));
+        ui->tabWidget_Main->setTabIcon(2, QIcon(iconBase + "icon_permissions.svg"));
+
+        // 调整图标大小，提升视觉平衡
+        ui->tabWidget_Main->setIconSize(QSize(18, 18));
+        ui->tabWidget_Main->setStyleSheet(
+            "QTabWidget::pane { border-top: 1px dashed #DCDFE6; } " 
+            "QTabBar::tab { padding: 8px 15px; font-weight: bold; color: #4E5969; background: transparent; }"
+            "QTabBar::tab:selected { color: #165DFF; border-bottom: 2px solid #165DFF; }"
+            "QTabBar::tab:hover { color: #165DFF; }"
+        );
+        ui->label_OnlineUsers->setText(
+            "<img src='" + iconBase + "dot_green.svg' width='16' height='16' align='middle'>&nbsp;"
+            "<span style='color: #1F2329;'>当前在线员工节点</span>"
+        );
+        ui->label_ServerLog->setText(
+            "<img src='" + iconBase + "icon_log.svg' width='16' height='16' align='middle'>&nbsp;"
+            "<span style='color: #1F2329;'>消息路由与系统底层日志</span>"
+        );
+        ui->label_ServerStatus->setText(
+            "<img src='" + iconBase + "dot_red.svg' width='12' height='12' align='middle'>&nbsp;"
+            "<span style='color: #F53F3F; font-weight: bold;'>当前状态：未启动</span>"
+        );
+    }
     // 执行核心存储初始化：挂载数据库连接实例并完成基础数据表结构的建表工作
     DatabaseManager::initDatabase();
 
@@ -99,12 +134,28 @@ void AttendanceServer::initUI()
     ui->tableWidget_OnlineUsers->setHorizontalHeaderLabels({ "姓名", "工作部门", "企业职务", "IP地址", "登录时间" });
     ui->tableWidget_OnlineUsers->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     ui->tableWidget_OnlineUsers->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
-    // 挂载全局操控类按钮的事件调度回调槽
-    connect(ui->btn_StartServer, &QPushButton::clicked, this, &AttendanceServer::on_btn_StartServer_clicked);
-    connect(ui->btn_StopServer, &QPushButton::clicked, this, &AttendanceServer::on_btn_StopServer_clicked);
-    connect(ui->btn_RefreshData, &QPushButton::clicked, this, &AttendanceServer::on_btn_RefreshData_clicked);
-    connect(ui->btn_ExportGlobal, &QPushButton::clicked, this, &AttendanceServer::on_btn_ExportGlobal_clicked);
+    QString iconBase = "../../AttendanceServer/icon_library/";
+    if (ui->btn_RefreshData) {
+        ui->btn_RefreshData->setText(" 手动刷新全局考勤"); 
+        ui->btn_RefreshData->setIcon(QIcon(iconBase + "icon_refresh.svg"));
+        ui->btn_RefreshData->setIconSize(QSize(16, 16));
+    }
+    if (ui->btn_ExportGlobal) {
+        ui->btn_ExportGlobal->setText(" 导出全局报表");
+        ui->btn_ExportGlobal->setIcon(QIcon(iconBase + "icon_export.svg"));
+        ui->btn_ExportGlobal->setIconSize(QSize(16, 16));
+    }
+    if (ui->btn_LogoutServer) {
+        connect(ui->btn_LogoutServer, &QPushButton::clicked, this, [=]() {
+            // 服务器还在运行，先安全踢掉所有人并解绑端口
+            if (m_tcpServer->isListening()) {
+                on_btn_StopServer_clicked();
+            }
+            QMessageBox::information(this, "退出", "已安全断开服务器与数据库连接，即将返回登录界面。");
+            QProcess::startDetached(qApp->applicationFilePath(), QStringList());
+            qApp->quit();
+            });
+    }
 }
 
 // 基于HTML富文本格式向服务端内嵌的实时监控终端推送运行日志
@@ -121,8 +172,10 @@ void AttendanceServer::on_btn_StartServer_clicked()
     if (m_tcpServer->isListening()) m_tcpServer->close();
 
     if (m_tcpServer->listen(QHostAddress::Any, port)) {
-        ui->label_ServerStatus->setText("当前状态：运行中 (端口: " + QString::number(port) + ")");
-        ui->label_ServerStatus->setStyleSheet("color: #67C23A; font-weight:bold;");
+        ui->label_ServerStatus->setText(
+            "<img src='../../AttendanceServer/icon_library/dot_green.svg' width='12' height='12' align='middle'>&nbsp;"
+            "<span style='color: #67C23A;'>当前状态：运行中 (端口: " + QString::number(port) + ")</span>"
+        );
         ui->btn_StartServer->setEnabled(false);
         ui->btn_StopServer->setEnabled(true);
         ui->lineEdit_Port->setEnabled(false);
@@ -144,8 +197,10 @@ void AttendanceServer::on_btn_StopServer_clicked()
     m_nameToSocket.clear();
     updateOnlineUsersTable();
 
-    ui->label_ServerStatus->setText("当前状态：未启动");
-    ui->label_ServerStatus->setStyleSheet("color: black; font-weight:bold;");
+    ui->label_ServerStatus->setText(
+        "<img src='../../AttendanceServer/icon_library/dot_red.svg' width='12' height='12' align='middle'>&nbsp;"
+        "<span style='color: #F53F3F; font-weight: bold;'>当前状态：未启动</span>"
+    );
     ui->btn_StartServer->setEnabled(true);
     ui->btn_StopServer->setEnabled(false);
     ui->lineEdit_Port->setEnabled(true);
