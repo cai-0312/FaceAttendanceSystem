@@ -58,7 +58,6 @@ AttendanceServer::AttendanceServer(QWidget* parent)
     }
     // 执行核心存储初始化：挂载数据库连接实例并完成基础数据表结构的建表工作
     DatabaseManager::initDatabase();
-
     // 构建视图树、绑定底层交互模型及指令分发表
     initUI();
     initDispatchTable();
@@ -117,7 +116,7 @@ void AttendanceServer::initUI()
     m_permModel->setHeaderData(m_permModel->fieldIndex("name"), Qt::Horizontal, "员工姓名");
     m_permModel->setHeaderData(m_permModel->fieldIndex("department"), Qt::Horizontal, "所属部门");
     m_permModel->setHeaderData(m_permModel->fieldIndex("job_title"), Qt::Horizontal, "企业职务");
-    m_permModel->setHeaderData(m_permModel->fieldIndex("role"), Qt::Horizontal, "系统权限角色(双击修改)");
+    m_permModel->setHeaderData(m_permModel->fieldIndex("role"), Qt::Horizontal, "系统权限角色");
 
     // 绑定下拉选择代理，约束权限配置的操作范围
     int roleColIdx = m_permModel->fieldIndex("role");
@@ -270,7 +269,7 @@ void AttendanceServer::onReadyRead()
         QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isNull() || !doc.isObject()) continue;
         QJsonObject json = doc.object();
-
+        if (json.contains("__internal_verified")) {json.remove("__internal_verified");}
         if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) {
             continue;
         }

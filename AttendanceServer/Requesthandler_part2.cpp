@@ -175,22 +175,27 @@ void RequestHandler::handleQueryChatHistory(QSqlDatabase& db, QTcpSocket* socket
 void RequestHandler::handleQueryChatContacts(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString();
+    QString safeName = name;
+    safeName.replace("'", "''");
+
     QJsonObject res;
     res["status"] = "success";
-    // 1. 查询请求者自身的身份信息
+
+    // 1. 查询请求者自身的身份信息（规避 ODBC bindValue 中文 Bug）
     QString myEmpId, myDept, myJob;
     QSqlQuery myQ(db);
-    myQ.prepare("SELECT id, department, job_title FROM users WHERE name = :n");
-    myQ.bindValue(":n", name);
-    if (myQ.exec() && myQ.next()) {
+    myQ.exec(QString("SELECT id, department, job_title FROM users WHERE name = '%1'").arg(safeName));
+    if (myQ.next()) {
         myEmpId = myQ.value(0).toString();
         myDept = myQ.value(1).toString().isEmpty() ? "未分配部门" : myQ.value(1).toString();
         myJob = (myQ.value(2).toString().isEmpty() || myQ.value(2).toString() == "未分配") ? "员工" : myQ.value(2).toString();
     }
-    // 组装返回给客户端，用于生成本地缓存或文件管理的专属目录名
+    myQ.finish();
+
     res["my_dept"] = myDept;
     res["my_folder"] = QString("%1_%2_%3_%4").arg(myEmpId, name, myDept, myJob);
-    // 2. 根据身份查询部门列表（总经办能看到所有部门，普通人只能看到自己部门）
+
+    // 2. 根据身份查询部门列表
     QJsonArray deptArr;
     QString deptSql = (myDept == "总经办")
         ? "SELECT DISTINCT department FROM users WHERE department != '' AND department IS NOT NULL"
@@ -198,20 +203,24 @@ void RequestHandler::handleQueryChatContacts(QSqlDatabase& db, QTcpSocket* socke
     QSqlQuery dQ(db);
     dQ.exec(deptSql);
     while (dQ.next()) deptArr.append(dQ.value(0).toString());
+    dQ.finish();
     res["departments"] = deptArr;
-    // 3. 查询除自己和管理员之外的所有用户列表
+
+    // 3. 查询除自己和管理员之外的所有用户列表（含 job_title）
     QJsonArray userArr;
     QSqlQuery uQ(db);
-    uQ.exec(QString("SELECT id, name, department, role FROM users "
-        "WHERE name != '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(name));
+    uQ.exec(QString("SELECT id, name, department, role, job_title FROM users "
+        "WHERE name != '%1' AND account NOT LIKE '%%admin%%' AND name NOT LIKE '%%超级管理员%%'").arg(safeName));
     while (uQ.next()) {
         QJsonObject u;
         u["id"] = uQ.value(0).toInt();
         u["name"] = uQ.value(1).toString().trimmed();
         u["department"] = uQ.value(2).toString().trimmed();
         u["role"] = uQ.value(3).toString().trimmed();
+        u["job_title"] = uQ.value(4).toString().trimmed();
         userArr.append(u);
     }
+    uQ.finish();
     res["users"] = userArr;
 
     sendJson(socket, res);

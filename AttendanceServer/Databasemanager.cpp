@@ -1,8 +1,11 @@
 #include "DatabaseManager.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QSqlError>
 #include <QDateTime>
 #include <QThread>
+#include <QMutexLocker>
+
 // 定义全局统一的底层 ODBC 数据源通信连接配置基准字符串
 static const QString kOdbcDsn =
 "DRIVER={MySQL ODBC 8.0 Unicode Driver};"
@@ -12,6 +15,11 @@ static const QString kOdbcDsn =
 "UID=root;"
 "PWD=root;"
 "CHARSET=utf8mb4;";
+
+// ═══════════════════════════════════════════════════════════════════
+//  DatabaseManager 实现（原有逻辑保持不变）
+// ═══════════════════════════════════════════════════════════════════
+
 // 执行底层存储介质的初始化：分配持久化主连接并自动检测与补全缺失的业务数据表拓扑
 void DatabaseManager::initDatabase()
 {
@@ -133,7 +141,21 @@ void DatabaseManager::initDatabase()
         "ALTER TABLE chat_history "
         "CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     );
+    // 核心表映射：分布式定时任务执行审计日志表（问题二配套）
+    query.exec(
+        "CREATE TABLE IF NOT EXISTS task_execution_log ("
+        "  id INT AUTO_INCREMENT PRIMARY KEY,"
+        "  task_name VARCHAR(100) NOT NULL,"
+        "  node_id VARCHAR(100),"
+        "  exec_date DATE NOT NULL,"
+        "  exec_time DATETIME,"
+        "  result VARCHAR(20),"
+        "  affected_rows INT DEFAULT 0,"
+        "  UNIQUE KEY uk_task_date (task_name, exec_date)"
+        ")"
+    );
 }
+
 // 基于并行架构调度系统计算专属通道名，避免底层数据库句柄的越权复用与死锁
 QString DatabaseManager::makeThreadConnName()
 {
@@ -141,6 +163,7 @@ QString DatabaseManager::makeThreadConnName()
         .arg(quintptr(QThread::currentThreadId()))
         .arg(QDateTime::currentMSecsSinceEpoch());
 }
+
 // 在完全分离的子线程环境中建立并挂载底层安全连接信道，大幅提升网络I/O吞吐极限
 bool DatabaseManager::openThreadConnection(const QString& connName)
 {
@@ -150,4 +173,104 @@ bool DatabaseManager::openThreadConnection(const QString& connName)
     QSqlQuery initQ(threadDb);
     initQ.exec("SET NAMES utf8mb4");
     return true;
+}
+// 获取全局唯一的连接池单例
+ConnectionPool& ConnectionPool::instance()
+{
+    static ConnectionPool pool;
+    return pool;
+}
+
+// 初始化连接池：预创建 initialSize 个 ODBC 连接放入空闲队列
+void ConnectionPool::init(const QString& odbcDsn, int initialSize, int maxSize)
+{
+    QMutexLocker locker(&m_mutex);
+    m_odbcDsn = odbcDsn;
+    m_maxSize = maxSize;
+
+    for (int i = 0; i < initialSize; ++i) {
+        QString connName = createNewConnection();
+        if (!connName.isEmpty()) {
+            m_availableConnections.enqueue(connName);
+        }
+    }
+    qDebug() << "[ConnectionPool] 初始化完成，预创建连接数:" << m_totalCreated
+        << "，池容量上限:" << m_maxSize;
+}
+
+// 从空闲队列中取出一个连接名；队列空时自动扩容创建新连接
+QString ConnectionPool::acquire()
+{
+    QMutexLocker locker(&m_mutex);
+
+    // 优先从空闲队列中取出
+    while (!m_availableConnections.isEmpty()) {
+        QString connName = m_availableConnections.dequeue();
+        QSqlDatabase db = QSqlDatabase::database(connName);
+        // 检测连接是否仍然存活
+        if (db.isOpen()) {
+            return connName;
+        }
+        // 连接已失效，销毁并重建
+        QSqlDatabase::removeDatabase(connName);
+        m_totalCreated--;
+        qDebug() << "[ConnectionPool] 回收失效连接:" << connName;
+    }
+
+    // 空闲队列已空，尝试创建新连接
+    if (m_totalCreated < m_maxSize) {
+        QString newConn = createNewConnection();
+        if (!newConn.isEmpty()) {
+            return newConn;
+        }
+    }
+    // 已达池容量上限，强制创建溢出连接（降级策略，打印告警日志）
+    qWarning() << "[ConnectionPool] 警告：连接池已满(" << m_totalCreated
+        << "/" << m_maxSize << ")，创建溢出连接！请检查是否存在连接泄露。";
+    return createNewConnection();
+}
+
+// 将用完的连接归还到空闲队列
+void ConnectionPool::release(const QString& connName)
+{
+    if (connName.isEmpty()) return;
+    QMutexLocker locker(&m_mutex);
+    if (QSqlDatabase::contains(connName)) {
+        m_availableConnections.enqueue(connName);
+    }
+}
+
+// 关闭并销毁所有池内连接（服务端退出时调用）
+void ConnectionPool::shutdown()
+{
+    QMutexLocker locker(&m_mutex);
+    while (!m_availableConnections.isEmpty()) {
+        QString connName = m_availableConnections.dequeue();
+        {
+            QSqlDatabase db = QSqlDatabase::database(connName);
+            if (db.isOpen()) db.close();
+        }
+        QSqlDatabase::removeDatabase(connName);
+    }
+    m_totalCreated = 0;
+    qDebug() << "[ConnectionPool] 连接池已完全关闭。";
+}
+
+// 内部方法：创建一个新的 ODBC 连接
+QString ConnectionPool::createNewConnection()
+{
+    QString connName = QString("pool_conn_%1").arg(m_totalCreated++);
+    QSqlDatabase db = QSqlDatabase::addDatabase("QODBC", connName);
+    db.setDatabaseName(m_odbcDsn);
+    if (!db.open()) {
+        qCritical() << "[ConnectionPool] 创建连接失败:" << connName
+            << "，错误:" << db.lastError().text();
+        QSqlDatabase::removeDatabase(connName);
+        m_totalCreated--;
+        return QString();
+    }
+    // 初始化连接的字符集配置
+    QSqlQuery initQ(db);
+    initQ.exec("SET NAMES utf8mb4");
+    return connName;
 }

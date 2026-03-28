@@ -30,7 +30,22 @@ void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
     if (!socket || !server) return;
+    // 安全鉴权：拒绝一切未经服务端 1:N 特征比对验证的打卡请求
+    if (!json.contains("__internal_verified") || !json["__internal_verified"].toBool()) {
+        QJsonObject res;
+        res["status"] = "fail";
+        res["msg"] = "安全拦截：禁止绕过人脸特征比对直接打卡！";
+        sendJson(socket, res);
 
+        QString name = json["name"].toString();
+        QMetaObject::invokeMethod(server, [server, name]() {
+            if (server) server->logMessage(
+                QString("<font color='red'>[403 越权拦截] 检测到非法打卡请求！"
+                    "来源声称为 [%1]，未携带合法的人脸特征向量，"
+                    "已被安全网关强制拦截。</font>").arg(name));
+            }, Qt::QueuedConnection);
+        return;
+    }
     QString name = json["name"].toString();
     QDateTime serverNow = QDateTime::currentDateTime();
     QString timeStr = serverNow.toString("yyyy-MM-dd HH:mm:ss");
@@ -744,16 +759,15 @@ void RequestHandler::handleAppealRequest(QSqlDatabase& db, QTcpSocket* /*socket*
     ins.exec();
 }
 // 审批通过申诉，自动修复存在问题的考勤记录
-void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*/,
+void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
-    int     reqId = json["reqId"].toInt();
+    int reqId = json["reqId"].toInt();
     QString applicant = json["applicant"].toString();
     QString aTime = json["abnormal_time"].toString();
     QString aType = json["appeal_type"].toString();
     QString currentApprover = json["approver"].toString();
     QString action = json["action"].toString();  // "approve" 或 "reject"
-
     // 读取数据库中完整的审批链
     QSqlQuery selQ(db);
     selQ.prepare("SELECT approver, original_status FROM appeals WHERE id = :id");
@@ -763,7 +777,6 @@ void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*
         fullChain = selQ.value(0).toString();
         origStatus = selQ.value(1).toString();
     }
-
     QStringList chain = fullChain.split(",", Qt::SkipEmptyParts);
     int idx = -1;
     for (int i = 0; i < chain.size(); i++) {
@@ -774,32 +787,75 @@ void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*
             if (!chain[i].startsWith("[✓]") && !chain[i].startsWith("[✗]")) { idx = i; break; }
         }
     }
-
-    // ── 驳回分支 ──
     if (action == "reject") {
         if (idx >= 0) chain[idx] = "[✗]" + currentApprover;
         QString rejectReason = json["reject_reason"].toString();
+
+        // 开启事务
+        if (!db.transaction()) {
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "服务端事务开启失败，请稍后重试。";
+            sendJson(socket, res);
+            return;
+        }
         QSqlQuery updQ(db);
         updQ.prepare("UPDATE appeals SET status = '已驳回', approver = :a, reject_reason = :r WHERE id = :id");
         updQ.bindValue(":a", chain.join(","));
         updQ.bindValue(":r", rejectReason);
         updQ.bindValue(":id", reqId);
-        updQ.exec();
+        if (!updQ.exec()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "驳回操作失败，事务已回滚：" + updQ.lastError().text();
+            sendJson(socket, res);
+            return;
+        }
+        if (!db.commit()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "事务提交失败，变更已回滚。";
+            sendJson(socket, res);
+            return;
+        }
         QMetaObject::invokeMethod(server, [server, currentApprover, applicant]() {
             server->logMessage(QString("<font color='#F56C6C'>审批驳回: [%1] 驳回了 [%2] 的申诉。</font>")
                 .arg(currentApprover, applicant));
             }, Qt::QueuedConnection);
         return;
     }
-
-    // ── 通过分支 ──
     if (idx >= 0 && idx < chain.size() - 1) {
         chain[idx] = "[✓]" + currentApprover;
+        // 开启事务
+        if (!db.transaction()) {
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "服务端事务开启失败，请稍后重试。";
+            sendJson(socket, res);
+            return;
+        }
         QSqlQuery updQ(db);
         updQ.prepare("UPDATE appeals SET approver = :a WHERE id = :id");
         updQ.bindValue(":a", chain.join(","));
         updQ.bindValue(":id", reqId);
-        updQ.exec();
+        if (!updQ.exec()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "审批流转失败，事务已回滚：" + updQ.lastError().text();
+            sendJson(socket, res);
+            return;
+        }
+        if (!db.commit()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "事务提交失败，变更已回滚。";
+            sendJson(socket, res);
+            return;
+        }
         QMetaObject::invokeMethod(server, [server, currentApprover, chain, idx]() {
             server->logMessage(QString("<font color='#E6A23C'>审批流转: [%1] 已批准，流转至 [%2]</font>")
                 .arg(currentApprover, chain[idx + 1]));
@@ -807,18 +863,61 @@ void RequestHandler::handleAppealApprove(QSqlDatabase& db, QTcpSocket* /*socket*
     }
     else {
         if (idx >= 0) chain[idx] = "[✓]" + currentApprover;
+        // ────── Step 0: 开启数据库事务 ──────
+        if (!db.transaction()) {
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "服务端事务开启失败，请稍后重试。";
+            sendJson(socket, res);
+            return;
+        }
+        // ────── Step 1: 更新申诉单状态为"已批准" ──────
         QSqlQuery upd(db);
         upd.prepare("UPDATE appeals SET status = '已批准', approver = :a WHERE id = :id");
         upd.bindValue(":a", chain.join(","));
         upd.bindValue(":id", reqId);
-        upd.exec();
+        if (!upd.exec()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "申诉单状态更新失败，事务已回滚：" + upd.lastError().text();
+            sendJson(socket, res);
+            return;
+        }
+        // ────── Step 2: 修正考勤记录（非人脸重录类申诉）──────
         if (origStatus != "人脸重录") {
             QSqlQuery fixQ(db);
-            if (aType == "整天申诉") fixQ.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND DATE(punch_time)=DATE('%2')").arg(applicant, aTime));
-            else fixQ.exec(QString("UPDATE attendance_records SET status='正常(修正)' WHERE name='%1' AND punch_time='%2'").arg(applicant, aTime));
+            if (aType == "整天申诉") {
+                fixQ.prepare("UPDATE attendance_records SET status = '正常(修正)' "
+                    "WHERE name = :n AND DATE(punch_time) = DATE(:t)");
+            }
+            else {
+                fixQ.prepare("UPDATE attendance_records SET status = '正常(修正)' "
+                    "WHERE name = :n AND punch_time = :t");
+            }
+            fixQ.bindValue(":n", applicant);
+            fixQ.bindValue(":t", aTime);
+            if (!fixQ.exec()) {
+                db.rollback();
+                QJsonObject res;
+                res["status"] = "fail";
+                res["msg"] = "考勤记录修正失败，事务已全部回滚：" + fixQ.lastError().text();
+                sendJson(socket, res);
+                return;
+            }
+        }
+        // ────── Step 3: 所有操作成功，提交事务 ──────
+        if (!db.commit()) {
+            db.rollback();
+            QJsonObject res;
+            res["status"] = "fail";
+            res["msg"] = "事务提交失败，所有变更已回滚。";
+            sendJson(socket, res);
+            return;
         }
         QMetaObject::invokeMethod(server, [server, applicant, origStatus]() {
-            server->logMessage(QString("<font color='#67C23A'>终审通过: [%1] 的 [%2] 已全链审批通过。</font>").arg(applicant, origStatus));
+            server->logMessage(QString("<font color='#67C23A'>终审通过: [%1] 的 [%2] 已全链审批通过（事务提交成功）。</font>")
+                .arg(applicant, origStatus));
             server->loadGlobalRecords();
             }, Qt::QueuedConnection);
     }
@@ -1096,22 +1195,87 @@ void RequestHandler::handleQueryDeptSummary(QSqlDatabase& db, QTcpSocket* socket
 // 执行每日隐性旷工盘点批处理 (业务逻辑层)
 void RequestHandler::executeDailyAbsentCheck(QSqlDatabase& db, AttendanceServer* server)
 {
+    QString today = QDate::currentDate().toString("yyyy-MM-dd");
+    QString lockName = "absent_check_" + today;
+    // Step 1: 幂等性检查 —— 先查询今天是否已有成功执行记录
+    QSqlQuery checkQ(db);
+    checkQ.prepare("SELECT id FROM task_execution_log "
+        "WHERE task_name = 'daily_absent_check' AND exec_date = :d AND result = 'SUCCESS'");
+    checkQ.bindValue(":d", today);
+    if (checkQ.exec() && checkQ.next()) {
+        // 今天已经成功执行过，直接返回（幂等保障）
+        QMetaObject::invokeMethod(server, [server]() {
+            server->logMessage("<font color='#E6A23C'>[分布式调度] 今日旷工盘点已由其他节点完成，本节点跳过。</font>");
+            }, Qt::QueuedConnection);
+        return;
+    }
+    // Step 2: 尝试获取 MySQL 应用层分布式锁（超时 5 秒）
+    QSqlQuery lockQ(db);
+    lockQ.exec(QString("SELECT GET_LOCK('%1', 5)").arg(lockName));
+    bool gotLock = false;
+    if (lockQ.next()) {
+        gotLock = (lockQ.value(0).toInt() == 1);
+    }
+    if (!gotLock) {
+        // 锁被其他节点持有，放弃执行
+        QMetaObject::invokeMethod(server, [server]() {
+            server->logMessage("<font color='#E6A23C'>[分布式调度] 未能获取分布式锁，"
+                "另一节点正在执行旷工盘点，本节点自动退让。</font>");
+            }, Qt::QueuedConnection);
+        return;
+    }
+    // Step 3: 获取锁成功，再次进行幂等性双重检查（防止锁等待期间其他节点已完成）
+    QSqlQuery doubleCheckQ(db);
+    doubleCheckQ.prepare("SELECT id FROM task_execution_log "
+        "WHERE task_name = 'daily_absent_check' AND exec_date = :d AND result = 'SUCCESS'");
+    doubleCheckQ.bindValue(":d", today);
+    if (doubleCheckQ.exec() && doubleCheckQ.next()) {
+        // 释放锁并返回
+        QSqlQuery unlockQ(db);
+        unlockQ.exec(QString("SELECT RELEASE_LOCK('%1')").arg(lockName));
+        return;
+    }
+    // Step 4: 执行核心旷工盘点业务
     QSqlQuery query(db);
     QString sql =
         "INSERT INTO attendance_records (name, punch_time, status) "
         "SELECT u.name, NOW(), '旷工(缺卡)' "
         "FROM users u "
         "WHERE u.role != '超级管理员' AND u.account NOT LIKE '%admin%' "
-        "  AND u.name NOT IN (SELECT name FROM attendance_records WHERE DATE(punch_time) = CURDATE()) "
-        "  AND u.name NOT IN (SELECT applicant FROM leave_requests WHERE status='已批准' AND CURDATE() BETWEEN DATE(start_time) AND DATE(end_time))";
+        "  AND u.name NOT IN ("
+        "    SELECT name FROM attendance_records WHERE DATE(punch_time) = CURDATE()"
+        "  ) "
+        "  AND u.name NOT IN ("
+        "    SELECT applicant FROM leave_requests "
+        "    WHERE status='已批准' AND CURDATE() BETWEEN DATE(start_time) AND DATE(end_time)"
+        "  )";
 
+    int affectedRows = 0;
+    QString result = "FAIL";
     if (query.exec(sql)) {
-        // 业务盘点成功后，调用服务端实例打印日志并刷新全局视图
-        QMetaObject::invokeMethod(server, [server]() {
-            server->logMessage("<font color='red'>系统通知: 每日隐性旷工盘点业务已执行完毕，缺卡人员已记为旷工。</font>");
-            server->loadGlobalRecords();
-            }, Qt::QueuedConnection);
+        affectedRows = query.numRowsAffected();
+        result = "SUCCESS";
     }
+    // Step 5: 写入执行审计日志（利用 UNIQUE KEY 保证幂等性）
+    QSqlQuery logQ(db);
+    logQ.prepare("INSERT IGNORE INTO task_execution_log "
+        "(task_name, node_id, exec_date, exec_time, result, affected_rows) "
+        "VALUES ('daily_absent_check', :node, :date, NOW(), :result, :rows)");
+    logQ.bindValue(":node", QSysInfo::machineHostName());
+    logQ.bindValue(":date", today);
+    logQ.bindValue(":result", result);
+    logQ.bindValue(":rows", affectedRows);
+    logQ.exec();
+    // Step 6: 释放分布式锁
+    QSqlQuery unlockQ(db);
+    unlockQ.exec(QString("SELECT RELEASE_LOCK('%1')").arg(lockName));
+    // Step 7: 通知服务端 UI
+    QMetaObject::invokeMethod(server, [server, affectedRows]() {
+        server->logMessage(
+            QString("<font color='red'>[分布式调度] 旷工盘点完成，本节点获取锁并执行，"
+                "新增 %1 条旷工记录。</font>").arg(affectedRows));
+        server->loadGlobalRecords();
+        }, Qt::QueuedConnection);
 }
 void RequestHandler::handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
@@ -1119,10 +1283,21 @@ void RequestHandler::handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* sock
     // 【基础安全检查】
     if (!socket || !socket->isValid() || socket->state() != QAbstractSocket::ConnectedState) return;
     if (!server) return;
-
+    // 强制校验：请求必须携带有效的人脸特征向量
     QString base64Feature = json["feature"].toString();
-    if (base64Feature.isEmpty()) return;
+    if (base64Feature.isEmpty()) {
+        QJsonObject res;
+        res["status"] = "fail";
+        res["msg"] = "安全拦截：打卡请求缺失人脸特征数据，已被服务端拒绝！";
+        sendJson(socket, res);
 
+        QMetaObject::invokeMethod(server, [server]() {
+            if (server) server->logMessage(
+                "<font color='red'>[403 非法调用] secure_punch_request 接收到"
+                "不含 feature 字段的请求，已强制拦截并记录告警。</font>");
+            }, Qt::QueuedConnection);
+        return;
+    }
     // 1. 安全解码客户端发来的 Base64 特征
     QByteArray incomingBytes = QByteArray::fromBase64(base64Feature.toUtf8());
 
@@ -1188,6 +1363,6 @@ void RequestHandler::handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* sock
     // 构造内部信任 JSON 丢给落库函数
     QJsonObject secureJson;
     secureJson["name"] = matchedName;
-
+    secureJson["__internal_verified"] = true;
     handlePunchRequest(db, socket, secureJson, server);
 }

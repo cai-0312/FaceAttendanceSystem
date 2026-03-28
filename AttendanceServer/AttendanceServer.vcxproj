@@ -105,6 +105,8 @@
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
     </ClCompile>
+    <ClCompile Include="ConfigEncryptor.cpp" />
+    <ClCompile Include="CryptoHelper.cpp" />
     <ClCompile Include="Requesthandler_part1.cpp" />
     <ClCompile Include="Requesthandler_part2.cpp" />
     <ClCompile Include="Requesthandler_part3.cpp" />
@@ -119,8 +121,11 @@
     <QtUic Include="ServerLogin.ui" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CryptoHelper.h" />
+    <ClInclude Include="TransactionGuard.h" />
     <QtMoc Include="ServerLogin.h" />
     <QtMoc Include="CenterAndComboDelegate.h" />
+    <ClInclude Include="ConfigEncryptor.h" />
     <ClInclude Include="Databasemanager.h" />
     <ClInclude Include="Requesthandler.h" />
   </ItemGroup>

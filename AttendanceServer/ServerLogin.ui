@@ -247,38 +247,6 @@
           </widget>
          </item>
          <item>
-          <widget class="QLineEdit" name="lineEdit_DBHost">
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>44</height>
-            </size>
-           </property>
-           <property name="text">
-            <string>127.0.0.1</string>
-           </property>
-           <property name="placeholderText">
-            <string>🌐 数据库地址 (例如: 127.0.0.1)</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLineEdit" name="lineEdit_DBPort">
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>44</height>
-            </size>
-           </property>
-           <property name="text">
-            <string>3305</string>
-           </property>
-           <property name="placeholderText">
-            <string>🔌 数据库端口 (例如: 3305)</string>
-           </property>
-          </widget>
-         </item>
-         <item>
           <widget class="QLineEdit" name="lineEdit_DBUser">
            <property name="minimumSize">
             <size>
