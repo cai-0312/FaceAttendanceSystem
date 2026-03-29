@@ -67,12 +67,41 @@ AttendanceServer::AttendanceServer(QWidget* parent)
         if (currentTime.hour() == 23 && currentTime.minute() == 58) {
             // 获取当前线程的数据库句柄，交由 RequestHandler 处理业务
             QSqlDatabase db = QSqlDatabase::database("server_db_connection");
+            if (!db.isOpen()) {
+                qDebug() << "[onReadyRead] 连接已断开，正在尝试重连...";
+                db.open();
+            }
+            {
+                QSqlQuery ping(db);
+                if (!ping.exec("SELECT 1")) {
+                    qDebug() << "检测失败，执行重连:" << ping.lastError().text();
+                    db.close();
+                    db.open();
+                }
+            }
             if (db.isOpen()) {
                 RequestHandler::executeDailyAbsentCheck(db, this);
             }
         }
         });
     dailyCheckTimer->start(60000);
+    QTimer* dbKeepAlive = new QTimer(this);
+    connect(dbKeepAlive, &QTimer::timeout, this, []() {
+        QSqlDatabase db = QSqlDatabase::database("server_db_connection");
+        if (db.isOpen()) {
+            QSqlQuery ping(db);
+            if (!ping.exec("SELECT 1")) {
+                qDebug() << "心跳失败，尝试重连...";
+                db.close();
+                db.open();
+            }
+        }
+        else {
+            qDebug() << "连接已关闭，尝试重连...";
+            db.open();
+        }
+        });
+    dbKeepAlive->start(180000);
 }
 
 AttendanceServer::~AttendanceServer()

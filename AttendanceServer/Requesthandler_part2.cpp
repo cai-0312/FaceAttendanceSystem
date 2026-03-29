@@ -121,15 +121,18 @@ void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket,
         if (member == fromUser) continue;
 
         bool isOnline = server->isClientOnline(member);
-        if (isOnline) {
-            QTcpSocket* targetSocket = server->getSocketByName(member);
-            if (targetSocket) {
-                QByteArray forwardData = rawData + "\n";
-                QMetaObject::invokeMethod(targetSocket, [targetSocket, forwardData]() {
-                    targetSocket->write(forwardData);
-                    }, Qt::QueuedConnection);
+        QTcpSocket* targetSocket = server->getSocketByName(member);
+        if (targetSocket) {
+            QByteArray forwardData = rawData + "\n";
+            // ⭐️ 加入安全弱指针防护
+            QPointer<QTcpSocket> safeSocket(targetSocket);
+            QMetaObject::invokeMethod(targetSocket, [safeSocket, forwardData]() {
+                if (safeSocket && safeSocket->state() == QAbstractSocket::ConnectedState) {
+                    safeSocket->write(forwardData);
+                    safeSocket->flush();
+                }
+                }, Qt::QueuedConnection);
             }
-        }
         else {
             QSqlQuery insertQ(db);
             insertQ.prepare(
@@ -266,8 +269,12 @@ void RequestHandler::handleReadReceipt(QSqlDatabase& db, QTcpSocket* /*socket*/,
         QTcpSocket* targetSocket = server->getSocketByName(senderUser);
         if (targetSocket) {
             QByteArray outData = QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n";
-            QMetaObject::invokeMethod(targetSocket, [targetSocket, outData]() {
-                targetSocket->write(outData);
+            QPointer<QTcpSocket> safeSocket(targetSocket);
+            QMetaObject::invokeMethod(targetSocket, [safeSocket, outData]() {
+                if (safeSocket && safeSocket->state() == QAbstractSocket::ConnectedState) {
+                    safeSocket->write(outData);
+                    safeSocket->flush();
+                }
                 }, Qt::QueuedConnection);
         }
     }
@@ -309,18 +316,15 @@ void RequestHandler::handleBroadcast(QSqlDatabase& db, QTcpSocket* /*socket*/,
         if (member == fromUser) continue;
         bool isOnline = server->isClientOnline(member);
         if (isOnline) {
-            // 在线则立刻转发
-            QTcpSocket* targetSocket = nullptr;
-            QMetaObject::invokeMethod(server, [server, member, &targetSocket]() {
-                targetSocket = server->getSocketByName(member);
-                }, Qt::BlockingQueuedConnection);
-            if (targetSocket) {
-                QByteArray forwardData = rawData + "\n";
-                QMetaObject::invokeMethod(targetSocket, [targetSocket, forwardData]() {
+            QByteArray forwardData = rawData + "\n";
+            QMetaObject::invokeMethod(server, [server, member, forwardData]() {
+                QTcpSocket* targetSocket = server->getSocketByName(member);
+                if (targetSocket && targetSocket->state() == QAbstractSocket::ConnectedState) {
                     targetSocket->write(forwardData);
-                    }, Qt::QueuedConnection);
-                pushCount++;
-            }
+                    targetSocket->flush();
+                }
+                }, Qt::QueuedConnection);
+            pushCount++; 
         }
         else {
             // 离线则存入离线信箱
