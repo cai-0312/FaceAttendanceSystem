@@ -86,7 +86,7 @@ signals:
     void punchResult(QString name, double similarity, QDateTime time);
     void unknownFaceDetected(QImage faceSnapshot);
     void livenessResult(bool alive);
-
+    void cameraConnected(int camId);
 private slots:
     void requestAiGreeting(QString name, QDateTime time);
     void requestQwenTTS(const QString& text);

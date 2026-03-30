@@ -228,6 +228,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         ui->stackedWidget->setCurrentIndex(2);
         QMessageBox::information(this, "准备就绪", "请核对名字后，点击【开始录入】进行人脸覆写！");
         });
+    connect(aiThread, &FaceProcessThread::cameraConnected, profileModule, &ProfileModule::updateCameraId);
     // 处理侧边导航栏切换事件，调度显示面板及通知关联子模块进行数据懒加载
     connect(ui->listWidget_Nav, &QListWidget::currentRowChanged, this, [=](int row) {
         ui->stackedWidget->setCurrentIndex(row);

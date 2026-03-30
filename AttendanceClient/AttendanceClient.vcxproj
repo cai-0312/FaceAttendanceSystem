@@ -66,6 +66,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
     <IncludePath>D:\opencv_build\build\install\include;$(IncludePath)</IncludePath>
     <LibraryPath>D:\opencv_build\build\install\lib;$(LibraryPath)</LibraryPath>
+    <TargetName>考勤系统客户端</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>

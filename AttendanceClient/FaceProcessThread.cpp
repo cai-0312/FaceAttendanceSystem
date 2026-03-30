@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QDebug>
 #include <QJsonDocument>
+#include <QSharedMemory>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDir>
@@ -342,11 +343,38 @@ void FaceProcessThread::run() {
         camW = m_camWidth;
         camH = m_camHeight;
     }
+    QSharedMemory* camLock = nullptr;
+    int assignedCam = 0;
 
-    if (!capture.open(camIdx, cv::CAP_MSMF)) {
-        emit registerFailed("摄像头打开失败！");
+    for (int i = 0; i < 5; ++i) {
+        QString lockKey = QString("Attendance_CamLock_%1").arg(i);
+        QSharedMemory* mem = new QSharedMemory(lockKey);
+
+        // 尝试创建这块共享内存。如果能创建成功，说明当前没有其他客户端拿着这个编号！
+        if (mem->create(1)) {
+            assignedCam = i;
+            camLock = mem;
+            qDebug() << "🎯 成功拿到软件锁，强制分配摄像头编号:" << i;
+            break;
+        }
+        else {
+            // 创建失败，说明已经被霸占了，释放它并找下一个
+            delete mem;
+        }
+    }
+
+    {
+        QMutexLocker locker(&paramMutex);
+        m_camIndex = assignedCam; // 记住真正分到的编号
+    }
+
+    capture.open(assignedCam, cv::CAP_DSHOW);
+    if (!capture.isOpened()) {
+        qDebug() << "❌ 摄像头打开失败，编号:" << assignedCam;
+        if (camLock) { camLock->detach(); delete camLock; }
         return;
     }
+    emit cameraConnected(assignedCam);
     capture.set(cv::CAP_PROP_FRAME_WIDTH, camW);
     capture.set(cv::CAP_PROP_FRAME_HEIGHT, camH);
     capture.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
@@ -513,4 +541,8 @@ void FaceProcessThread::run() {
         QThread::msleep(33);
     }
     capture.release();
+    if (camLock) {
+        camLock->detach();
+        delete camLock;
+    }
 }

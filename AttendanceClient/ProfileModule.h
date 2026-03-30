@@ -19,6 +19,7 @@ class ProfileModule : public QObject
 public:
     ProfileModule(QLabel* avatarLabel, QLabel* nameLabel, QLabel* deptLabel, QLabel* genderLabel, QLabel* phoneLabel, QPushButton* avatarBtn, QPushButton* editBtn, QObject* parent = nullptr); // 初始化个人资料模块并绑定界面控件
     void loadUserProfile(const QString& username);                             // 发起网络请求加载并渲染用户的个人档案数据
+    void updateCameraId(int camId);
 signals:
     void requestFaceReRegister(QString username);                              // 触发重新采集当前用户人脸特征的通知信号
 protected:

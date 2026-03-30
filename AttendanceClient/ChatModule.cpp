@@ -366,9 +366,12 @@ void ChatModule::onContactSwitched(int currentRow) {
 
                 QString myLocalFolder = this->property("localFolder").toString();
                 if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
-                QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
-                QDir dir(clientDirPath);
-                if (!dir.exists()) dir.mkpath(".");
+                QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/ChatFiles/client/" + myLocalFolder;
+                QString clientDirPath = QDir::cleanPath(rawPath);
+                QDir dir;
+                if (!dir.exists(clientDirPath)) {
+                    dir.mkpath(clientDirPath);
+                }
 
                 QString localFileName = "hist_" + fName;
                 QString localFilePath = clientDirPath + "/" + localFileName;
@@ -511,9 +514,12 @@ void ChatModule::onBtnFolderClicked() {
     }
     QString myLocalFolder = this->property("localFolder").toString();
     if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
-    QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
-    QDir dir(clientDirPath);
-    if (!dir.exists()) dir.mkpath(".");
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/ChatFiles/client/" + myLocalFolder;
+    QString clientDirPath = QDir::cleanPath(rawPath);
+    QDir dir;
+    if (!dir.exists(clientDirPath)) {
+        dir.mkpath(clientDirPath);
+    }
     // 将选中的文件复制到客户端缓存目录
     QString localFileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_") + fi.fileName();
     QString copiedFilePath = clientDirPath + "/" + localFileName;
@@ -618,9 +624,12 @@ void ChatModule::onReadyRead() {
             if (suffix.isEmpty()) suffix = "png";
             QString myLocalFolder = this->property("localFolder").toString();
             if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
-            QString clientDirPath = QCoreApplication::applicationDirPath() + "/ChatFiles/client/" + myLocalFolder;
-            QDir dir(clientDirPath);
-            if (!dir.exists()) dir.mkpath(".");
+            QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/ChatFiles/client/" + myLocalFolder;
+            QString clientDirPath = QDir::cleanPath(rawPath);
+            QDir dir;
+            if (!dir.exists(clientDirPath)) {
+                dir.mkpath(clientDirPath);
+            }
             QString localFileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_") + originalFileName;
             QString localFilePath = clientDirPath + "/" + localFileName;
             // 落盘本地保存

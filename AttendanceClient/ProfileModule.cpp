@@ -80,7 +80,7 @@ void ProfileModule::injectAdvancedUI() {
     QComboBox* statusCombo = parentW->window()->findChild<QComboBox*>("comboBox_Status");
     QPushButton* btnChangeAvatar = parentW->window()->findChild<QPushButton*>("btn_ChangeAvatar");
     QFormLayout* formLay = parentW->window()->findChild<QFormLayout*>("formLayout_Profile");
-    QString iconBase = "../../AttendanceClient/icon_library/Profile/";
+
     // 获取二维码相关的控件，准备迁移
     QLabel* qrCodeLabel = parentW->window()->findChild<QLabel*>("label_QRCode");
     QLabel* qrTitleLabel = parentW->window()->findChild<QLabel*>("label_QRTitle");
@@ -189,12 +189,13 @@ void ProfileModule::injectAdvancedUI() {
     hLayHeader->addLayout(infoLay, 1);
 
     QHBoxLayout* topActionLay = new QHBoxLayout();
+    QString iconBase = "../../AttendanceClient/icon_library/Profile/";
     QPushButton* helpBtn = new QPushButton(" 操作指引与考勤规范");
-    helpBtn->setIcon(QIcon(iconBase + "icon_operation.svg")); 
+    helpBtn->setIcon(QIcon(iconBase + "icon_operation.svg"));
     helpBtn->setIconSize(QSize(16, 16)); // 设置合适的图标尺寸
     helpBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #F2F3F5; color: #4E5969; border: 1px solid #DEE0E3; } QPushButton:hover { background-color: #E5E6EB; }");
     m_faceBtn = new QPushButton(" 重新采集人脸");
-    m_faceBtn->setIcon(QIcon(iconBase + "btn_face_redo.svg")); 
+    m_faceBtn->setIcon(QIcon(iconBase + "btn_face_redo.svg"));
     m_faceBtn->setIconSize(QSize(16, 16)); // 设置合适的图标尺寸
     m_faceBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #3370FF; } QPushButton:hover { background-color: #4E83FF; }");
     topActionLay->addWidget(helpBtn);
@@ -243,7 +244,7 @@ void ProfileModule::injectAdvancedUI() {
 
             titleLabel->setStyleSheet("QLabel { font-size: 13px; color: #4E5969; font-weight: bold; background: transparent; border: none; }");
             rowLay->addWidget(titleLabel);
-            
+
 
             QLabel* dataLabel = qobject_cast<QLabel*>(fieldWidget);
             if (dataLabel) { dataLabel->setStyleSheet("QLabel { font-size: 13px; color: #1F2329; background: transparent; border: none; }"); }
@@ -307,10 +308,6 @@ void ProfileModule::injectAdvancedUI() {
     m_exportPdfBtn = new QPushButton(" 导出个人入职档案");
     m_exportPdfBtn->setIcon(QIcon(iconBase + "icon_export_personal.svg"));
     m_exportPdfBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #E6A23C; } QPushButton:hover { background-color: #EBB563; }");
-    QPushButton* payslipBtn = new QPushButton(" 智能工资条");
-    payslipBtn->setIcon(QIcon(iconBase + "btn_payslip.svg")); 
-    payslipBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #165DFF; } QPushButton:hover { background-color: #4080FF; }");
-    payslipBtn->setCursor(Qt::PointingHandCursor);
     m_settingsBtn = new QPushButton(" 系统设置");
     m_settingsBtn->setIcon(QIcon(iconBase + "btn_preference.svg"));
     m_settingsBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #722ED1; } QPushButton:hover { background-color: #8D51DE; }");
@@ -318,13 +315,10 @@ void ProfileModule::injectAdvancedUI() {
     footerLay->addWidget(m_pwdBtn);
     footerLay->addWidget(m_exportPdfBtn);
     footerLay->addStretch();
-    footerLay->addWidget(payslipBtn);
     footerLay->addWidget(m_settingsBtn);
 
     mainCardLay->insertWidget(2, footerFrame);
-    connect(payslipBtn, &QPushButton::clicked, this, [this]() {
-        QMessageBox::information((QWidget*)this->parent(), "智能工资条", "薪资明细与确认功能正在开发中，敬请期待！");
-        });
+
     connect(m_pwdBtn, &QPushButton::clicked, this, &ProfileModule::onChangePasswordClicked);
     connect(m_faceBtn, &QPushButton::clicked, this, &ProfileModule::onReRegisterFaceClicked);
     connect(m_exportPdfBtn, &QPushButton::clicked, this, &ProfileModule::onExportProfilePdfClicked);
@@ -628,38 +622,60 @@ void ProfileModule::onChangePasswordClicked() {
         else { QString e = res["msg"].toString(); QMessageBox::warning(pw, "修改失败", e.isEmpty() ? "服务端未响应" : e); }
     }
 }
-
-void ProfileModule::onChangeAvatarClicked() {
-    if (m_currentUser.isEmpty()) return;
-    QWidget* pw = (QWidget*)this->parent();
-    QString filePath = QFileDialog::getOpenFileName(pw, "选择个人头像", "", "图片文件 (*.png *.jpg *.jpeg *.bmp)");
+// 响应用户点击修改头像按钮：打开本地文件选择器，进行图片裁剪缩放，并向服务端发起更换请求
+void ProfileModule::onChangeAvatarClicked()
+{
+    QWidget* parentWidget = (QWidget*)this->parent();
+    QString filePath = QFileDialog::getOpenFileName(parentWidget, "选择新头像", "", "Images (*.png *.jpg *.jpeg)");
     if (filePath.isEmpty()) return;
-    QImage img;
-    if (!img.load(filePath)) { QMessageBox::warning(pw, "错误", "无法加载该图片！"); return; }
-    QImage scaledImg = img.scaled(256, 256, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-    int side = qMin(scaledImg.width(), scaledImg.height());
-    QImage squareImg = scaledImg.copy((scaledImg.width() - side) / 2, (scaledImg.height() - side) / 2, side, side);
-    QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly); squareImg.save(&buffer, "JPG", 70);
-
-    QString localDir = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/avatars/" + m_currentUser + "/";
-    QDir().mkpath(localDir);
-    QString localPath = localDir + m_currentUser + ".jpg";
-    QFile localFile(localPath);
-    if (localFile.open(QIODevice::WriteOnly)) {
-        localFile.write(bytes);
-        localFile.close();
+    QPixmap pix(filePath);
+    if (pix.isNull()) {
+        // ⭐️ 修复 2：修改警告弹窗的父对象
+        QMessageBox::warning(parentWidget, "错误", "无法加载图片！");
+        return;
     }
+    QString currentName = m_nameLabel->text().trimmed();
+    if (currentName.isEmpty()) return;
+    // 统一缩放并裁剪为 100x100 的正方形
+    QPixmap scaledPix = pix.scaled(100, 100, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    int x = (scaledPix.width() - 100) / 2;
+    int y = (scaledPix.height() - 100) / 2;
+    QPixmap finalPix = scaledPix.copy(x, y, 100, 100);
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/avatars/" + currentName;
+    QString localDir = QDir::cleanPath(rawPath) + "/";
+    QDir dir;
+    if (!dir.exists(localDir)) dir.mkpath(localDir);
+    QString fileName = currentName + ".jpg";
+    QString localPath = localDir + fileName;
+    QFile oldFile(localPath);
+    if (oldFile.exists()) {
+        QString randomCode = QString::number(QDateTime::currentMSecsSinceEpoch()) + "_" + QString::number(QRandomGenerator::global()->bounded(1000, 9999));
+        QString backupPath = localDir + currentName + "_" + randomCode + ".jpg";
+        oldFile.rename(backupPath);
+    }
+    finalPix.save(localPath, "JPG", 90);
+    QPainterPath path;
+    path.addEllipse(0, 0, 100, 100);
+    QPixmap roundedPix(100, 100);
+    roundedPix.fill(Qt::transparent);
+    QPainter painter(&roundedPix);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setClipPath(path);
+    painter.drawPixmap(0, 0, finalPix);
+    m_avatarLabel->setPixmap(roundedPix);
+
+    QByteArray imgData;
+    QBuffer buffer(&imgData);
+    buffer.open(QIODevice::WriteOnly);
+    finalPix.save(&buffer, "JPG", 80); 
 
     QJsonObject req;
-    req["type"] = "upload_avatar_file";
-    req["name"] = m_currentUser;
-    req["avatar_data"] = QString(bytes.toBase64());
-    QJsonObject res = NetworkHelper::request(req);
-    if (res["status"].toString() != "success") QMessageBox::warning(pw, "错误", "头像上传失败: " + res["msg"].toString());
-    else QMessageBox::information(pw, "成功", "头像已修改。");
-    loadUserProfile(m_currentUser);
+    req["type"] = "upload_avatar";
+    req["name"] = currentName;  
+    req["avatar_data"] = QString(imgData.toBase64());
+    NetworkHelper::sendAsync(req);
+    QMessageBox::information(parentWidget, "成功", "头像修改成功！");
 }
-
 void ProfileModule::onExportProfilePdfClicked() {
     if (m_currentUser.isEmpty()) return;
     QString defaultName = QString("%1_入职登记表.pdf").arg(m_currentUser);
@@ -788,37 +804,37 @@ void ProfileModule::onReRegisterFaceClicked() {
     int levels = 0;
     if (dept == "总经办" && jobTitle == "总经理") {
         levels = 1; fillHR(app1);
-        form->addRow("第一审批人(人资经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (dept == "总经办") {
         levels = 2; fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (dept == "人力资源部" && jobTitle == "部门经理") {
         levels = 1; fillGM(app1);
-        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (dept == "人力资源部") {
         levels = 2; fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (jobTitle == "部门经理") {
         levels = 2; fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else {
         levels = 3; fillDeptMgr(app1); fillGM(app2); fillHR(app3);
-        form->addRow("第一审批人(部门经理):", app1);
-        form->addRow("第二审批人(总经理):", app2);
-        form->addRow("第三审批人(人资经理):", app3);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
+        form->addRow("第三审批人:", app3);
     }
 
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
@@ -1012,6 +1028,7 @@ void ProfileModule::renderDiagnosticsCard()
     addDiagItem(iconBase2 + (cameraOnline ? "icon_cameras_on.svg" : "icon_cameras_off.svg"), "摄像头", cameraOnline ? "在线" : "离线", cameraOnline);
 
     QLabel* camNameLbl = new QLabel("  " + cameraName);
+    camNameLbl->setObjectName("RealCameraNameLabel"); 
     camNameLbl->setStyleSheet("font-size:10px; color:#8F959E; border:none;");
     camNameLbl->setWordWrap(true);
     diagLay->addWidget(camNameLbl);
@@ -1049,11 +1066,6 @@ void ProfileModule::renderDiagnosticsCard()
         "background-color:%1; border-radius:10px; padding:6px;")
         .arg(cameraOnline ? "#00B42A" : "#F53F3F"));
     diagLay->addWidget(summaryLabel);
-
-    // ⭐️ 移除阴影效果，符合 B 端沉稳风格
-    // QGraphicsDropShadowEffect* shadow = new QGraphicsDropShadowEffect(diagFrame); ...
-
-    // ⭐️ 注意：不要在这里 addWidget，在 injectAdvancedUI 中挂载！
 }
 void ProfileModule::renderHelpAccordion()
 {
@@ -1105,12 +1117,28 @@ void ProfileModule::renderHelpAccordion()
         helpLay->addWidget(bodyBrowser);
         };
 
-    addAccordionItem("考勤规范", "<b>工作时间：</b>上午 09:00 - 下午 18:00（以部门排班规则为准）<br><br><b>打卡窗口：</b><br>• 上班打卡：05:00 ~ 11:30<br>• 下班打卡：15:00 ~ 次日 00:00<br><br><b>迟到认定：</b>超过上班时间即为迟到<br><b>旷工认定：</b>迟到超过120分钟（可配置）<br><b>早退认定：</b>早于下班时间打卡下班");
-    addAccordionItem("防作弊说明", "<b>活体检测：</b>系统内置眨眼/张嘴动作检测，照片攻击将被拦截<br><br><b>特征比对：</b>人脸特征由服务端进行 1:N 匹配，客户端无法绕过<br><br><b>作弊记录：</b>多次验证失败将自动标记为「作弊打卡」并通知管理员<br><br><b style='color:#F53F3F;'>代打卡属于严重违规行为，将被记入考勤档案</b>");
-    addAccordionItem("打卡失败排查", "<b>1. 检查摄像头：</b>确认摄像头指示灯亮起，可在下方「诊断状态」卡片查看<br><br><b>2. 光线环境：</b>避免强逆光或极暗环境，保持面部均匀受光<br><br><b>3. 距离与角度：</b>保持距离摄像头 30-80cm，正面平视<br><br><b>4. 遮挡物：</b>摘下墨镜、口罩等可能遮挡面部的物品<br><br><b>5. 网络连接：</b>确认客户端已连接服务器<br><br><b>6. 仍然失败？</b>使用「手动打卡辅助」功能或联系管理员");
-    addAccordionItem("请假与申诉流程", "<b>请假申请：</b>打卡首页 → 申请请假<br><br><b>异常申诉：</b>打卡首页 → 异常申诉<br><br><b>审批链路：</b>普通员工 → 部门经理 → 总经理 → 人资经理（逐级流转）<br><br><b>查看进度：</b>考勤记录页 → 我的申请进度");
-    addAccordionItem("人脸重新采集", "<b>适用场景：</b>面部发生较大变化（整形、佩戴眼镜等）<br><br><b>操作路径：</b>点击上方「重新采集人脸」按钮<br><br><b>注意：</b>审批期间原数据有效，审批后覆盖");
+    // 动态加载外部 JSON 说明文档
+    QString filePath = QCoreApplication::applicationDirPath() + "/config/help_docs.json";
+    QFile file(filePath);
 
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QByteArray data = file.readAll();
+        file.close();
+
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+
+        if (parseError.error == QJsonParseError::NoError && doc.isArray()) {
+            QJsonArray arr = doc.array();
+            for (int i = 0; i < arr.size(); ++i) {
+                QJsonObject obj = arr[i].toObject();
+                QString title = obj["title"].toString();
+                QString content = obj["content"].toString();
+
+                addAccordionItem(title, content);
+            }
+        }
+    }
     helpLay->addStretch();
     scrollArea->setWidget(scrollWidget);
     mainLay->addWidget(scrollArea);
@@ -1121,4 +1149,22 @@ void ProfileModule::renderHelpAccordion()
     mainLay->addWidget(closeBtn);
 
     dialog.exec();
+}
+void ProfileModule::updateCameraId(int camId)
+{
+    QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
+    if (!window) return;
+
+    QLabel* camNameLbl = window->findChild<QLabel*>("RealCameraNameLabel");
+    if (camNameLbl) {
+        QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
+        QString realCamName = "未知设备";
+
+        if (camId >= 0 && camId < cameras.size()) {
+            realCamName = cameras.at(camId).description();
+        }
+
+        camNameLbl->setText(QString("  [ID:%1] %2").arg(camId).arg(realCamName));
+        camNameLbl->setStyleSheet("font-size:10px; color:#8F959E; border:none;");
+    }
 }

@@ -343,47 +343,47 @@ void PunchModule::onAppealRequestClicked() {
         // 场景二：总经办总经理 → 人资经理
         approvalLevels = 1;
         fillHR(app1);
-        form->addRow("第一审批人(人资经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "总经办") {
         // 场景一：总经办非总经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
         // 场景三：人资部门经理 → 总经理
         approvalLevels = 1;
         fillGM(app1);
-        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部") {
         // 场景四：人资部非经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (applicantJob == "部门经理") {
         // 场景六：其余部门的部门经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else {
         // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
         fillDeptMgr(app1); fillGM(app2); fillHR(app3);
-        form->addRow("第一审批人(部门经理):", app1);
-        form->addRow("第二审批人(总经理):", app2);
-        form->addRow("第三审批人(人资经理):", app3);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
+        form->addRow("第三审批人):", app3);
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申诉");
@@ -518,44 +518,44 @@ void PunchModule::onLeaveRequestClicked()
     if (applicantDept == "总经办" && applicantJob == "总经理") {
         approvalLevels = 1;
         fillHR(app1);
-        form->addRow("第一审批人(人资经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "总经办") {
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
         approvalLevels = 1;
         fillGM(app1);
-        form->addRow("第一审批人(总经理):", app1);
+        form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部") {
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else if (applicantJob == "部门经理") {
         // 场景六：其余部门的部门经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人(总经理):", app1);
-        form->addRow("第二审批人(人资经理):", app2);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
         app3->setVisible(false);
     }
     else {
         // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
         fillDeptMgr(app1); fillGM(app2); fillHR(app3);
-        form->addRow("第一审批人(部门经理):", app1);
-        form->addRow("第二审批人(总经理):", app2);
-        form->addRow("第三审批人(人资经理):", app3);
+        form->addRow("第一审批人:", app1);
+        form->addRow("第二审批人:", app2);
+        form->addRow("第三审批人:", app3);
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申请");
