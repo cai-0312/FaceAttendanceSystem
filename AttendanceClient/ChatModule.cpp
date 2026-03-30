@@ -8,6 +8,7 @@
 #include <QAction>
 #include <QScrollBar>
 #include <QDesktopServices> 
+#include <QCryptographicHash>
 #include <QWidgetAction>
 #include <QGridLayout>
 #include <QScrollArea>
@@ -315,122 +316,123 @@ void ChatModule::loadContactsFromDatabase() {
 // 切换左侧列表时的对话上下文处理（读取本地缓存与服务端历史）
 void ChatModule::onContactSwitched(int currentRow) {
     if (currentRow < 0) return;
-    QString targetData = m_contactsList->item(currentRow)->data(Qt::UserRole).toString();
-    // 判断是部门群聊还是个人私聊
+
+    // ⭐️ 修复 1：加上 .trimmed() 防止因隐藏空格导致向服务端请求错误的 target
+    QString targetData = m_contactsList->item(currentRow)->data(Qt::UserRole).toString().trimmed();
     if (targetData.startsWith("GROUP_")) {
         m_isCurrentGroup = true;
-        m_currentTarget = targetData.replace("GROUP_", "");
+        m_currentTarget = targetData.replace("GROUP_", "").trimmed();
         m_targetLabel->setText("正在与 【群聊：" + m_currentTarget + "】 聊天");
     }
     else {
         m_isCurrentGroup = false;
         m_currentTarget = targetData;
         m_targetLabel->setText("正在与 【" + m_currentTarget + "】 聊天");
-        // 通知服务端更新已读状态
         if (m_tcpSocket->state() == QAbstractSocket::ConnectedState) {
             QJsonObject json;
             json["type"] = "read_receipt";
             json["from"] = m_myName;
             json["to"] = m_currentTarget;
             m_tcpSocket->write(QJsonDocument(json).toJson(QJsonDocument::Compact) + "\n");
+            m_tcpSocket->flush();
         }
     }
-    // 向服务端拉取该会话的完整历史记录
+
     QJsonObject histReq;
     histReq["type"] = "query_chat_history";
     histReq["me"] = m_myName;
     histReq["target"] = m_currentTarget;
     histReq["is_group"] = m_isCurrentGroup;
     QJsonObject histRes = NetworkHelper::request(histReq);
+
     m_chatHistories[m_currentTarget] = "";
     QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
     QStringList hiddenHashes = settings.value("HiddenMessages").toStringList();
-    // 渲染历史数据到展示界面
-    if (histRes["status"].toString() == "success") {
-        QJsonArray dataArr = histRes["data"].toArray();
-        for (int i = 0; i < dataArr.size(); ++i) {
-            QJsonObject o = dataArr[i].toObject();
-            QString sender = o["sender"].toString();
-            QString content = o["content"].toString();
-            QString timeStr = o["time"].toString();
-            QString mType = o["msg_type"].toString();
-            QString fName = o["filename"].toString();
-            QString msgHash = QString::number(qHash(timeStr + sender + content));
-            if (hiddenHashes.contains(msgHash)) continue;
-            QString bubbleHtml;
-            QString displayMsg;
-            // 处理附件或图片消息渲染
-            if (mType.contains("image") || mType.contains("file")) {
-                QString suffix = fName.split(".").last().toLower();
-                if (suffix.isEmpty()) suffix = "png";
 
-                QString myLocalFolder = this->property("localFolder").toString();
-                if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
-                QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/ChatFiles/client/" + myLocalFolder;
-                QString clientDirPath = QDir::cleanPath(rawPath);
-                QDir dir;
-                if (!dir.exists(clientDirPath)) {
-                    dir.mkpath(clientDirPath);
-                }
+    // ⭐️ 修复 2：自适应兼容服务端不同的 JSON 数据字段名
+    QJsonArray dataArr;
+    if (histRes.contains("data")) dataArr = histRes["data"].toArray();
+    else if (histRes.contains("history")) dataArr = histRes["history"].toArray();
 
-                QString localFileName = "hist_" + fName;
-                QString localFilePath = clientDirPath + "/" + localFileName;
+    QString myLocalFolder = this->property("localFolder").toString();
+    if (myLocalFolder.isEmpty()) myLocalFolder = "Unknown_User";
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceClient/ChatFiles/client/" + myLocalFolder;
+    QString clientDirPath = QDir::cleanPath(rawPath);
+    QDir dir;
+    if (!dir.exists(clientDirPath)) dir.mkpath(clientDirPath);
 
-                if (!QFile::exists(localFilePath) && !content.isEmpty()) {
-                    QFile localFile(localFilePath);
-                    if (localFile.open(QIODevice::WriteOnly)) {
-                        localFile.write(QByteArray::fromBase64(content.toUtf8()));
-                        localFile.close();
-                    }
-                }
-                QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
-                if (mType.contains("image")) {
-                    displayMsg = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击查看原图)</a>").arg(fileUrl, suffix, content);
-                }
-                else {
-                    displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>历史附件: %2<br><span style='font-size:12px;'>(点击打开文件)</span></a>").arg(fileUrl, fName);
-                }
-            }
-            // 处理纯文本消息渲染
-            else {
-                displayMsg = content.toHtmlEscaped();
-            }
-            int isRead = o["is_read"].toInt();
-            if (sender == m_myName) {
-                QString readStatusHtml = "";
-                if (!m_isCurrentGroup) {
-                    if (isRead == 0) {
-                        readStatusHtml = "&nbsp;&nbsp;<span style='color:#909399;'>(未读)</span>";
-                    }
-                    else {
-                        readStatusHtml = "&nbsp;&nbsp;<span style='color:#909399;'>(已读)</span>";
-                    }
-                }
-                QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>"
-                    "<span style='color:#999999; font-size:12px;'>%2 [我]</span>%3").arg(msgHash, timeStr, readStatusHtml);
+    for (int i = 0; i < dataArr.size(); ++i) {
+        if (i % 5 == 0) QCoreApplication::processEvents();
 
-                bubbleHtml = QString(
-                    "<div style='text-align:right; margin-bottom:10px;'>"
-                    "%1<br>"
-                    "<span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000; text-align:left;'>%2</span>"
-                    "</div>"
-                ).arg(header, displayMsg);
-            }
-            else {
-                QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2</span>"
-                    "<a href='del:%4' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>").arg(sender, timeStr, msgHash);
-                bubbleHtml = QString(
-                    "<div style='text-align:left; margin-bottom:10px;'>"
-                    "%1<br>"
-                    "<span style='background-color:#FFFFFF; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; border:1px solid #EAEAEA; color:#000;'>%2</span>"
-                    "</div>"
-                ).arg(header, displayMsg);
-            }
-            m_chatHistories[m_currentTarget] += bubbleHtml;
+        QJsonObject o = dataArr[i].toObject();
+
+        // ⭐️ 修复 3：全面兼容不同格式的键值，防止取不到数据
+        QString sender = o.contains("sender") ? o["sender"].toString() : o["from"].toString();
+        QString rawContent = o.contains("content") ? o["content"].toString() : o["msg"].toString();
+        QString timeStr = o.contains("time") ? o["time"].toString() : o["send_time"].toString();
+        QString mType = o.contains("msg_type") ? o["msg_type"].toString() : o["type"].toString();
+        QString fName = o["filename"].toString();
+
+        QString content = rawContent;
+        if (rawContent.startsWith("B64:")) {
+            content = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
         }
+
+        QString shortContent = content.length() > 50 ? content.left(50) : content;
+        QString msgHash = QString(QCryptographicHash::hash((timeStr + sender + fName + shortContent).toUtf8(), QCryptographicHash::Md5).toHex());
+
+        if (!msgHash.isEmpty() && msgHash != "0" && hiddenHashes.contains(msgHash)) continue;
+
+        QString bubbleHtml;
+        QString displayMsg;
+
+        if (mType.contains("image") || mType.contains("file")) {
+            QString suffix = "png";
+            if (fName.contains(".")) suffix = fName.split(".").last().toLower();
+            if (fName.isEmpty()) fName = "pasted_image." + suffix;
+
+            QString localFileName = "hist_" + msgHash + "_" + fName;
+            QString localFilePath = clientDirPath + "/" + localFileName;
+
+            QFile localFile(localFilePath);
+            if (!localFile.exists() || localFile.size() == 0) {
+                if (localFile.open(QIODevice::WriteOnly)) {
+                    localFile.write(QByteArray::fromBase64(content.toUtf8()));
+                    localFile.close();
+                }
+            }
+
+            QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
+            if (mType.contains("image")) {
+                displayMsg = QString("<a href='%1'><img src='%1' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击查看原图)</a>").arg(fileUrl);
+            }
+            else {
+                displayMsg = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>历史附件: %2<br><span style='font-size:12px;'>(点击打开文件)</span></a>").arg(fileUrl, fName);
+            }
+        }
+        else {
+            displayMsg = content.toHtmlEscaped();
+        }
+
+        int isRead = o["is_read"].toInt();
+        if (sender == m_myName) {
+            QString readStatusHtml = (!m_isCurrentGroup) ? (isRead == 0 ? "&nbsp;&nbsp;<span style='color:#909399;'>(未读)</span>" : "&nbsp;&nbsp;<span style='color:#909399;'>(已读)</span>") : "";
+            QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>"
+                "<span style='color:#999999; font-size:12px;'>%2 [我]</span>%3").arg(msgHash, timeStr, readStatusHtml);
+
+            bubbleHtml = QString("<div style='text-align:right; margin-bottom:10px;'>%1<br><span style='background-color:#95EC69; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; color:#000; text-align:left;'>%2</span></div>").arg(header, displayMsg);
+        }
+        else {
+            QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2</span>"
+                "<a href='del:%4' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'><img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>").arg(sender, timeStr, msgHash);
+            bubbleHtml = QString("<div style='text-align:left; margin-bottom:10px;'>%1<br><span style='background-color:#FFFFFF; padding:8px 12px; border-radius:6px; display:inline-block; margin-top:4px; font-size:14px; border:1px solid #EAEAEA; color:#000;'>%2</span></div>").arg(header, displayMsg);
+        }
+        m_chatHistories[m_currentTarget] += bubbleHtml;
     }
+
     if (m_chatHistories[m_currentTarget].isEmpty()) {
-        m_textBrowser->setHtml("<div style='text-align:center; color:#AAAAAA; margin-top:10px;'>暂无聊天记录</div>");
+        QString debugInfo = QString("<div style='text-align:center; color:#AAAAAA; margin-top:10px;'>暂无聊天记录</small></div>").arg(dataArr.size());
+        m_textBrowser->setHtml(debugInfo);
     }
     else {
         m_textBrowser->setHtml(m_chatHistories.value(m_currentTarget, ""));
@@ -464,7 +466,7 @@ void ChatModule::sendMessage() {
     QString msgId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString readStatus = m_isCurrentGroup ? "" : QString("<span style='color:#AAAAAA; font-size:12px;'> (未读)</span>");
     // 2. 将硬编码的 [删除] 替换为 SVG 矢量图
-    QString msgHash = QString::number(qHash(timeStr + m_myName + msg));
+    QString msgHash = QString(QCryptographicHash::hash((timeStr + m_myName + msg).toUtf8(), QCryptographicHash::Md5).toHex());
     QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>"
         "<img src='../../AttendanceClient/icon_library/Chat/btn_delete.svg' width='14' height='14' align='middle'> 删除</a>"
         "<span style='color:#999999; font-size:12px;'>%2 [我] </span> %3").arg(msgHash, timeStr, readStatus);
@@ -542,12 +544,12 @@ void ChatModule::onBtnFolderClicked() {
         QString displayContent;
         QString fileUrl = QUrl::fromLocalFile(copiedFilePath).toString();
         if (isImage) {
-            displayContent = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, base64Data);
+            displayContent = QString("<a href='%1'><img src='%1' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl);
         }
         else {
             displayContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>已发送文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, fi.fileName());
         }
-        QString msgHash = QString::number(qHash(timeStr + m_myName + base64Data));
+        QString msgHash = QString(QCryptographicHash::hash((timeStr + m_myName + base64Data).toUtf8(), QCryptographicHash::Md5).toHex());
         QString header = QString("<a href='del:%1' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-right:10px;'>[删除]</a>"
             "<span style='color:#999999; font-size:12px;'>%2 [我] </span>").arg(msgHash, timeStr);
         QString myMsgHtml = "<div style='text-align:right; margin-bottom:10px;'>"
@@ -640,13 +642,13 @@ void ChatModule::onReadyRead() {
             }
             QString fileUrl = QUrl::fromLocalFile(localFilePath).toString();
             if (type.contains("image")) {
-                htmlContent = QString("<a href='%1'><img src='data:image/%2;base64,%3' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl, suffix, content);
+                htmlContent = QString("<a href='%1'><img src='%1' width='150' style='border-radius:6px;' /></a><br><a href='%1' style='font-size:12px;color:gray;text-decoration:none;'>(点击外部查看原图)</a>").arg(fileUrl);
             }
             else {
                 htmlContent = QString("<a href='%1' style='text-decoration:none; color:#3370FF;'>收到文件: %2<br><span style='font-size:12px;'>(点击使用系统软件打开)</span></a>").arg(fileUrl, originalFileName);
             }
         }
-        QString msgHash = QString::number(qHash(timeStr + fromUser + content));
+        QString msgHash = QString(QCryptographicHash::hash((timeStr + fromUser + content).toUtf8(), QCryptographicHash::Md5).toHex());
         QString header = QString("<span style='color:#999999; font-size:12px;'>[%1] %2 %3</span>"
             "<a href='del:%4' style='color:#F56C6C; text-decoration:none; font-size:12px; margin-left:10px;'>[删除]</a>").arg(fromUser, timeStr, offlineTag, msgHash);
         QString receiveHtml = "<div style='text-align:left; margin-bottom:10px;'>"
