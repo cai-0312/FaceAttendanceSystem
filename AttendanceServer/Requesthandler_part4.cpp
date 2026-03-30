@@ -59,8 +59,9 @@ void RequestHandler::handleAiSaveMessage(QSqlDatabase& db, QTcpSocket* /*socket*
         dept = userQ.value(1).toString();
         title = userQ.value(2).toString();
     }
-    // 根据用户信息生成专属的审计目录
-    QString baseDir = QCoreApplication::applicationDirPath() + "/server/AiChat/";
+    // ⭐️ 核心修复 1：先拼接带 ../ 的相对路径，再用 cleanPath 净化为绝对路径，最后补上斜杠
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
+    QString baseDir = QDir::cleanPath(rawPath) + "/";
     QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
     QDir    dir;
     dir.mkpath(baseDir + folderName);
@@ -197,11 +198,11 @@ void RequestHandler::handleAiAuditFile(QSqlDatabase& db, QTcpSocket* /*socket*/,
         dept = q.value(1).toString();
         title = q.value(2).toString();
     }
-    QString baseDir = QCoreApplication::applicationDirPath() + "/server/AiChat/";
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
+    QString baseDir = QDir::cleanPath(rawPath) + "/";
     QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
     QDir    dir;
     dir.mkpath(baseDir + folderName);
-    // 2. 解码 Base64 文件流并持久化到本地硬盘
     QByteArray fileData = QByteArray::fromBase64(fileDataBase64.toUtf8());
     QString    filePath = baseDir + folderName + "/" + fileName;
     QFile      file(filePath);

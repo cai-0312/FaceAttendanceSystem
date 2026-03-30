@@ -19,11 +19,7 @@
 #include <QPointer>
 #include <QThread>
 #include <QCryptographicHash>
-
-// ═══════════════════════════════════════════════════════════════════
-//  全局工具函数
-// ═══════════════════════════════════════════════════════════════════
-
+#include <QRandomGenerator>
 // 发送 JSON 回包（线程安全）
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
@@ -56,11 +52,6 @@ static QString encodeContent(const QString& content)
 {
     return CryptoHelper::encryptContent(content);
 }
-
-// ═══════════════════════════════════════════════════════════════════
-//  人脸 & 账号
-// ═══════════════════════════════════════════════════════════════════
-
 // 查询系统中所有已注册的人脸特征
 void RequestHandler::handleQueryFaceFeatures(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& /*json*/)
 {
@@ -560,10 +551,6 @@ void RequestHandler::handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket*
     sendJson(socket, res);
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  人脸重录 / 头像 / 部门列表
-// ═══════════════════════════════════════════════════════════════════
-
 // 人脸重录审批申请
 void RequestHandler::handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
@@ -582,29 +569,47 @@ void RequestHandler::handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* s
     else { res["msg"] = "数据库写入失败: " + q.lastError().text(); }
     sendJson(socket, res);
 }
-
-// 头像上传到文件系统
 void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString().trimmed();
     QString avatarData = json["avatar_data"].toString();
     QJsonObject res; res["status"] = "fail";
     if (name.isEmpty() || avatarData.isEmpty()) { res["msg"] = "参数不完整"; sendJson(socket, res); return; }
-
+    // 1. 查询当前用户的 account 以及旧的头像路径
     QSqlQuery q(db);
-    q.exec(QString("SELECT id, account FROM users WHERE name = '%1'").arg(S(name)));
+    q.exec(QString("SELECT id, account, avatar FROM users WHERE name = '%1'").arg(S(name)));
     QString account = "unknown";
-    if (q.next()) { account = q.value(1).toString(); }
+    QString oldAvatarPath = "";
+    if (q.next()) {
+        account = q.value(1).toString();
+        oldAvatarPath = q.value(2).toString();
+    }
     q.finish();
-
-    QString baseDir = QCoreApplication::applicationDirPath() + "/avatars/" + name + "/";
+    // 2. 使用相对路径定位到服务端的 avatars 目录
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/avatars/" + name;
+    QString baseDir = QDir::cleanPath(rawPath) + "/";
     QDir dir;
     if (!dir.exists(baseDir)) dir.mkpath(baseDir);
 
+    // 3. 将旧头像重命名备份，后缀依然保持为 .jpg
+    if (!oldAvatarPath.isEmpty()) {
+        QString oldFullPath = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../../AttendanceServer/" + oldAvatarPath);
+        QFile oldFile(oldFullPath);
+        if (oldFile.exists()) {
+            // 生成随机码
+            QString randomCode = QString::number(QDateTime::currentMSecsSinceEpoch()) + "_" + QString::number(QRandomGenerator::global()->bounded(1000, 9999));
+            // 把原路径中的 .jpg 替换为 _随机码.jpg
+            QString backupPath = oldFullPath;
+            backupPath.replace(".jpg", "_" + randomCode + ".jpg");
+            oldFile.rename(backupPath);
+        }
+    }
+    // 4. 新头像依然使用干净的 %1_%2.jpg 格式
     QString fileName = QString("%1_%2.jpg").arg(account, name);
     QString fullPath = baseDir + fileName;
     QString relativePath = QString("avatars/%1/%2").arg(name, fileName);
 
+    // 5. 写入文件并更新数据库
     QByteArray imgBytes = QByteArray::fromBase64(avatarData.toUtf8());
     QFile file(fullPath);
     if (file.open(QIODevice::WriteOnly)) {
@@ -625,7 +630,6 @@ void RequestHandler::handleUploadAvatarFile(QSqlDatabase& db, QTcpSocket* socket
     }
     sendJson(socket, res);
 }
-
 // 根据路径读取头像文件返回Base64
 void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* socket, const QJsonObject& json)
 {
@@ -633,7 +637,10 @@ void RequestHandler::handleQueryAvatarFile(QSqlDatabase& /*db*/, QTcpSocket* soc
     QJsonObject res; res["status"] = "fail";
     if (avatarPath.isEmpty()) { res["msg"] = "路径为空"; sendJson(socket, res); return; }
 
-    QString fullPath = QCoreApplication::applicationDirPath() + "/" + avatarPath;
+    // 读取时也使用相对路径拼凑，确保能精准找到图片
+    QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/" + avatarPath;
+    QString fullPath = QDir::cleanPath(rawPath);
+
     QFile file(fullPath);
     if (file.exists() && file.open(QIODevice::ReadOnly)) {
         QByteArray data = file.readAll();

@@ -202,21 +202,28 @@ void ConnectionPool::init(const QString& odbcDsn, int initialSize, int maxSize)
 QString ConnectionPool::acquire()
 {
     QMutexLocker locker(&m_mutex);
-
     // 优先从空闲队列中取出
     while (!m_availableConnections.isEmpty()) {
         QString connName = m_availableConnections.dequeue();
         QSqlDatabase db = QSqlDatabase::database(connName);
-        // 检测连接是否仍然存活
+        // ⭐️ 核心修复：绝不能只信赖 db.isOpen()，必须用真实的 SQL 去 Ping 一下测试！
+        bool isAlive = false;
         if (db.isOpen()) {
+            QSqlQuery pingQuery(db);
+            // 发送最轻量级的语句，如果成功，说明 MySQL 没有挂断这个连接
+            if (pingQuery.exec("SELECT 1")) {
+                isAlive = true;
+            }
+        }
+        // 如果连接健康，直接返回使用
+        if (isAlive) {
             return connName;
         }
-        // 连接已失效，销毁并重建
+        // 如果走到这里，说明连接已失效，将其彻底销毁
         QSqlDatabase::removeDatabase(connName);
         m_totalCreated--;
         qDebug() << "[ConnectionPool] 回收失效连接:" << connName;
     }
-
     // 空闲队列已空，尝试创建新连接
     if (m_totalCreated < m_maxSize) {
         QString newConn = createNewConnection();
@@ -224,9 +231,9 @@ QString ConnectionPool::acquire()
             return newConn;
         }
     }
-    // 已达池容量上限，强制创建溢出连接（降级策略，打印告警日志）
+    // 已达池容量上限，强制创建溢出连接
     qWarning() << "[ConnectionPool] 警告：连接池已满(" << m_totalCreated
-        << "/" << m_maxSize << ")，创建溢出连接！请检查是否存在连接泄露。";
+        << "/" << m_maxSize << ")，创建溢出连接！";
     return createNewConnection();
 }
 
