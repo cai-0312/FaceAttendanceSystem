@@ -19,13 +19,12 @@
 #include <QTimer>
 #include <QApplication> 
 #include "AttendanceClient.h"
-// 构造函数：初始化主界面 UI 容器，并依次实例化所有核心业务模块
+// 构造函数，初始化主界面并创建各业务模块
 MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, AttendanceClient* loginWindow)
     : QWidget(parent), ui(new Ui::MainWidget), m_loginName(loginName), m_role(role), m_loginWindow(loginWindow)
 {
     ui->setupUi(this);
-
-    // 为导航栏设置SVG图标（替代emoji文字图标）
+    // 设置导航栏图标
     QString iconBase = "../../AttendanceClient/icon_library/";
     QStringList navIcons = { "Navigation_Bar/nav_home.svg", "Navigation_Bar/nav_punch.svg",
                              "Navigation_Bar/nav_face.svg", "Navigation_Bar/nav_record.svg",
@@ -36,8 +35,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         QIcon icon(iconBase + navIcons[i]);
         if (!icon.isNull()) ui->listWidget_Nav->item(i)->setIcon(icon);
     }
-
-    // 为考勤打卡页按钮设置SVG图标
+    // 设置打卡页按钮图标
     ui->btn_AppealRequest->setIcon(QIcon(iconBase + "Punch/btn_appeal_request.svg"));
     ui->btn_AppealRequest->setIconSize(QSize(18, 18));
     ui->btn_AppealApprove->setIcon(QIcon(iconBase + "Punch/btn_appeal_approve.svg"));
@@ -50,21 +48,20 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
     ui->btn_RuleSettings->setIconSize(QSize(18, 18));
     ui->btn_manualPunch->setIcon(QIcon(iconBase + "Punch/btn_manual_punch.svg"));
     ui->btn_manualPunch->setIconSize(QSize(18, 18));
-    // 为人脸录入页按钮设置SVG图标
+    // 设置人脸录入页按钮图标
     ui->btn_Register->setIcon(QIcon(iconBase + "MainWidget/btn_camera.svg"));
     ui->btn_Register->setIconSize(QSize(18, 18));
-    // 为考勤记录页图例设置彩色圆点
+    // 设置考勤图例
     if (ui->leg1) { ui->leg1->setText("<span style='color:#00B42A; font-size:16px;'>●</span> 正常"); }
     if (ui->leg2) { ui->leg2->setText("<span style='color:#F53F3F; font-size:16px;'>●</span> 异常"); }
     if (ui->leg3) { ui->leg3->setText("<span style='color:#3370FF; font-size:16px;'>●</span> 请假"); }
-    // 为考勤数据简报标签设置SVG图标
+    // 设置数据简报标题图标
     if (ui->label_SummaryTitle) {
         QPixmap reportIcon = QIcon(iconBase + "Record/icon_report.svg").pixmap(20, 20);
         ui->label_SummaryTitle->setPixmap(reportIcon);
         ui->label_SummaryTitle->setText("");
-        // 改用带图标的富文本方式无法直接用QLabel，所以在其前面插入一个图标label
     }
-    // 在简报标题前插入图标（通过父布局）
+    // 在标题前插入图标
     if (ui->label_SummaryTitle && ui->label_SummaryTitle->parentWidget()) {
         QLayout* parentLay = ui->label_SummaryTitle->parentWidget()->layout();
         QHBoxLayout* hLay = qobject_cast<QHBoxLayout*>(parentLay);
@@ -84,7 +81,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
             "考勤数据可视化控制台</span>"
         );
     }
-    // 发起网络请求获取当前登录用户的部门及真实姓名信息
+    // 查询当前用户的部门和真实姓名
     QJsonObject uReq;
     uReq["type"] = "query_user_dept";
     uReq["name"] = m_loginName;
@@ -93,7 +90,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
     if (uRes.contains("real_name")) {
         m_loginName = uRes["real_name"].toString();
     }
-    // 权限控制：根据用户所属部门及角色，动态隐藏没有访问权限的导航菜单项
+    // 按权限隐藏无访问权限的菜单项
     if (dept != "人力资源部") {
         if (ui->listWidget_Nav->item(4)) {
             ui->listWidget_Nav->item(4)->setHidden(true);
@@ -104,50 +101,49 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
             ui->listWidget_Nav->item(4)->setHidden(true);
         }
     }
-    // 实例化考勤记录与数据检索模块
+    // 创建考勤记录模块
     recordModule = new RecordModule(ui->tableView_Records, ui->calendarWidget_Attendance,
         ui->label_SummaryData, ui->label_DetailDate, ui->lineEdit_SearchName,
         ui->btn_FilterDate, ui->btn_Export, m_loginName, m_role, this);
-    // 实例化实时人脸打卡与规则设置模块
+    // 创建打卡模块
     punchModule = new PunchModule(ui->label_Camera_Punch, ui->btn_manualPunch,
         ui->label_MorningTime, ui->label_MorningStatus, ui->label_EveningTime, ui->label_EveningStatus,
         ui->btn_RuleSettings, ui->btn_LeaveRequest, ui->btn_LeaveApprove, ui->btn_AppealRequest,
         ui->btn_AppealApprove, ui->label_CurrentTime, m_role, m_loginName, this);
-    // 实例化企业员工花名册管理模块
+    // 创建员工管理模块
     userModule = new UserModule(ui->tableView_Users, ui->comboBox_FilterDept, ui->btn_FilterDept, this);
-    // 实例化新员工人脸特征采集与入库模块
+    // 创建人脸录入模块
     registerModule = new RegisterModule(ui->label_Camera_Register, this);
-    // 实例化基于大语言模型的智能问答助手模块
+    // 创建智能问答模块
     m_aiModule = new AIAssistantModule(ui->textBrowser_AI, ui->lineEdit_AIInput, ui->btn_SendAI, ui->btn_ClearAIHistory, m_loginName, this);
-    // 实例化主页大屏数据可视化模块（问题1：传入部门和职务用于权限过滤）
+    // 创建首页大屏模块
     QString jobTitle = uRes["job_title"].toString();
     homeModule = new HomeModule(ui->verticalLayout_Home, m_role, m_loginName, dept, jobTitle, this);
-    // 实例化企业内部即时通讯模块，并建立底层 TCP 长连接
+    // 创建聊天模块并连接服务器
     chatModule = new ChatModule(ui->listWidget_Contacts, ui->textBrowser_Chat, ui->lineEdit_ChatMessage,
         ui->label_ChatTarget, ui->btn_Emoji, ui->btn_Folder, ui->btn_History, ui->btn_MoreOpt, ui->lineEdit_ChatSearch, this);
     chatModule->connectToServer(NetworkHelper::serverIp(), NetworkHelper::serverPort(), m_loginName);
-    // 动态创建并注入个人信息修改按钮
+    // 创建个人资料修改按钮
     QPushButton* btnEditProfile = new QPushButton(" 修改性别与电话", this);
     btnEditProfile->setIcon(QIcon(iconBase + "MainWidget/btn_edit.svg"));
     btnEditProfile->setIconSize(QSize(18, 18));
     if (ui->formLayout_Profile) {
         ui->formLayout_Profile->addRow("", btnEditProfile);
     }
-    // 实例化个人中心与档案展示模块
+    // 创建个人资料模块
     profileModule = new ProfileModule(ui->label_Avatar, ui->label_ProfileName, ui->label_ProfileDept,
         ui->label_ProfileGender, ui->label_ProfilePhone, ui->btn_ChangeAvatar, btnEditProfile, this);
-    // 动态创建全局系统广播发布按钮，仅对管理员开放
+    // 创建系统广播按钮
     QPushButton* btnBroadcast = new QPushButton(" 发布系统广播", this);
     btnBroadcast->setIcon(QIcon(iconBase + "MainWidget/btn_broadcast.svg"));
     btnBroadcast->setIconSize(QSize(18, 18));
     btnBroadcast->setMinimumSize(130, 35);
     btnBroadcast->setCursor(Qt::PointingHandCursor);
     btnBroadcast->setStyleSheet("QPushButton { background-color: #F56C6C; color: white; border-radius: 6px; font-weight: bold; } QPushButton:hover { background-color: #F78989; }");
-
     if (m_role != "管理员登录") {
         btnBroadcast->hide();
     }
-    // 将广播按钮嵌入到主页顶部布局中
+    // 将广播按钮放入主页顶部
     if (ui->verticalLayout_Home && ui->label_HomeTitle) {
         QHBoxLayout* topHomeLayout = new QHBoxLayout();
         topHomeLayout->addWidget(ui->label_HomeTitle);
@@ -157,7 +153,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         if (oldTitleItem) delete oldTitleItem;
         ui->verticalLayout_Home->insertLayout(0, topHomeLayout);
     }
-    // 绑定发布系统公告事件：通过弹窗采集内容并交由服务端处理与分发
+    // 绑定广播发布事件
     connect(btnBroadcast, &QPushButton::clicked, this, [=]() {
         QDialog dialog(this);
         dialog.setWindowTitle("起草全局系统广播");
@@ -170,7 +166,6 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         textEdit->setPlaceholderText("请输入放假通知、新员工欢迎等内容...");
         textEdit->setStyleSheet("border: 1px solid #DCDFE6; border-radius: 4px; padding: 10px; font-size: 14px;");
         layout.addWidget(textEdit);
-
         QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
         buttonBox.button(QDialogButtonBox::Ok)->setText("立即发送");
         buttonBox.button(QDialogButtonBox::Ok)->setStyleSheet("background-color: #F56C6C; color: white;");
@@ -191,45 +186,45 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
             }
         }
         });
-    // 监听网络广播信号并触发右下角气泡弹窗通知
+    // 监听广播并弹出通知
     connect(chatModule, &ChatModule::broadcastReceived, this, [=](QString from, QString msg) {
         NoticePopup* popup = new NoticePopup(QString("系统公告 (发布者: %1)").arg(from), msg);
         popup->showAnimation();
         });
-    // 启动负责计算密集型任务的独立人脸特征识别线程
+    // 启动人脸处理线程
     aiThread = new FaceProcessThread(this);
     aiThread->setCurrentUser(m_loginName);
-    // 绑定各类UI交互事件到底层业务逻辑模块
+    // 绑定界面操作事件
     connect(ui->btn_deleteUser, &QPushButton::clicked, userModule, &UserModule::deleteSelectedUser);
     connect(ui->btn_Register, &QPushButton::clicked, registerModule, &RegisterModule::triggerRegistration);
     connect(ui->btn_SendChat, &QPushButton::clicked, chatModule, &ChatModule::sendMessage);
     connect(ui->lineEdit_ChatMessage, &QLineEdit::returnPressed, chatModule, &ChatModule::sendMessage);
-    // 将考勤模块的系统消息推送至聊天会话中
+    // 将考勤消息推送到聊天中
     connect(punchModule, &PunchModule::requestSendChat, this, [this](QString msg) {
         chatModule->sendSystemMessage(m_loginName, msg);
         });
-    // 绑定人脸特征采集与注册事件关联
+    // 绑定人脸录入事件
     connect(registerModule, &RegisterModule::startRegistration, aiThread, &FaceProcessThread::requestRegister);
     connect(aiThread, &FaceProcessThread::registerFeatureReady, registerModule, &RegisterModule::onFeatureReady);
     connect(aiThread, &FaceProcessThread::registerFailed, registerModule, &RegisterModule::onRegisterFailed);
-    // 监听数据变动信号以触发特征库的延时重载
+    // 数据变化后延迟刷新特征库
     connect(registerModule, &RegisterModule::dataChanged, this, [this]() {
         QTimer::singleShot(2000, this, &MainWidget::loadRegisteredUsers);
         });
     connect(userModule, &UserModule::dataChanged, this, &MainWidget::loadRegisteredUsers);
-    // 绑定首页大屏卡片的快捷操作到打卡请假模块
+    // 绑定首页快捷操作
     connect(homeModule, &HomeModule::requestQuickLeave, punchModule, &PunchModule::onLeaveRequestClicked);
     connect(homeModule, &HomeModule::requestQuickAppeal, punchModule, &PunchModule::onAppealRequestClicked);
     connect(homeModule, &HomeModule::requestApproveLeave, punchModule, &PunchModule::onLeaveApproveClicked);
     connect(homeModule, &HomeModule::requestApproveAppeal, punchModule, &PunchModule::onAppealApproveClicked);
-    // 个人资料页触发重新人脸采集的导航跳转
+    // 个人资料页跳转到人脸录入页
     connect(profileModule, &ProfileModule::requestFaceReRegister, this, [=](QString currentName) {
         ui->listWidget_Nav->setCurrentRow(2);
         ui->stackedWidget->setCurrentIndex(2);
         QMessageBox::information(this, "准备就绪", "请核对名字后，点击【开始录入】进行人脸覆写！");
         });
     connect(aiThread, &FaceProcessThread::cameraConnected, profileModule, &ProfileModule::updateCameraId);
-    // 处理侧边导航栏切换事件，调度显示面板及通知关联子模块进行数据懒加载
+    // 处理导航切换并刷新对应页面
     connect(ui->listWidget_Nav, &QListWidget::currentRowChanged, this, [=](int row) {
         ui->stackedWidget->setCurrentIndex(row);
         if (aiThread) {
@@ -255,27 +250,22 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
             profileModule->loadUserProfile(m_loginName);
         }
         });
-    // 监听子线程人脸处理完成返回的视频帧及识别结果并做后续考勤业务判断
+    // 处理人脸线程返回的画面和识别结果
     connect(aiThread, &FaceProcessThread::frameReady, this, [=](QImage img, QStringList names, QByteArray currentFeatureBytes) {
         int currentPage = ui->stackedWidget->currentIndex();
         if (currentPage == 1) {
             punchModule->renderFrame(img);
-
-            // 实时缓存最新的加密特征，供真正的安全打卡网络发包使用
+                // 缓存当前人脸特征
             if (!currentFeatureBytes.isEmpty()) {
                 punchModule->updateCurrentFaceFeature(currentFeatureBytes);
             }
-
-            // 遍历视野内的所有人脸，更新 UI 显示名字
+                // 更新识别到的姓名显示
             for (const QString& name : names) {
                 punchModule->updateRecognizedName(name);
-
-                // 【严格保留的原有逻辑】：过滤非法人员。如果不是本人，绝不允许进行任何考勤判定！
-                // 界面层会根据这个判定画出红框或报警，此处代码予以保留。
+                // 过滤非本人人员
                 if (name == "未知访客" || name == "非本人" || name != m_loginName) {
                     continue;
                 }
-                // 注意：旧代码中的 m_punchStates 防抖逻辑已移交到底层 aiThread 的 lastPunchTime 冷却机制处理，此处变得极其干净。
             }
         }
         else if (currentPage == 2) {
@@ -288,19 +278,15 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
     connect(aiThread, &FaceProcessThread::internalPunchSuccess, this, [=](QString name, QDateTime time) {
         int currentPage = ui->stackedWidget->currentIndex();
         if (currentPage != 1) return; // 不在打卡页面不发包
-
-        // 【双重保险】：防止底层误发，再次核验必须是本人
+        // 防止底层误发，再次核验必须是本人
         if (name == "未知访客" || name == "非本人" || name != m_loginName) return;
-
         // 提取实时加密的特征矩阵字节流
         QByteArray secureFeature = punchModule->getCurrentFeatureBytes();
         if (secureFeature.isEmpty()) return;
-
-        // 严格遵循《开题报告》：打卡数据包仅包含加密的 Base64 特征，绝不传递明文姓名或判定结果
+        //打卡数据包仅包含加密的 Base64 特征，绝不传递明文姓名或判定结果
         QJsonObject req;
         req["type"] = "secure_punch_request";
         req["feature"] = QString(secureFeature.toBase64());
-
         // 丢入并发线程池，向服务端发起 1:N 特征盲比对，绝对不卡死 UI 画面
         QtConcurrent::run([req, this]() {
             QJsonObject res = NetworkHelper::request(req, 2000, 3000);
@@ -311,29 +297,28 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
             });
         });
 
-    // 监听用户在线状态切换并向服务器上报
+    // 监听在线状态变化
     if (ui->comboBox_Status) {
         connect(ui->comboBox_Status, &QComboBox::currentTextChanged, this, &MainWidget::onStatusChanged);
     }
+    // 创建网络管理对象
     m_netManager = new QNetworkAccessManager(this);
-    // 启动硬件线程和首次数据拉取
+    // 启动线程并加载初始数据
     if (aiThread) aiThread->start();
     loadRegisteredUsers();
-    // 启动时触发个人信息及主页大屏数据加载
+    // 启动时加载个人资料和首页数据
     if (profileModule) profileModule->loadUserProfile(m_loginName);
     if (homeModule) homeModule->refreshDashboard();
-
-    // 问题4：启动大屏数据自动轮询刷新定时器（30秒周期）
+    // 启动首页定时刷新
     QTimer* dashboardTimer = new QTimer(this);
     connect(dashboardTimer, &QTimer::timeout, this, [this]() {
-        // 仅在首页Tab激活时自动刷新，避免后台无效请求
+        // 仅首页激活时刷新
         if (ui->stackedWidget->currentIndex() == 0 && homeModule) {
             homeModule->refreshDashboard();
         }
         });
     dashboardTimer->start(30000);
-
-    // ===== 问题一：退出登录按钮（放在左侧导航栏最底部）=====
+    // 创建退出登录按钮
     QPushButton* btnLogout = new QPushButton("  退出登录", this);
     btnLogout->setIcon(QIcon(iconBase + "Navigation_Bar/nav_logout.svg"));
     btnLogout->setIconSize(QSize(22, 22));
@@ -348,12 +333,10 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         "text-align: left; margin: 0px 8px 12px 8px; }"
         "QPushButton:hover { background-color: #2B2F3A; color: #E8EAEF; }"
     );
-    // 从主布局中取出导航栏，用一个垂直容器包裹导航栏+退出按钮，再放回原位
+    // 用容器包裹导航栏和退出按钮
     QHBoxLayout* mainHLayout = qobject_cast<QHBoxLayout*>(this->layout());
     if (mainHLayout) {
-        // 取出 listWidget_Nav
         mainHLayout->removeWidget(ui->listWidget_Nav);
-        // 创建导航栏容器
         QWidget* navContainer = new QWidget(this);
         navContainer->setFixedWidth(170);
         navContainer->setStyleSheet("background-color: #1C1F2A;");
@@ -362,7 +345,7 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         navVLay->setSpacing(0);
         navVLay->addWidget(ui->listWidget_Nav, 1);
         navVLay->addWidget(btnLogout, 0);
-        // 插入到主布局最前面（左侧）
+        // 放回主布局左侧
         mainHLayout->insertWidget(0, navContainer);
     }
     connect(btnLogout, &QPushButton::clicked, this, [this]() {
@@ -392,12 +375,12 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         }
         });
 }
-// 析构函数：保证多线程被安全释放
+// 析构函数，释放线程和界面资源
 MainWidget::~MainWidget() {
     if (aiThread) aiThread->stop();
     delete ui;
 }
-// 通过网络接口向服务器拉取完整的人脸特征库，映射解包后投递给算法子线程
+// 拉取人脸特征库并发送给线程
 void MainWidget::loadRegisteredUsers() {
     QJsonObject req;
     req["type"] = "query_face_features";
@@ -405,7 +388,6 @@ void MainWidget::loadRegisteredUsers() {
     if (res["status"].toString() == "success") {
         std::map<QString, cv::Mat> users;
         QJsonArray arr = res["data"].toArray();
-
         for (int i = 0; i < arr.size(); ++i) {
             QJsonObject o = arr[i].toObject();
             QString dbName = o["name"].toString();
@@ -421,7 +403,7 @@ void MainWidget::loadRegisteredUsers() {
         }
     }
 }
-// 触发用户实时状态更新，向系统服务通报当前在线状态
+// 上报当前在线状态
 void MainWidget::onStatusChanged(const QString& status) {
     if (status.isEmpty()) return;
     QJsonObject req;
@@ -430,7 +412,7 @@ void MainWidget::onStatusChanged(const QString& status) {
     req["status"] = status;
     NetworkHelper::sendAsync(req);
 }
-// 拦截窗口关闭事件，安全释放摄像头硬件占用并断开所有子模块
+// 关闭窗口时释放资源
 void MainWidget::closeEvent(QCloseEvent* event) {
     event->accept();
     this->hide();
@@ -441,6 +423,7 @@ void MainWidget::closeEvent(QCloseEvent* event) {
     }
     qApp->quit();
 }
+// 强制切换到指定导航页
 void MainWidget::forceNavigateTo(int navIndex) {
     if (ui->listWidget_Nav && navIndex >= 0 && navIndex < ui->listWidget_Nav->count()) {
         ui->listWidget_Nav->setCurrentRow(navIndex);

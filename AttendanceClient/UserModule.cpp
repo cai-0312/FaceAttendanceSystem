@@ -17,23 +17,22 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QIcon>
-
-// 构造函数：初始化员工模块，配置纯内存表格模型并挂载原生界面交互事件
+// 构造函数，初始化员工管理模块并绑定界面事件
 UserModule::UserModule(QTableView* tableView, QComboBox* deptCombo, QPushButton* filterBtn, QWidget* parentWidget)
     : QObject(parentWidget), m_tableView(tableView), m_deptCombo(deptCombo), m_filterBtn(filterBtn), m_parentWidget(parentWidget)
 {
-    // 配置标准的纯内存数据模型以切断与底层数据库的强耦合
+    // 创建数据模型并绑定到表格
     m_userModel = new QStandardItemModel(this);
     m_tableView->setModel(m_userModel);
-    // 设置表格视图的基础交互策略：禁止双击编辑、强制整行选中、开启表头自适应伸缩
+    // 设置表格只读和整行选择
     m_tableView->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_tableView->verticalHeader()->setVisible(true);
-    // 启用并挂钩自定义的右键上下文菜单策略，用于管理员级别的快捷指令调度
+    // 启用右键菜单
     m_tableView->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tableView, &QTableView::customContextMenuRequested, this, &UserModule::onCustomContextMenu);
-    // 初始化基础部门过滤选项列表
+    // 初始化部门筛选项
     if (m_deptCombo) {
         m_deptCombo->clear();
         m_deptCombo->addItems({ "全部", "总经办", "人力资源部", "财务部", "销售部", "研发部", "市场部", "客户服务部" });
@@ -41,37 +40,34 @@ UserModule::UserModule(QTableView* tableView, QComboBox* deptCombo, QPushButton*
     if (m_filterBtn) {
         connect(m_filterBtn, &QPushButton::clicked, this, &UserModule::onFilterClicked);
     }
-    // 利用微小时序延时调度，等待主窗口布局渲染完毕后注入动态的高级控制组件
+    // 延迟注入扩展控件
     QTimer::singleShot(100, this, [this]() {
         injectAdvancedUI();
         });
 }
-// 动态界面构建：识别原始布局挂载点，通过C++代码无损注入搜索输入框与导出按钮
+// 注入搜索框和导出按钮
 void UserModule::injectAdvancedUI() {
     if (!m_deptCombo) return;
     QWidget* parentW = m_deptCombo->parentWidget();
     if (!parentW || !parentW->layout()) return;
-    // 幂等性校验：如果当前布局树中已存在目标搜索框，则不再重复执行注入以防止UI重叠
+    // 避免重复注入
     if (m_parentWidget && m_parentWidget->findChild<QLineEdit*>("UserModule_SearchBox")) {
         return;
     }
     QBoxLayout* lay = qobject_cast<QBoxLayout*>(parentW->layout());
     if (!lay) return;
-
-    // SVG 图标基础路径，与 HomeModule 保持统一的相对路径策略
+    // 图标路径
     QString iconBase = "../../AttendanceClient/icon_library/";
-
-    // 构造高级模糊检索文本框控件，并为其装配 SVG 搜索图标作为前置装饰元素
+    // 创建搜索框
     m_searchEdit = new QLineEdit();
     m_searchEdit->setObjectName("UserModule_SearchBox");
     m_searchEdit->setPlaceholderText("输入姓名或工号进行模糊搜索...");
     m_searchEdit->setMinimumHeight(32);
     m_searchEdit->setStyleSheet(
         "QLineEdit { border: 1px solid #DCDFE6; border-radius: 15px; padding: 0 15px 0 35px; background: white; }");
-    // 为搜索框左侧添加 SVG 搜索图标（addAction 方式，Qt 5.2+ 原生支持）
+    // 添加搜索图标
     m_searchEdit->addAction(QIcon(iconBase + "User/icon_search.svg"), QLineEdit::LeadingPosition);
-
-    // 构造花名册报表导出触发按钮，挂载 SVG 导出图标
+    // 创建导出按钮
     m_exportBtn = new QPushButton(QIcon(iconBase + "User/btn_export_roster.svg"), " 导出企业花名册");
     m_exportBtn->setIconSize(QSize(18, 18));
     m_exportBtn->setMinimumHeight(32);
@@ -79,35 +75,31 @@ void UserModule::injectAdvancedUI() {
     m_exportBtn->setStyleSheet(
         "QPushButton { background-color: #00B42A; color: white; border: none; border-radius: 15px; padding: 0 15px; font-weight: bold; }"
         " QPushButton:hover { background-color: #23C343; }");
-
-    // 计算插入锚点：紧跟在原始部门下拉框及过滤按钮之后执行流式挂载
+    // 插入到筛选区域
     int insertIdx = lay->indexOf(m_deptCombo) + 1;
     lay->insertWidget(insertIdx, m_searchEdit);
-
     if (m_filterBtn) {
         lay->insertWidget(lay->indexOf(m_filterBtn) + 1, m_exportBtn);
     }
-
-    // 为 UI 设计器中已存在的底部"删除选中员工"按钮追加 SVG 图标
+    // 给删除按钮设置图标
     QPushButton* deleteBtn = m_parentWidget ? m_parentWidget->findChild<QPushButton*>("btn_deleteUser") : nullptr;
     if (deleteBtn) {
         deleteBtn->setIcon(QIcon(iconBase + "User/btn_delete_user.svg"));
         deleteBtn->setIconSize(QSize(18, 18));
     }
-
-    // 为新增的扩展控制组件绑定对应的底层逻辑处理槽
+    // 绑定事件
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &UserModule::onFilterClicked);
     connect(m_exportBtn, &QPushButton::clicked, this, &UserModule::onExportRoster);
 }
-// 执行综合查询：提取前端组合的筛选条件参数并交由下层数据刷新机制处理
+// 按条件筛选数据
 void UserModule::onFilterClicked() {
     QString dept = m_deptCombo ? m_deptCombo->currentText() : "全部";
     refreshTable(dept);
 }
-// 获取并重载视图核心流：基于TCP网络协议向服务端发包拉取人员集合，反序列化后填充内存表格
+// 刷新员工表格
 void UserModule::refreshTable(QString filterDept) {
     m_userModel->clear();
-    // 初始化标准数据模型的表头定义
+    // 设置表头
     m_userModel->setHorizontalHeaderLabels({ "工号", "隐藏的Account", "姓名", "部门", "企业职务", "手机号", "性别" });
     QString keyword = m_searchEdit ? m_searchEdit->text().trimmed() : "";
     QJsonObject req;
@@ -120,7 +112,7 @@ void UserModule::refreshTable(QString filterDept) {
         for (int i = 0; i < users.size(); ++i) {
             QJsonObject u = users[i].toObject();
             QList<QStandardItem*> rowItems;
-            // 构建单元格视图项：包含用于业务主键寻址的隐藏登录凭证
+            // 填充一行数据
             rowItems << new QStandardItem(u["id"].toString());
             rowItems << new QStandardItem(u["account"].toString());
             rowItems << new QStandardItem(u["name"].toString());
@@ -133,27 +125,25 @@ void UserModule::refreshTable(QString filterDept) {
             m_userModel->appendRow(rowItems);
         }
     }
-    // 后台列保护机制：将用作业务操作唯一凭证的Account列实施视图级隐藏脱敏
+    // 隐藏账号列
     m_tableView->hideColumn(1);
 }
-// 捕获表格区域右键鼠标操作事件并调出带 SVG 图标的快捷管理上下文面板
+// 显示右键菜单
 void UserModule::onCustomContextMenu(const QPoint& pos) {
     QModelIndex index = m_tableView->indexAt(pos);
     if (!index.isValid()) return;
     int row = index.row();
     QString empName = m_userModel->item(row, 2)->text();
-
-    // SVG 图标基础路径
+    // 图标路径
     QString iconBase = "../../AttendanceClient/icon_library/";
-
     QMenu menu(m_tableView);
-    // 为右键菜单设置圆角样式，提升视觉一致性
+    // 设置菜单样式
     menu.setStyleSheet(
         "QMenu { background-color: #FFFFFF; border: 1px solid #DEE0E3; border-radius: 8px; padding: 5px 0; }"
         "QMenu::item { padding: 8px 20px; color: #1F2329; }"
         "QMenu::item:selected { background-color: #F2F3F5; }"
         "QMenu::icon { padding-left: 10px; }");
-    // 为右键菜单项挂载对应的 SVG 图标，提升操作辨识度
+    // 添加菜单项
     QAction* resetAct = menu.addAction(QIcon(iconBase + "User/btn_reset_pwd.svg"), "重置密码为 123456");
     QAction* deleteAct = menu.addAction(QIcon(iconBase + "User/btn_delete_user.svg"), "删除员工 [" + empName + "]");
     connect(resetAct, &QAction::triggered, [=]() { onResetPassword(row); });
@@ -163,7 +153,7 @@ void UserModule::onCustomContextMenu(const QPoint& pos) {
         });
     menu.exec(m_tableView->viewport()->mapToGlobal(pos));
 }
-// 执行高危变更管理指令：由管理员发起的将选定员工系统密码强制初始化的网络请求操作
+// 重置密码
 void UserModule::onResetPassword(int row) {
     QString account = m_userModel->item(row, 1)->text();
     QString name = m_userModel->item(row, 2)->text();
@@ -182,7 +172,7 @@ void UserModule::onResetPassword(int row) {
         }
     }
 }
-// 执行记录销毁指令：删除员工档案及关联考勤流水，包含防止删库等逻辑校验
+// 删除选中员工
 void UserModule::deleteSelectedUser() {
     QItemSelectionModel* selectModel = m_tableView->selectionModel();
     if (!selectModel->hasSelection()) {
@@ -200,7 +190,7 @@ void UserModule::deleteSelectedUser() {
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") {
             QMessageBox::information(m_parentWidget, "成功", "员工已彻底离职/删除！");
-            // 抛出变更信号并级联触发底层缓存数据的同步重载
+            // 通知外部刷新
             emit dataChanged();
             refreshTable(m_deptCombo ? m_deptCombo->currentText() : "全部");
         }
@@ -209,18 +199,17 @@ void UserModule::deleteSelectedUser() {
         }
     }
 }
-// 执行本地文件流输出：将挂载至底层表格内存模型中的人员矩阵全量序列化并生成CSV格式持久化文件
+// 导出花名册为 CSV
 void UserModule::onExportRoster() {
     QString filePath = QFileDialog::getSaveFileName(m_parentWidget, "导出企业花名册",
         "Roster_" + QDateTime::currentDateTime().toString("yyyyMMdd") + ".csv", "CSV Files (*.csv)");
     if (filePath.isEmpty()) return;
-
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QMessageBox::critical(m_parentWidget, "错误", "无法创建文件！");
         return;
     }
-    // 为导出文件装配标准的 UTF-8 字节顺序标记，适配不同操作系统下表格软件的中文编解码
+    // 写入 UTF-8 BOM
     QTextStream out(&file);
     out.setEncoding(QStringConverter::Utf8);
     out << QString("\xEF\xBB\xBF");

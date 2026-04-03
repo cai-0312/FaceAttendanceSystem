@@ -10,17 +10,17 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QThread>
-// 构造函数：初始化人脸特征注册模块并绑定前端视频流回显控件
+// 构造函数，保存界面指针
 RegisterModule::RegisterModule(QLabel* cameraLabel, QWidget* parentWidget)
     : QObject(parentWidget), m_cameraLabel(cameraLabel), m_parentWidget(parentWidget) {}
-// 渲染实时画面：接收底层算法线程抛出的视频帧并按照等比例平滑缩放策略更新至UI界面
+// 显示摄像头画面
 void RegisterModule::renderFrame(const QImage& img) {
     if (m_cameraLabel) {
         m_cameraLabel->setPixmap(QPixmap::fromImage(img).scaled(
             m_cameraLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
 }
-// 触发注册流程：弹出员工身份信息核验表单，向服务器校验合法性后启动摄像采集任务
+// 发起人脸录入流程
 void RegisterModule::triggerRegistration() {
     QDialog dialog(m_parentWidget);
     dialog.setWindowTitle("身份确认 - 录入人脸");
@@ -44,12 +44,12 @@ void RegisterModule::triggerRegistration() {
             QMessageBox::warning(m_parentWidget, "提示", "姓名不能为空！");
             return;
         }
-        // 组装校验身份用的 JSON 通讯请求体
+        // 组装身份核验请求
         QJsonObject req;
         req["type"] = "verify_user_for_registration";
         req["name"] = inputName;
         req["dept"] = inputDept;
-        // 调用统一的网络模块同步发起身份验证请求
+        // 向服务器验证身份
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") {
             QMessageBox::information(m_parentWidget, "授权成功", "身份核验通过！\n请正视摄像头，系统正在提取您的面部特征...");
@@ -60,19 +60,19 @@ void RegisterModule::triggerRegistration() {
         }
     }
 }
-// 处理特征提取成功事件：将序列化的 Base64 格式高维特征数据上传至服务器数据库进行持久化落盘
+// 上传人脸特征
 void RegisterModule::onFeatureReady(QString name, QByteArray featureBytes) {
     QJsonObject req;
     req["type"] = "register_face";
     req["name"] = name;
     req["feature"] = QString(featureBytes.toBase64());
-    // 将组装好的特征网络请求下发至服务器
+    // 提交录入数据
     NetworkHelper::request(req);
     QMessageBox::information(m_parentWidget, "录入提交", "员工【" + name + "】的人脸已成功！");
-    // 抛出数据变更信号通知系统环境刷新本地内存哈希映射
+    // 通知外部刷新数据
     emit dataChanged();
 }
-// 处理特征提取异常事件：向前端用户提示录入超时、偏头或画质光线不达标等逻辑错误信息
+// 提示录入失败
 void RegisterModule::onRegisterFailed(QString errorMsg) {
     QMessageBox::warning(m_parentWidget, "录入失败", errorMsg);
 }

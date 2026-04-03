@@ -18,45 +18,40 @@
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QValueAxis>
-
 class HomeModule : public QObject
 {
     Q_OBJECT
 public:
-    // 问题1：构造函数新增 department 和 jobTitle 参数用于权限过滤
     HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName,
-        QString department, QString jobTitle, QObject* parent = nullptr);
-    ~HomeModule();
-    void refreshDashboard();                                // 发起网络请求刷新大屏各项统计数据
-
+        QString department, QString jobTitle, QObject* parent = nullptr); // 初始化首页模块并传入权限信息
+    ~HomeModule(); // 释放首页模块资源
+    void refreshDashboard(); // 刷新首页数据
 signals:
-    void requestQuickLeave();                               // 触发快捷请假流程信号
-    void requestQuickAppeal();                              // 触发快捷异常申诉信号
-    void requestApproveLeave();                             // 触发审批请假单流程信号
-    void requestApproveAppeal();                            // 触发审批异常申诉流程信号
-
+    void requestQuickLeave(); // 请求发起快捷请假
+    void requestQuickAppeal(); // 请求发起快捷申诉
+    void requestApproveLeave(); // 请求进入请假审批
+    void requestApproveAppeal(); // 请求进入申诉审批
 private:
-    QVBoxLayout* m_mainLayout;
-    QString m_role;
-    QString m_loginName;
-    QString m_department;                                    // 问题1：当前用户所属部门
-    QString m_jobTitle;                                      // 问题1：当前用户职务（用于区分部门经理/普通员工）
-    QString m_timeRange;                                     // 问题2：当前选中的时间维度（本周/本月/本自然月）
-    QString m_filterDept;                                    // 问题1：人资经理筛选部门用
-    QWidget* m_dashboardWidget;
-    QVBoxLayout* m_dashboardLayout;
-    QComboBox* m_timeCombo = nullptr;                        // 问题2：时间维度切换控件
-    QComboBox* m_deptCombo = nullptr;                        // 问题1：部门筛选控件（仅人资经理可见）
-    bool m_deptFetched = false;                              // 是否已从服务端获取过部门信息
-
-    void clearLayout(QLayout* layout);
-    void renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& data);
-    void renderToolBar(QVBoxLayout* parentLayout);                                                                        // 问题1+2：渲染筛选工具栏
-    void renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject& res);
-    void renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& res);
-    QFrame* createDataCard(const QString& title, const QString& value, const QString& subText, const QString& colorHex);
-    QChartView* createPieChart(const QJsonArray& data);
-    QChartView* createBarChart(const QJsonArray& data, const QString& title);                                             // 问题2：标题动态化
-    QChartView* createLineChart(const QJsonArray& data, const QString& title);                                            // 问题2：标题动态化
+    QVBoxLayout* m_mainLayout; // 主布局指针
+    QString m_role; // 用户角色
+    QString m_loginName; // 登录账号
+    QString m_department; // 当前用户所属部门
+    QString m_jobTitle; // 当前用户职务
+    QString m_timeRange; // 当前选择的时间范围
+    QString m_filterDept; // 人资经理筛选部门
+    QWidget* m_dashboardWidget; // 首页容器控件
+    QVBoxLayout* m_dashboardLayout; // 首页布局
+    QComboBox* m_timeCombo = nullptr; // 时间范围切换控件
+    QComboBox* m_deptCombo = nullptr; // 部门筛选控件
+    bool m_deptFetched = false; // 是否已加载部门数据
+    void clearLayout(QLayout* layout); // 清空布局内容
+    void renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& data); // 渲染顶部统计卡片
+    void renderToolBar(QVBoxLayout* parentLayout); // 渲染筛选工具栏
+    void renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject& res); // 渲染中部图表区域
+    void renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& res); // 渲染底部信息流
+    QFrame* createDataCard(const QString& title, const QString& value, const QString& subText, const QString& colorHex); // 创建统计卡片
+    QChartView* createPieChart(const QJsonArray& data); // 创建饼图
+    QChartView* createBarChart(const QJsonArray& data, const QString& title); // 创建柱状图
+    QChartView* createLineChart(const QJsonArray& data, const QString& title); // 创建折线图
 };
-#endif // HOMEMODULE_H
+#endif 

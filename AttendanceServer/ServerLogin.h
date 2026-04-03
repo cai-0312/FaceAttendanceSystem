@@ -8,17 +8,17 @@ class ServerLogin : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ServerLogin(QWidget* parent = nullptr);                        // 初始化服务器登录界面容器并配置底层窗口属性
-    ~ServerLogin();                                                         // 释放内存资源
+    explicit ServerLogin(QWidget* parent = nullptr);                        // 初始化登录窗口并配置窗口属性
+    ~ServerLogin();                                                         // 析构并释放 UI 资源
 signals:
-    void loginSuccessful();                                                   // 当数据库鉴权通过时触发，通知主控循环拉起核心业务窗口
+    void loginSuccessful();                                                  // 登录成功信号，通知主控启动主界面
 protected:
-    void mousePressEvent(QMouseEvent* event) override;                       // 重写鼠标按下事件，用于记录无边框窗口拖拽的初始相对坐标偏移量
-    void mouseMoveEvent(QMouseEvent* event) override;                        // 重写鼠标移动事件，结合初始偏移量动态计算并更新主窗口的屏幕绝对位置
+    void mousePressEvent(QMouseEvent* event) override;                       // 记录鼠标按下时的窗口内偏移以支持拖拽
+    void mouseMoveEvent(QMouseEvent* event) override;                        // 根据鼠标移动更新窗口位置以实现拖拽
 private slots:
-    void on_btn_ServerLogin_clicked();                                       // 登录按钮点击事件，执行数据库连接与系统管理员身份的合法性校验
+    void on_btn_ServerLogin_clicked();                                       // 处理登录按钮点击并验证管理员身份
 private:
-    Ui::ServerLoginClass* ui;                                                // 由UI设计器自动生成的服务端登录界面控件句柄
-    QPoint m_dragPosition;                                                   // 记录鼠标拖动无边框窗口时的相对坐标信息
+    Ui::ServerLoginClass* ui;                                                // 指向由 UI 生成的界面句柄
+    QPoint m_dragPosition;                                                   // 存储窗口拖拽时的鼠标偏移
 };
 #endif // SERVERLOGIN_H

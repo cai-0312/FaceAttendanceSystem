@@ -1,5 +1,6 @@
 #include "RequestHandler.h"
 #include "AttendanceServer.h"
+#include "DatabaseManager.h"
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QJsonDocument>
@@ -13,61 +14,311 @@
 #include <QRegularExpression>
 #include <QPointer>
 #include <QThread>
-// 将 JSON 转换为紧凑格式并加上换行符，通过跨线程安全发送
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QEventLoop>
+#include <QTimer>
+#include <QtConcurrent>
+#include <QSslError>
+// SQL 安全转义
+static QString S(const QString& val) { QString s = val; s.replace("'", "''"); return s; }
+// 线程安全 JSON 发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
     if (!socket) return;
     if (!socket->isValid()) return;
     if (socket->state() != QAbstractSocket::ConnectedState) return;
-
     try {
         QByteArray outData = QJsonDocument(obj).toJson(QJsonDocument::Compact) + "\n";
         socket->write(outData);
         socket->flush();
     }
-    catch (...) {
-    }
+    catch (...) {}
 }
-// 接收并持久化保存 AI 会话的聊天记录（同时落库并生成本地审计文件）
+//  AI 模型配置
+struct AiModelConfig {
+    QString apiUrl;
+    QString apiKey;
+    QString modelName;
+};
+static AiModelConfig getModelConfig(const QString& model)
+{
+    AiModelConfig cfg;
+    if (model == "deepseek-chat" || model == "deepseek-v3") {
+        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
+        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
+        cfg.modelName = "deepseek-chat";
+    }
+    else if (model == "deepseek-reasoner" || model == "deepseek-r1") {
+        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
+        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
+        cfg.modelName = "deepseek-reasoner";
+    }
+    else if (model == "doubao-lite") {
+        cfg.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+        cfg.apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
+        cfg.modelName = "ep-20260307031237-h5zmt";
+    }
+    else if (model == "doubao-seedream") {
+        cfg.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
+        cfg.apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
+        cfg.modelName = "ep-20260306195042-l95bj";
+    }
+    else {
+        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
+        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
+        cfg.modelName = "deepseek-chat";
+    }
+    return cfg;
+}
+//  子线程异步调用大模型 API，不阻塞 TCP 主线程
+void RequestHandler::handleAiChatRequest(QSqlDatabase& db, QTcpSocket* socket,
+    const QJsonObject& json, AttendanceServer* server)
+{
+    QString sessionId = json["session_id"].toString();
+    QString name = json["name"].toString();
+    QString content = json["content"].toString();
+    QString model = json["model"].toString();
+    QJsonArray msgHistory = json["message_history"].toArray();
+    bool isImageAPI = json["is_image_api"].toBool(false);
+    // 1. 保存用户提问到数据库
+    {
+        QString dbContent = "B64:" + QString(content.toUtf8().toBase64());
+        QSqlQuery q(db);
+        q.exec(QString("INSERT INTO ai_chat_logs (session_id, role, content, create_time) "
+            "VALUES ('%1', 'user', '%2', NOW())").arg(S(sessionId), S(dbContent)));
+        q.finish();
+
+        QString snippet = content;
+        snippet.remove(QRegularExpression("<[^>]*>"));
+        snippet.replace("\n", " ");
+        if (snippet.length() > 15) snippet = snippet.left(15) + "...";
+        QSqlQuery uq(db);
+        uq.exec(QString("UPDATE ai_sessions SET last_message = '%1' WHERE session_id = '%2'")
+            .arg(S(snippet), S(sessionId)));
+        uq.finish();
+    }
+    // 2. 本地审计文件
+    {
+        QString account = "Unk", dept2 = "Unk", title2 = "Unk";
+        QSqlQuery userQ(db);
+        userQ.exec(QString("SELECT account, department, job_title FROM users WHERE name = '%1'").arg(S(name)));
+        if (userQ.next()) {
+            account = userQ.value(0).toString();
+            dept2 = userQ.value(1).toString();
+            title2 = userQ.value(2).toString();
+        }
+        userQ.finish();
+        QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
+        QString baseDir = QDir::cleanPath(rawPath) + "/";
+        QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept2, title2);
+        QDir().mkpath(baseDir + folderName);
+        QString filePath = baseDir + folderName + "/Session_" + sessionId + ".doc";
+        QFile file(filePath);
+        if (file.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream out(&file);
+            out.setEncoding(QStringConverter::Utf8);
+            QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+            out << QString("【%1】 员工本人 (%2):\n%3\n\n----------------------------------------------------\n\n")
+                .arg(timeStr, name, content);
+            file.close();
+        }
+    }
+    // 3. 获取模型配置
+    AiModelConfig cfg = getModelConfig(model);
+    // 4. 服务端日志
+    if (server) {
+        QMetaObject::invokeMethod(server, [server, name, model]() {
+            server->logMessage(QString("<font color='#165DFF'>[AI代理] 收到 [%1] 的请求，模型: %2，正在调用云端API...</font>")
+                .arg(name, model));
+            }, Qt::QueuedConnection);
+    }
+    // 5. 子线程异步调用大模型 API
+    QPointer<QTcpSocket> safeSocket = socket;
+    QPointer<AttendanceServer> safeServer = server;
+    QString safeName = name;
+    QString safeSessionId = sessionId;
+    QtConcurrent::run([=]() {
+        QJsonObject requestBody;
+        requestBody["model"] = cfg.modelName;
+
+        if (isImageAPI) {
+            requestBody["prompt"] = content;
+        }
+        else {
+            requestBody["messages"] = msgHistory;
+            requestBody["temperature"] = 0.7;
+        }
+        // 子线程同步 HTTP 请求
+        QNetworkAccessManager manager;
+        QNetworkRequest request(QUrl(cfg.apiUrl));
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        request.setRawHeader("Authorization", ("Bearer " + cfg.apiKey).toUtf8());
+        request.setTransferTimeout(60000);
+        QNetworkReply* reply = manager.post(request, QJsonDocument(requestBody).toJson());
+        // 忽略 SSL 错误
+        QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+            [reply](const QList<QSslError>& errors) { reply->ignoreSslErrors(errors); });
+        // 带超时的同步等待
+        QEventLoop loop;
+        QTimer timer;
+        timer.setSingleShot(true);
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timer.start(60000);
+        loop.exec();
+        // 解析响应
+        QString aiReply;
+        QString status = "fail";
+        QString errMsg;
+
+        if (timer.isActive()) {
+            timer.stop();
+            if (reply->error() == QNetworkReply::NoError) {
+                QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+                QJsonObject respJson = doc.object();
+
+                if (isImageAPI) {
+                    if (respJson.contains("data") && respJson["data"].isArray()) {
+                        QString imgUrl = respJson["data"].toArray()[0].toObject()["url"].toString();
+                        aiReply = "[AI_IMAGE]" + imgUrl;
+                        status = "success";
+                    }
+                    else {
+                        errMsg = "画图API返回异常";
+                    }
+                }
+                else {
+                    if (respJson.contains("choices") && respJson["choices"].isArray()) {
+                        QJsonObject msgObj = respJson["choices"].toArray()[0].toObject()["message"].toObject();
+                        aiReply = msgObj["content"].toString();
+                        status = "success";
+                    }
+                    else {
+                        errMsg = "API返回格式异常";
+                    }
+                }
+            }
+            else {
+                errMsg = "网络错误: " + reply->errorString();
+            }
+        }
+        else {
+            reply->abort();
+            errMsg = "AI接口响应超时(60秒)";
+        }
+        reply->deleteLater();
+        // 6. 保存 AI 回复到数据库（子线程使用独立数据库连接）
+        if (status == "success" && !aiReply.isEmpty()) {
+            QString connName = DatabaseManager::makeThreadConnName();
+            if (DatabaseManager::openThreadConnection(connName)) {
+                QSqlDatabase threadDb = QSqlDatabase::database(connName);
+                QString dbAiContent = "B64:" + QString(aiReply.toUtf8().toBase64());
+                QSqlQuery q(threadDb);
+                q.exec(QString("INSERT INTO ai_chat_logs (session_id, role, content, create_time) "
+                    "VALUES ('%1', 'ai', '%2', NOW())").arg(S(safeSessionId), S(dbAiContent)));
+                q.finish();
+                // 更新会话摘要
+                QString aiSnippet = aiReply;
+                aiSnippet.remove(QRegularExpression("<[^>]*>"));
+                aiSnippet.replace("\n", " ");
+                if (aiSnippet.length() > 15) aiSnippet = aiSnippet.left(15) + "...";
+                QSqlQuery uq(threadDb);
+                uq.exec(QString("UPDATE ai_sessions SET last_message = '%1' WHERE session_id = '%2'")
+                    .arg(S(aiSnippet), S(safeSessionId)));
+                uq.finish();
+                threadDb.close();
+            }
+            QSqlDatabase::removeDatabase(connName);
+            // 审计文件追加 AI 回复
+            QString rawPath2 = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
+            QString baseDir2 = QDir::cleanPath(rawPath2) + "/";
+            // 简化审计路径（使用 session_id 定位即可）
+            QDir auditDir(baseDir2);
+            QStringList dirs = auditDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString& d : dirs) {
+                QString docPath = baseDir2 + d + "/Session_" + safeSessionId + ".doc";
+                QFile docFile(docPath);
+                if (docFile.exists() && docFile.open(QIODevice::Append | QIODevice::Text)) {
+                    QTextStream out(&docFile);
+                    out.setEncoding(QStringConverter::Utf8);
+                    QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                    out << QString("【%1】 AI 管家回复:\n%2\n\n----------------------------------------------------\n\n")
+                        .arg(timeStr, aiReply);
+                    docFile.close();
+                    break;
+                }
+            }
+        }
+        // 7. TCP 回传客户端（必须回主线程操作 socket）
+        QJsonObject response;
+        response["type"] = "ai_chat_response";
+        response["session_id"] = safeSessionId;
+        response["status"] = status;
+        response["content"] = aiReply;
+        response["msg"] = errMsg;
+        response["is_image"] = isImageAPI && status == "success";
+        QByteArray responseData = QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n";
+        if (safeSocket && safeSocket->isValid()) {
+            QMetaObject::invokeMethod(safeSocket, [safeSocket, responseData]() {
+                if (safeSocket && safeSocket->isValid()) {
+                    safeSocket->write(responseData);
+                    safeSocket->flush();
+                }
+                }, Qt::QueuedConnection);
+        }
+        // 8. 服务端日志
+        if (safeServer) {
+            QMetaObject::invokeMethod(safeServer.data(), [safeServer, safeName, status, errMsg]() {
+                if (safeServer) {
+                    if (status == "success") {
+                        safeServer->logMessage(QString("<font color='#00B42A'>[AI代理] [%1] 的AI请求已成功响应。</font>").arg(safeName));
+                    }
+                    else {
+                        safeServer->logMessage(QString("<font color='red'>[AI代理] [%1] 的AI请求失败: %2</font>").arg(safeName, errMsg));
+                    }
+                }
+                }, Qt::QueuedConnection);
+        }
+        });
+}
+// 保存 AI 聊天记录（保留兼容，客户端仍可能用于本地意图拦截后的保存）
 void RequestHandler::handleAiSaveMessage(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
     QString sessionId = json["session_id"].toString();
     QString role = json["role"].toString();
     QString content = json["content"].toString();
     QString name = json["name"].toString();
-    // 1. Base64 保护：防止 AI 生成的复杂代码、Markdown 或特殊字符被 ODBC 截断
     QString dbContent = "B64:" + QString(content.toUtf8().toBase64());
-    // 2. 将原始对话存入数据库聊天日志表
     QSqlQuery q(db);
-    QString sql = QString("INSERT INTO ai_chat_logs (session_id, role, content, create_time) VALUES ('%1', '%2', '%3', NOW())")
-        .arg(sessionId, role, dbContent);
-    q.exec(sql);
-    // 3. 提取对话摘要，更新到对应会话的 last_message 字段用于列表展示
-    QSqlQuery uq(db);
+    q.exec(QString("INSERT INTO ai_chat_logs (session_id, role, content, create_time) "
+        "VALUES ('%1', '%2', '%3', NOW())").arg(S(sessionId), S(role), S(dbContent)));
+    q.finish();
     QString snippet = content;
-    snippet.remove(QRegularExpression("<[^>]*>")); // 移除富文本 HTML 标签
-    snippet.replace("\n", " "); // 将换行替换为空格
-    if (snippet.length() > 15) snippet = snippet.left(15) + "..."; // 截断长文本
-    snippet.replace("'", "''"); // SQL 防注入转义
-    uq.exec(QString("UPDATE ai_sessions SET last_message = '%1' WHERE session_id = '%2'").arg(snippet, sessionId));
-    // 4. 企业合规审计：在服务端本地生成明文文本备查
+    snippet.remove(QRegularExpression("<[^>]*>"));
+    snippet.replace("\n", " ");
+    if (snippet.length() > 15) snippet = snippet.left(15) + "...";
+    QSqlQuery uq(db);
+    uq.exec(QString("UPDATE ai_sessions SET last_message = '%1' WHERE session_id = '%2'")
+        .arg(S(snippet), S(sessionId)));
+    uq.finish();
+    // 审计文件
     QString account = "Unk", dept = "Unk", title = "Unk";
     QSqlQuery userQ(db);
-    userQ.exec(QString("SELECT account, department, job_title FROM users WHERE name = '%1'").arg(name));
+    userQ.exec(QString("SELECT account, department, job_title FROM users WHERE name = '%1'").arg(S(name)));
     if (userQ.next()) {
         account = userQ.value(0).toString();
         dept = userQ.value(1).toString();
         title = userQ.value(2).toString();
     }
-    // ⭐️ 核心修复 1：先拼接带 ../ 的相对路径，再用 cleanPath 净化为绝对路径，最后补上斜杠
+    userQ.finish();
     QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
     QString baseDir = QDir::cleanPath(rawPath) + "/";
     QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
-    QDir    dir;
-    dir.mkpath(baseDir + folderName);
-    // 将对话追加写入本地 .doc 文件（纯文本格式）
+    QDir().mkpath(baseDir + folderName);
     QString filePath = baseDir + folderName + "/Session_" + sessionId + ".doc";
-    QFile   file(filePath);
+    QFile file(filePath);
     if (file.open(QIODevice::Append | QIODevice::Text)) {
         QTextStream out(&file);
         out.setEncoding(QStringConverter::Utf8);
@@ -78,25 +329,24 @@ void RequestHandler::handleAiSaveMessage(QSqlDatabase& db, QTcpSocket* /*socket*
         file.close();
     }
 }
-// 创建一个新的 AI 聊天会话
+// 创建新 AI 会话
 void RequestHandler::handleCreateAiSession(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
+    QString sid = json["session_id"].toString();
+    QString name = json["name"].toString();
+    QString title = json["title"].toString();
     QSqlQuery q(db);
-    q.prepare("INSERT INTO ai_sessions (session_id, user_name, title, create_time, is_visible, last_message) "
-        "VALUES (?, ?, ?, NOW(), 1, '暂无聊天记录...')");
-    q.addBindValue(json["session_id"].toString());
-    q.addBindValue(json["name"].toString());
-    q.addBindValue(json["title"].toString());
-    q.exec();
+    q.exec(QString("INSERT INTO ai_sessions (session_id, user_name, title, create_time, is_visible, last_message) "
+        "VALUES ('%1', '%2', '%3', NOW(), 1, '暂无聊天记录...')").arg(S(sid), S(name), S(title)));
+    q.finish();
 }
 // 查询用户可见的 AI 历史会话列表
 void RequestHandler::handleQueryAiSessions(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QJsonArray arr;
-    QSqlQuery  q(db);
-    // 仅查询 is_visible=1 的会话（未被用户逻辑删除的）
+    QSqlQuery q(db);
     q.exec(QString("SELECT session_id, title, last_message FROM ai_sessions "
-        "WHERE user_name='%1' AND is_visible=1 ORDER BY create_time DESC").arg(json["name"].toString()));
+        "WHERE user_name='%1' AND is_visible=1 ORDER BY create_time DESC").arg(S(json["name"].toString())));
     while (q.next()) {
         QJsonObject o;
         o["session_id"] = q.value(0).toString();
@@ -104,113 +354,102 @@ void RequestHandler::handleQueryAiSessions(QSqlDatabase& db, QTcpSocket* socket,
         o["last_message"] = q.value(2).toString();
         arr.append(o);
     }
+    q.finish();
     QJsonObject res;
     res["status"] = "success";
     res["data"] = arr;
     sendJson(socket, res);
 }
-// 重命名指定的 AI 会话标题
+// 重命名 AI 会话
 void RequestHandler::handleRenameAiSession(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
     QSqlQuery q(db);
-    q.prepare("UPDATE ai_sessions SET title=? WHERE session_id=?");
-    q.addBindValue(json["title"].toString());
-    q.addBindValue(json["session_id"].toString());
-    q.exec();
+    q.exec(QString("UPDATE ai_sessions SET title = '%1' WHERE session_id = '%2'")
+        .arg(S(json["title"].toString()), S(json["session_id"].toString())));
+    q.finish();
 }
-// 逻辑删除 AI 会话（对用户隐藏，但后台审计库仍保留）
+// 逻辑删除 AI 会话
 void RequestHandler::handleDeleteAiSession(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
 {
     QSqlQuery q(db);
-    q.prepare("UPDATE ai_sessions SET is_visible=0 WHERE session_id=?");
-    q.addBindValue(json["session_id"].toString());
-    q.exec();
+    q.exec(QString("UPDATE ai_sessions SET is_visible = 0 WHERE session_id = '%1'")
+        .arg(S(json["session_id"].toString())));
+    q.finish();
 }
-// 模糊搜索用户的 AI 会话记录（匹配标题或最后一条消息）
+// 模糊搜索 AI 会话
 void RequestHandler::handleSearchAiHistory(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString userName = json["name"].toString();
     QString keyword = json["keyword"].toString();
-    // 转义单引号防注入
-    userName.replace("'", "''");
-    keyword.replace("'", "''");
     QJsonArray arr;
-    QSqlQuery  q(db);
-    QString sql = QString(
-        "SELECT session_id, title, last_message FROM ai_sessions "
+    QSqlQuery q(db);
+    q.exec(QString("SELECT session_id, title, last_message FROM ai_sessions "
         "WHERE user_name = '%1' AND is_visible = 1 "
         "AND (title LIKE '%%%2%%' OR last_message LIKE '%%%2%%') "
-        "ORDER BY create_time DESC"
-    ).arg(userName, keyword);
-    if (q.exec(sql)) {
-        while (q.next()) {
-            QJsonObject o;
-            o["session_id"] = q.value(0).toString();
-            o["title"] = q.value(1).toString();
-            o["last_message"] = q.value(2).toString();
-            arr.append(o);
-        }
+        "ORDER BY create_time DESC").arg(S(userName), S(keyword)));
+    while (q.next()) {
+        QJsonObject o;
+        o["session_id"] = q.value(0).toString();
+        o["title"] = q.value(1).toString();
+        o["last_message"] = q.value(2).toString();
+        arr.append(o);
     }
+    q.finish();
     QJsonObject res;
     res["status"] = "success";
     res["data"] = arr;
     sendJson(socket, res);
 }
-// 获取某个具体 AI 会话的完整上下文对话内容
+// 查询 AI 会话完整聊天历史
 void RequestHandler::handleQueryAiChatHistory(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
-    QString   sid = json["session_id"].toString();
+    QString sid = json["session_id"].toString();
     QJsonArray arr;
-    QSqlQuery  q(db);
-    QString sql = QString("SELECT role, content FROM ai_chat_logs WHERE session_id = '%1' ORDER BY create_time ASC").arg(sid);
-    if (q.exec(sql)) {
-        while (q.next()) {
-            QJsonObject o;
-            o["role"] = q.value(0).toString();
-            QString rawContent = q.value(1).toString();
-            // 兼容性处理：若是加密存储的 Base64 数据则解码，否则直接输出明文
-            if (rawContent.startsWith("B64:"))
-                o["content"] = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
-            else
-                o["content"] = rawContent;
-            arr.append(o);
-        }
+    QSqlQuery q(db);
+    q.exec(QString("SELECT role, content FROM ai_chat_logs WHERE session_id = '%1' ORDER BY create_time ASC").arg(S(sid)));
+    while (q.next()) {
+        QJsonObject o;
+        o["role"] = q.value(0).toString();
+        QString rawContent = q.value(1).toString();
+        if (rawContent.startsWith("B64:"))
+            o["content"] = QString::fromUtf8(QByteArray::fromBase64(rawContent.mid(4).toUtf8()));
+        else
+            o["content"] = rawContent;
+        arr.append(o);
     }
+    q.finish();
     QJsonObject res;
     res["status"] = "success";
     res["data"] = arr;
     sendJson(socket, res);
 }
-// 拦截并备份用户发给 AI 的文件，用于企业数据防泄露审计
+// AI 审计文件备份
 void RequestHandler::handleAiAuditFile(QSqlDatabase& db, QTcpSocket* /*socket*/,
     const QJsonObject& json, AttendanceServer* server)
 {
     QString name = json["name"].toString();
     QString fileName = json["filename"].toString();
     QString fileDataBase64 = json["filedata"].toString();
-    // 1. 获取员工信息构建审计目录
     QString account = "Unk", dept = "Unk", title = "Unk";
     QSqlQuery q(db);
-    q.prepare("SELECT account, department, job_title FROM users WHERE name = :n");
-    q.bindValue(":n", name);
-    if (q.exec() && q.next()) {
+    q.exec(QString("SELECT account, department, job_title FROM users WHERE name = '%1'").arg(S(name)));
+    if (q.next()) {
         account = q.value(0).toString();
         dept = q.value(1).toString();
         title = q.value(2).toString();
     }
+    q.finish();
     QString rawPath = QCoreApplication::applicationDirPath() + "/../../AttendanceServer/server/AiChat";
     QString baseDir = QDir::cleanPath(rawPath) + "/";
     QString folderName = QString("%1_%2_%3_%4").arg(account, name, dept, title);
-    QDir    dir;
-    dir.mkpath(baseDir + folderName);
+    QDir().mkpath(baseDir + folderName);
     QByteArray fileData = QByteArray::fromBase64(fileDataBase64.toUtf8());
-    QString    filePath = baseDir + folderName + "/" + fileName;
-    QFile      file(filePath);
+    QString filePath = baseDir + folderName + "/" + fileName;
+    QFile file(filePath);
     if (file.open(QIODevice::WriteOnly)) {
         file.write(fileData);
         file.close();
     }
-    // 3. 在服务器端 UI 打印文件审计拦截日志
     QMetaObject::invokeMethod(server, [server, name, fileName]() {
         server->logMessage(QString("<font color='#00B42A'>AI 附件审计: 拦截并备份了 [%1] 上传的 AI 附件 '%2'。</font>")
             .arg(name, fileName));

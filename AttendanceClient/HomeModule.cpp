@@ -23,7 +23,7 @@
 #include <QLineSeries>
 #include <QBarCategoryAxis>
 #include <QValueAxis>
-// 构造函数：问题1新增department和jobTitle参数
+// 构造函数，初始化布局、角色、用户名、部门、职务等信息，创建仪表盘容器
 HomeModule::HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName,
     QString department, QString jobTitle, QObject* parent)
     : QObject(parent), m_mainLayout(mainLayout), m_role(role), m_loginName(loginName),
@@ -36,7 +36,7 @@ HomeModule::HomeModule(QVBoxLayout* mainLayout, QString role, QString loginName,
     m_mainLayout->addWidget(m_dashboardWidget);
 }
 HomeModule::~HomeModule() {}
-
+// 递归清空布局中的所有子控件和子布局
 void HomeModule::clearLayout(QLayout* layout) {
     if (!layout) return;
     QLayoutItem* child;
@@ -46,11 +46,10 @@ void HomeModule::clearLayout(QLayout* layout) {
         delete child;
     }
 }
-// 刷新大屏：向服务器传递角色+部门+时间维度+筛选部门
+// 刷新仪表盘，清空旧内容后重新请求服务端数据并渲染各区域
 void HomeModule::refreshDashboard() {
     clearLayout(m_dashboardLayout);
-
-    // 首次刷新时从服务端获取准确的部门和职务
+    // 首次刷新时向服务端查询当前用户的部门和职务
     if (!m_deptFetched) {
         QJsonObject uReq;
         uReq["type"] = "query_user_dept";
@@ -63,19 +62,17 @@ void HomeModule::refreshDashboard() {
         m_deptFetched = true;
         qDebug() << "[HomeModule] Fetched dept=" << m_department << "jobTitle=" << m_jobTitle;
     }
-
-    // 渲染顶部筛选工具栏
     renderToolBar(m_dashboardLayout);
-
+    // 构造请求参数，包含角色、部门、时间维度、筛选部门等
     QJsonObject req;
     req["type"] = "query_home_dashboard";
     req["role"] = m_role;
     req["name"] = m_loginName;
-    req["department"] = m_department;                        // 问题1：传递部门信息
-    req["job_title"] = m_jobTitle;                           // 问题1：传递职务信息
-    req["time_range"] = m_timeRange;                         // 问题2：传递时间维度
-    req["filter_dept"] = m_filterDept;                       // 问题1：传递筛选部门
-
+    req["department"] = m_department;
+    req["job_title"] = m_jobTitle;
+    req["time_range"] = m_timeRange;
+    req["filter_dept"] = m_filterDept;
+    // 请求成功则渲染卡片、图表、底部动态，否则显示空卡片
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
         renderTopCards(m_dashboardLayout, res["top_cards"].toObject());
@@ -86,13 +83,11 @@ void HomeModule::refreshDashboard() {
         renderTopCards(m_dashboardLayout, QJsonObject());
     }
 }
-// 问题1+2：渲染筛选工具栏（时间维度+部门筛选）
+// 渲染顶部工具栏，包含时间周期选择、部门筛选和刷新按钮
 void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
     QHBoxLayout* toolLay = new QHBoxLayout();
     toolLay->setSpacing(10);
-
     QString iconBase = "../../AttendanceClient/icon_library/";
-
     QLabel* timeIcon = new QLabel();
     timeIcon->setPixmap(QIcon(iconBase + "Home/icon_calendar.svg").pixmap(18, 18));
     timeIcon->setStyleSheet("border:none;");
@@ -100,8 +95,7 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
     timeLabel->setStyleSheet("font-size:13px; font-weight:bold; color:#4E5969; border:none;");
     toolLay->addWidget(timeIcon);
     toolLay->addWidget(timeLabel);
-
-    // 问题2：时间维度切换控件
+    // 时间周期下拉框，切换后自动刷新仪表盘
     m_timeCombo = new QComboBox();
     m_timeCombo->addItems({ "本周", "本自然月", "近7天", "近30天" });
     m_timeCombo->setCurrentText(m_timeRange);
@@ -118,8 +112,7 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
         refreshDashboard();
         });
     toolLay->addWidget(m_timeCombo);
-
-    // 问题1：部门筛选控件（仅人资经理可见）
+    // 部门筛选下拉框，仅人力资源部经理可见
     bool isHRManager = (m_department == "人力资源部" && m_jobTitle == "部门经理");
     qDebug() << "[HomeModule] dept=" << m_department << "jobTitle=" << m_jobTitle << "isHRManager=" << isHRManager;
     if (isHRManager) {
@@ -130,10 +123,9 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
         deptLabel->setStyleSheet("font-size:13px; font-weight:bold; color:#4E5969; border:none;");
         toolLay->addWidget(deptIcon);
         toolLay->addWidget(deptLabel);
-
         m_deptCombo = new QComboBox();
         m_deptCombo->addItem("全部");
-        // 从服务端获取部门列表
+        // 请求服务端获取所有部门名称
         QJsonObject dReq; dReq["type"] = "query_dept_list";
         QJsonObject dRes = NetworkHelper::request(dReq);
         QJsonArray depts = dRes["departments"].toArray();
@@ -153,10 +145,8 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
             });
         toolLay->addWidget(m_deptCombo);
     }
-
     toolLay->addStretch();
-
-    // 手动刷新按钮
+    // 刷新按钮，点击后重新加载仪表盘
     QPushButton* refreshBtn = new QPushButton(" 刷新");
     refreshBtn->setIcon(QIcon(iconBase + "Home/btn_refresh.svg"));
     refreshBtn->setIconSize(QSize(16, 16));
@@ -164,25 +154,24 @@ void HomeModule::renderToolBar(QVBoxLayout* parentLayout) {
     refreshBtn->setStyleSheet("QPushButton { background:#165DFF; color:white; border-radius:4px; padding:6px 16px; font-weight:bold; } QPushButton:hover { background:#4080FF; }");
     connect(refreshBtn, &QPushButton::clicked, this, &HomeModule::refreshDashboard);
     toolLay->addWidget(refreshBtn);
-
     parentLayout->addLayout(toolLay);
 }
-// 渲染顶部核心数据卡片（问题3：异常指标剥离请假/调休）
+// 渲染顶部核心数据卡片：出勤率、到勤人数、异常人数、审批待办或个人异常
 void HomeModule::renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& data) {
     QHBoxLayout* cardsLayout = new QHBoxLayout();
     cardsLayout->setSpacing(15);
     int totalExpected = data["total_expected"].toInt();
     int actualPunched = data["actual_punched"].toInt();
-    int abnormalCount = data["abnormal_count"].toInt();          // 问题3：服务端已剥离请假
-    int leaveCount = data["leave_count"].toInt();                // 问题3：独立的请假人数
+    int abnormalCount = data["abnormal_count"].toInt();   // 异常人数（不含请假）
+    int leaveCount = data["leave_count"].toInt();          // 请假人数（独立统计）
+    // 计算出勤率百分比
     QString rateStr = totalExpected > 0 ? QString::number((actualPunched * 100) / totalExpected) + "%" : "0%";
-
     cardsLayout->addWidget(createDataCard("今日出勤率", rateStr, "较昨日持平", "#00B42A"));
     cardsLayout->addWidget(createDataCard("实到 / 应到人数", QString("%1 / %2").arg(actualPunched).arg(totalExpected), "人脸核验打卡", "#3370FF"));
-    // 问题3：异常人数仅含迟到/早退/旷工，请假独立显示
+    // 异常卡片仅统计迟到/早退/旷工，请假人数单独标注
     cardsLayout->addWidget(createDataCard("今日异常人数", QString::number(abnormalCount) + " 人",
         QString("迟到/早退/旷工 (请假%1人)").arg(leaveCount), "#F53F3F"));
-
+    // 管理员或经理显示审批待办卡片，普通员工显示本月个人异常卡片
     if (m_role.contains("管理员") || m_role == "经理" || m_jobTitle == "部门经理") {
         int pendingLeaves = data["pending_leaves"].toInt();
         int pendingAppeals = data["pending_appeals"].toInt();
@@ -195,7 +184,7 @@ void HomeModule::renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& da
     }
     parentLayout->addLayout(cardsLayout, 1);
 }
-
+// 创建单个数据卡片，包含标题、数值和副标题
 QFrame* HomeModule::createDataCard(const QString& title, const QString& value, const QString& subText, const QString& colorHex) {
     QFrame* card = new QFrame();
     card->setStyleSheet("QFrame { background-color: white; border-radius: 8px; border: 1px solid #E5E6EB; }");
@@ -212,7 +201,7 @@ QFrame* HomeModule::createDataCard(const QString& title, const QString& value, c
     lay->addWidget(lblSub);
     return card;
 }
-// 渲染中间图表（问题2：标题动态显示时间维度）
+// 渲染中间图表区域：饼图、柱状图、折线图，标题随时间维度动态变化
 void HomeModule::renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject& res) {
     QHBoxLayout* chartsLayout = new QHBoxLayout();
     chartsLayout->setSpacing(15);
@@ -223,7 +212,7 @@ void HomeModule::renderMiddleCharts(QVBoxLayout* parentLayout, const QJsonObject
         QString("出勤趋势 (%1)").arg(m_timeRange)), 1);
     parentLayout->addLayout(chartsLayout, 3);
 }
-
+// 创建饼图，按出勤状态分类着色显示占比
 QChartView* HomeModule::createPieChart(const QJsonArray& data) {
     QChart* chart = new QChart();
     QPieSeries* series = new QPieSeries();
@@ -232,6 +221,7 @@ QChartView* HomeModule::createPieChart(const QJsonArray& data) {
         series->append(o["status"].toString() + " (" + QString::number(o["count"].toInt()) + ")", o["count"].toInt());
     }
     if (series->count() == 0) series->append("暂无数据", 1);
+    // 按状态关键字设置扇区颜色：正常绿、迟到早退红、请假橙、其他紫
     for (auto slice : series->slices()) {
         slice->setLabelVisible(true);
         if (slice->label().contains("正常")) slice->setBrush(QColor("#00B42A"));
@@ -248,11 +238,11 @@ QChartView* HomeModule::createPieChart(const QJsonArray& data) {
     view->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E6EB;");
     return view;
 }
-// 问题2：柱状图标题动态化
+// 创建柱状图，展示各部门异常人次排名
 QChartView* HomeModule::createBarChart(const QJsonArray& data, const QString& title) {
     QChart* chart = new QChart();
     QBarSeries* series = new QBarSeries();
-    series->setLabelsVisible(true);                          // 柱子顶部显示数值
+    series->setLabelsVisible(true);                          // 柱顶显示数值
     series->setLabelsPosition(QAbstractBarSeries::LabelsOutsideEnd);
     QBarSet* setAbnormal = new QBarSet("异常人次");
     setAbnormal->setColor(QColor("#3370FF"));
@@ -268,13 +258,13 @@ QChartView* HomeModule::createBarChart(const QJsonArray& data, const QString& ti
     chart->setTitle(title);
     QBarCategoryAxis* axisX = new QBarCategoryAxis();
     axisX->append(categories);
-    axisX->setLabelsAngle(-45);                              // X轴标签旋转45度防止截断
+    axisX->setLabelsAngle(-45);                              // X轴标签倾斜防重叠
     chart->addAxis(axisX, Qt::AlignBottom); series->attachAxis(axisX);
     QValueAxis* axisY = new QValueAxis(); axisY->setLabelFormat("%d");
     chart->addAxis(axisY, Qt::AlignLeft); series->attachAxis(axisY);
     chart->setMargins(QMargins(0, 0, 0, 0));
     chart->legend()->hide();
-    // 鼠标悬浮在柱子上时，在鼠标右侧显示部门名+数值
+    // 鼠标悬停柱子时弹出提示，显示部门名称和数值
     QObject::connect(series, &QBarSeries::hovered, [chart](bool status, int index, QBarSet* set) {
         if (status) {
             QBarCategoryAxis* ax = qobject_cast<QBarCategoryAxis*>(chart->axes(Qt::Horizontal).first());
@@ -290,7 +280,7 @@ QChartView* HomeModule::createBarChart(const QJsonArray& data, const QString& ti
     view->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E6EB;");
     return view;
 }
-// 问题2：折线图标题动态化
+// 创建折线图，展示每日出勤趋势变化
 QChartView* HomeModule::createLineChart(const QJsonArray& data, const QString& title) {
     QChart* chart = new QChart();
     QLineSeries* series = new QLineSeries();
@@ -314,11 +304,10 @@ QChartView* HomeModule::createLineChart(const QJsonArray& data, const QString& t
     view->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E6EB;");
     return view;
 }
-// 渲染底部实时动态与系统公告区域
+// 渲染底部区域：左侧实时打卡动态列表，右侧系统公告和快捷操作按钮
 void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& res) {
     QHBoxLayout* bottomLayout = new QHBoxLayout();
     bottomLayout->setSpacing(15);
-
     QFrame* feedFrame = new QFrame();
     feedFrame->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E6EB;");
     QVBoxLayout* feedLay = new QVBoxLayout(feedFrame);
@@ -326,6 +315,7 @@ void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& 
     feedTitle->setStyleSheet("font-weight: bold; font-size: 14px; border: none;");
     QListWidget* feedList = new QListWidget();
     feedList->setStyleSheet("border: none; background: transparent; font-size: 13px;");
+    // 遍历打卡动态列表，按状态设置不同颜色：正常绿、请假橙、异常红
     QJsonArray feedArr = res["feed_list"].toArray();
     for (int i = 0; i < feedArr.size(); ++i) {
         QJsonObject o = feedArr[i].toObject();
@@ -343,7 +333,6 @@ void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& 
     feedLay->addWidget(feedTitle);
     feedLay->addWidget(feedList);
     bottomLayout->addWidget(feedFrame, 2);
-
     QFrame* rightFrame = new QFrame();
     rightFrame->setStyleSheet("background-color: white; border-radius: 8px; border: 1px solid #E5E6EB;");
     QVBoxLayout* rightLay = new QVBoxLayout(rightFrame);
@@ -359,6 +348,7 @@ void HomeModule::renderBottomFeed(QVBoxLayout* parentLayout, const QJsonObject& 
     if (noticeList->count() == 0) noticeList->addItem("暂无最新公告...");
     rightLay->addWidget(noticeTitle);
     rightLay->addWidget(noticeList);
+    // 底部操作按钮：普通员工显示请假和申诉，管理者显示审批按钮
     QHBoxLayout* btnLay = new QHBoxLayout();
     bool isManager = m_role.contains("管理员") || m_role == "经理" || m_jobTitle == "部门经理";
     if (!isManager) {

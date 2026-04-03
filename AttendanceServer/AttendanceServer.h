@@ -8,47 +8,64 @@
 #include <QSqlTableModel>
 #include "ui_AttendanceServer.h"
 #include <QHash>
-#include <functional>
-struct ClientInfo {                                                                                              // 客户端信息结构体：记录连接终端的基础标识与网络状态
-    QString name;                                                                                                // 员工姓名：当前连接终端绑定的操作员真实姓名
-    QString dept;                                                                                                // 所属部门：当前连接终端绑定操作员的归属部门
-    QString jobTitle;                                                                                            // 企业职务：当前连接终端绑定操作员的职务层级
-    QString ip;                                                                                                  // 网络地址：当前连接终端的物理IP地址
-    QString loginTime;                                                                                           // 接入时间：当前连接终端成功通过鉴权接入服务端的系统时间
+#include <QSet>
+#include <QFile>
+struct FileTransferState {
+    QString fileName;       // 文件原名
+    QString savedPath;      // 服务端保存的完整路径
+    QString sender;         // 发送者账号
+    QString receiver;       // 接收者账号
+    qint64 totalSize;       // 总字节数
+    qint64 receivedSize;    // 已接收字节数
+    QFile*  file;           // 本地文件句柄
+    bool    isGroup;        // 是否为群组传输
+    QString department;     // 群组所属部门
 };
-using Handler = std::function<void(QSqlDatabase&, QTcpSocket*, const QJsonObject&, const QByteArray&)>;          // 路由分发句柄：统一定义基于数据库、套接字及JSON报文的处理回调签名
+struct ClientInfo {
+    QString name;        // 客户端绑定的员工姓名
+    QString dept;        // 客户端所属部门
+    QString jobTitle;    // 客户端的岗位或职称
+    QString ip;          // 客户端远端 IP 地址
+    QString loginTime;   // 客户端登录时间戳
+};
+using Handler = std::function<void(QSqlDatabase&, QTcpSocket*, const QJsonObject&, const QByteArray&)>; // 路由处理函数签名
 class AttendanceServer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit AttendanceServer(QWidget* parent = nullptr);                                                        // 构造函数：初始化服务端总控UI、TCP监听引擎及数据库连接池
-    ~AttendanceServer();                                                                                         // 析构函数：安全释放UI句柄与底层网络、数据库资源
-    void logMessage(const QString& msg);                                                                         // 日志记录：向服务端监控面板输出携带标准时间戳的格式化运行日志
-    void loadGlobalRecords();                                                                                    // 视图重载：查询底层数据库并刷新全局视角的考勤流水记录表
-    void refreshPermModel();                                                                                     // 模型重载：刷新基于RBAC的权限管理模型，用于数据变动后的视图同步
-    void registerClient(QTcpSocket* socket, const QString& name, const QString& dept, const QString& jobTitle, const QString& ip); // 终端注册：将通过安全鉴权的新接入客户端实例写入内存级路由表
-    bool isClientOnline(const QString& name) const;                                                              // 状态探针：根据指定的员工姓名查询其客户端是否处于活跃在线状态
-    QTcpSocket* getSocketByName(const QString& name) const;                                                      // 路由寻址：根据指定的员工姓名检索并返回其绑定的TCP物理通信套接字
-
+    explicit AttendanceServer(QWidget* parent = nullptr); // 构造并初始化服务端
+    ~AttendanceServer();                                   // 析构并释放资源
+    void logMessage(const QString& msg);                   // 向界面输出格式化日志
+    void loadGlobalRecords();                              // 刷新全局考勤视图数据
+    void refreshPermModel();                               // 刷新权限表模型
+    void registerClient(QTcpSocket* socket, const QString& name, const QString& dept, const QString& jobTitle, const QString& ip); // 注册已认证客户端
+    bool isClientOnline(const QString& name) const;       // 检查指定员工是否在线
+    QTcpSocket* getSocketByName(const QString& name) const; // 根据姓名查找套接字
 private slots:
-    void on_btn_StartServer_clicked();                                                                           // 交互响应：触发TCP核心路由引擎绑定指定端口并开启侦听模式
-    void on_btn_StopServer_clicked();                                                                            // 交互响应：安全关闭TCP监听并强制断开所有已连接的客户端套接字
-    void on_btn_RefreshData_clicked();                                                                           // 交互响应：手动触发全局考勤视图与底层数据库状态的强制同步
-    void on_btn_ExportGlobal_clicked();                                                                          // 交互响应：将当前已加载的全局考勤流水序列化导出为CSV格式文件
-    void onNewConnection();                                                                                      // 网络事件：响应底层TCP连接到达，建立通信信道并挂载数据接收钩子
-    void onReadyRead();                                                                                          // 网络事件：异步读取底层套接字缓冲区字节流，解析JSON报文并实施路由分发
-    void onClientDisconnected();                                                                                 // 网络事件：处理客户端物理掉线或超时断开，执行内存路由表的安全清理
+    void on_btn_StartServer_clicked();    // 启动 TCP 服务并开始监听
+    void on_btn_StopServer_clicked();     // 停止 TCP 服务并断开所有连接
+    void on_btn_RefreshData_clicked();    // 手动刷新界面数据
+    void on_btn_ExportGlobal_clicked();   // 导出全局考勤为 CSV
+    void onNewConnection();               // 处理新到的 TCP 连接
+    void onReadyRead();                   // 读取并解析客户端消息
+    void onClientDisconnected();          // 处理客户端断线清理
 private:
-    void initUI();                                                                                               // 界面初始化：构建服务端核心视图组件、绑定数据模型及交互信号槽
-    void updateOnlineUsersTable();                                                                               // 视图重载：遍历内存路由表并刷新展示当前实时在线终端的监控视图
-    void initDispatchTable();                                                                                    // 路由初始化：构建并挂载处理不同业务指令类型的回调分发哈希表
-    Ui::AttendanceServerClass* ui;                                                                               // 界面指针：由UI设计器自动生成的服务端控制台句柄
-    QTcpServer* m_tcpServer;                                                                                     // 网络核心：负责监听网络端口及派发新连接请求的TCP服务端实体
-    QMap<QTcpSocket*, ClientInfo> m_clients;                                                                     // 内存路由表：维护物理套接字指针与其对应客户端业务信息的正向映射
-    QMap<QString, QTcpSocket*> m_nameToSocket;                                                                   // 内存路由表：维护员工真实姓名与其对应物理套接字指针的反向寻址映射
-    QMap<QTcpSocket*, QByteArray> m_buffers;                                                                     // 数据缓冲区：处理TCP底层粘包/半包问题，实现完整应用层协议帧的拼接
-    QSqlQueryModel* m_globalRecordModel;                                                                         // 数据模型：承载全局考勤流水展示的只读SQL查询模型
-    QSqlTableModel* m_permModel;                                                                                 // 数据模型：承载底层用户权限角色配置的可编辑SQL数据表模型
-    QHash<QString, Handler> m_dispatchTable;                                                                     // 路由分发表：映射JSON指令类型字符串至对应的业务逻辑处理函数的哈希映射表
+    void initUI();                        // 初始化 UI 和模型绑定
+    void updateOnlineUsersTable();        // 更新在线用户显示
+    void initDispatchTable();             // 构建路由分发表
+    void handleBinaryData(QTcpSocket* socket, const QByteArray& chunk); // 处理文件传输二进制块
+    void onFileTransferComplete(QTcpSocket* socket); // 处理文件传输完成
+    void handleFileDownloadRequest(QTcpSocket* socket, const QJsonObject& json); // 处理下载请求
+    void handleFileTransferStart(QTcpSocket* socket, const QJsonObject& json); // 初始化文件上传
+    Ui::AttendanceServerClass* ui;        // UI 句柄
+    QTcpServer* m_tcpServer;              // TCP 服务实例
+    QMap<QTcpSocket*, ClientInfo> m_clients; // 套接字到客户端信息映射
+    QMap<QString, QTcpSocket*> m_nameToSocket; // 姓名到套接字映射
+    QMap<QTcpSocket*, QByteArray> m_buffers; // 套接字接收缓冲区
+    QSqlQueryModel* m_globalRecordModel;  // 全局考勤只读模型
+    QSqlTableModel* m_permModel;          // 权限表模型
+    QHash<QString, Handler> m_dispatchTable; // 路由分发表
+    QMap<QTcpSocket*, FileTransferState> m_fileTransfers; // 文件传输状态映射
+    QSet<QTcpSocket*> m_authenticatedSockets; // 已通过登录认证的 socket 集合
 };
 #endif // ATTENDANCESERVER_H

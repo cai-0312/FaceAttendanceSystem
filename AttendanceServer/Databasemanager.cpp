@@ -5,7 +5,6 @@
 #include <QDateTime>
 #include <QThread>
 #include <QMutexLocker>
-
 // 定义全局统一的底层 ODBC 数据源通信连接配置基准字符串
 static const QString kOdbcDsn =
 "DRIVER={MySQL ODBC 8.0 Unicode Driver};"
@@ -15,15 +14,10 @@ static const QString kOdbcDsn =
 "UID=root;"
 "PWD=root;"
 "CHARSET=utf8mb4;";
-
-// ═══════════════════════════════════════════════════════════════════
-//  DatabaseManager 实现（原有逻辑保持不变）
-// ═══════════════════════════════════════════════════════════════════
-
-// 执行底层存储介质的初始化：分配持久化主连接并自动检测与补全缺失的业务数据表拓扑
+// 初始化数据库：创建连接并确保必要表结构与系统默认数据存在
 void DatabaseManager::initDatabase()
 {
-    // 挂载主控线程专用的 ODBC 数据库代理通道，避免并发资源跨线程争夺
+    // 创建或获取主控线程专用的 ODBC 数据库连接，避免跨线程复用
     if (!QSqlDatabase::contains("server_db_connection")) {
         QSqlDatabase db = QSqlDatabase::addDatabase("QODBC", "server_db_connection");
         db.setDatabaseName(kOdbcDsn);
@@ -31,10 +25,10 @@ void DatabaseManager::initDatabase()
     }
     QSqlDatabase db = QSqlDatabase::database("server_db_connection");
     QSqlQuery query(db);
-    // 下发底层环境变量配置：激活四字节完整 UTF-8 支持集与高通量报文传输阈值
+    // 配置数据库字符集与传输包大小以支持多字节字符与大文件
     query.exec("SET NAMES utf8mb4");
-    query.exec("SET GLOBAL max_allowed_packet = 67108864");
-    // 核心表映射：离线消息与文件投递记录实体表结构同步
+    query.exec("SET GLOBAL max_allowed_packet = 268435456");
+    // 创建离线消息表以保存离线文件与文本元数据
     query.exec(
         "CREATE TABLE IF NOT EXISTS offline_messages ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -47,9 +41,9 @@ void DatabaseManager::initDatabase()
         "  send_time DATETIME"
         ")"
     );
-    // 执行非侵入式热更新：为旧版本实体结构动态补全归属部门字段约束，规避重复执行异常
+    // 向旧表结构补齐 department 列以兼容历史版本
     query.exec("ALTER TABLE offline_messages ADD COLUMN department VARCHAR(50) DEFAULT ''");
-    // 核心表映射：OA系统请假审批单据状态追踪结构同步
+    // 创建请假申请表以支持 OA 流程存储
     query.exec(
         "CREATE TABLE IF NOT EXISTS leave_requests ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -64,7 +58,7 @@ void DatabaseManager::initDatabase()
         "  status VARCHAR(50)"
         ")"
     );
-    // 核心表映射：异常考勤主动申诉流程防篡改追踪结构同步
+    // 创建申诉表以记录异常考勤申诉流水
     query.exec(
         "CREATE TABLE IF NOT EXISTS appeals ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -76,7 +70,7 @@ void DatabaseManager::initDatabase()
         "  status VARCHAR(50)"
         ")"
     );
-    // 核心表映射：企业考勤班次规则配置字典同步
+    // 创建班次规则表以保存各部门的考勤规则
     query.exec(
         "CREATE TABLE IF NOT EXISTS shift_rules ("
         "  dept VARCHAR(50) PRIMARY KEY,"
@@ -87,13 +81,13 @@ void DatabaseManager::initDatabase()
         "  absent_mins INT"
         ")"
     );
-    // 注入系统内置基准参数：当配置字典为空时，自动填充全员默认作息时间标准
+    // 向班次规则表注入默认全员规则以保证有基线配置
     query.exec(
         "INSERT IGNORE INTO shift_rules "
         "(dept, rule_name, start_time, end_time, late_mins, absent_mins) "
         "VALUES ('全部', '常规班', '09:00:00', '18:00:00', 30, 120)"
     );
-    // 核心表映射：系统全员广播与公共公告信息发布池结构同步
+    // 创建系统公告表以持久化发布的公告
     query.exec(
         "CREATE TABLE IF NOT EXISTS system_announcements ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -102,7 +96,7 @@ void DatabaseManager::initDatabase()
         "  publish_time DATETIME"
         ")"
     );
-    // 核心表映射：大语言模型智能会话上下文环境标识同步
+    // 创建 AI 会话元信息表以支持会话管理
     query.exec(
         "CREATE TABLE IF NOT EXISTS ai_sessions ("
         "  session_id VARCHAR(50) PRIMARY KEY,"
@@ -113,7 +107,7 @@ void DatabaseManager::initDatabase()
         "  last_message TEXT"
         ")"
     );
-    // 核心表映射：大语言模型高维度对话向量与多轮时序上下文留档同步
+    // 创建 AI 聊天日志表以存储对话历史
     query.exec(
         "CREATE TABLE IF NOT EXISTS ai_chat_logs ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -123,7 +117,7 @@ void DatabaseManager::initDatabase()
         "  create_time DATETIME"
         ")"
     );
-    // 核心表映射：局域网即时通讯记录与组播归档结构同步
+    // 创建聊天历史表以存储即时通讯的元数据（不存大文件实体）
     query.exec(
         "CREATE TABLE IF NOT EXISTS chat_history ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -136,12 +130,12 @@ void DatabaseManager::initDatabase()
         "  is_group INT"
         ")"
     );
-    // 动态强制刷新存储引擎的字符对齐及排序规格，保障全量多语种特征安全落地
+    // 强制设置 chat_history 的字符集以保证多语种支持
     query.exec(
         "ALTER TABLE chat_history "
         "CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     );
-    // 核心表映射：分布式定时任务执行审计日志表（问题二配套）
+    // 创建任务执行日志表以记录调度任务的执行结果
     query.exec(
         "CREATE TABLE IF NOT EXISTS task_execution_log ("
         "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -155,16 +149,14 @@ void DatabaseManager::initDatabase()
         ")"
     );
 }
-
-// 基于并行架构调度系统计算专属通道名，避免底层数据库句柄的越权复用与死锁
+// 生成线程唯一的数据库连接名以避免句柄跨线程复用
 QString DatabaseManager::makeThreadConnName()
 {
     return QString("ServerConn_%1_%2")
         .arg(quintptr(QThread::currentThreadId()))
         .arg(QDateTime::currentMSecsSinceEpoch());
 }
-
-// 在完全分离的子线程环境中建立并挂载底层安全连接信道，大幅提升网络I/O吞吐极限
+// 在子线程中创建并打开一个独立的数据库连接用于并发操作
 bool DatabaseManager::openThreadConnection(const QString& connName)
 {
     QSqlDatabase threadDb = QSqlDatabase::addDatabase("QODBC", connName);
@@ -174,20 +166,18 @@ bool DatabaseManager::openThreadConnection(const QString& connName)
     initQ.exec("SET NAMES utf8mb4");
     return true;
 }
-// 获取全局唯一的连接池单例
+// 获取连接池的全局单例实例
 ConnectionPool& ConnectionPool::instance()
 {
     static ConnectionPool pool;
     return pool;
 }
-
-// 初始化连接池：预创建 initialSize 个 ODBC 连接放入空闲队列
+// 初始化连接池并预创建若干数据库连接以提高并发性能
 void ConnectionPool::init(const QString& odbcDsn, int initialSize, int maxSize)
 {
     QMutexLocker locker(&m_mutex);
     m_odbcDsn = odbcDsn;
     m_maxSize = maxSize;
-
     for (int i = 0; i < initialSize; ++i) {
         QString connName = createNewConnection();
         if (!connName.isEmpty()) {
@@ -197,8 +187,7 @@ void ConnectionPool::init(const QString& odbcDsn, int initialSize, int maxSize)
     qDebug() << "[ConnectionPool] 初始化完成，预创建连接数:" << m_totalCreated
         << "，池容量上限:" << m_maxSize;
 }
-
-// 从空闲队列中取出一个连接名；队列空时自动扩容创建新连接
+// 从连接池获取一个可用连接名，必要时会创建新连接或回收失效连接
 QString ConnectionPool::acquire()
 {
     QMutexLocker locker(&m_mutex);
@@ -206,11 +195,10 @@ QString ConnectionPool::acquire()
     while (!m_availableConnections.isEmpty()) {
         QString connName = m_availableConnections.dequeue();
         QSqlDatabase db = QSqlDatabase::database(connName);
-        // ⭐️ 核心修复：绝不能只信赖 db.isOpen()，必须用真实的 SQL 去 Ping 一下测试！
         bool isAlive = false;
         if (db.isOpen()) {
             QSqlQuery pingQuery(db);
-            // 发送最轻量级的语句，如果成功，说明 MySQL 没有挂断这个连接
+            // 发送最轻量级的语句，如果成功，说明连接可用
             if (pingQuery.exec("SELECT 1")) {
                 isAlive = true;
             }
@@ -219,25 +207,24 @@ QString ConnectionPool::acquire()
         if (isAlive) {
             return connName;
         }
-        // 如果走到这里，说明连接已失效，将其彻底销毁
+        // 连接失效则移除并统计回收
         QSqlDatabase::removeDatabase(connName);
         m_totalCreated--;
         qDebug() << "[ConnectionPool] 回收失效连接:" << connName;
     }
-    // 空闲队列已空，尝试创建新连接
+    // 空闲队列已空且未到最大容量时创建新连接
     if (m_totalCreated < m_maxSize) {
         QString newConn = createNewConnection();
         if (!newConn.isEmpty()) {
             return newConn;
         }
     }
-    // 已达池容量上限，强制创建溢出连接
+    // 池已满则记录警告并创建溢出连接
     qWarning() << "[ConnectionPool] 警告：连接池已满(" << m_totalCreated
         << "/" << m_maxSize << ")，创建溢出连接！";
     return createNewConnection();
 }
-
-// 将用完的连接归还到空闲队列
+// 将使用完的连接归还到空闲队列以便复用
 void ConnectionPool::release(const QString& connName)
 {
     if (connName.isEmpty()) return;
@@ -246,8 +233,7 @@ void ConnectionPool::release(const QString& connName)
         m_availableConnections.enqueue(connName);
     }
 }
-
-// 关闭并销毁所有池内连接（服务端退出时调用）
+// 关闭并销毁连接池中所有连接以释放资源
 void ConnectionPool::shutdown()
 {
     QMutexLocker locker(&m_mutex);
@@ -262,8 +248,7 @@ void ConnectionPool::shutdown()
     m_totalCreated = 0;
     qDebug() << "[ConnectionPool] 连接池已完全关闭。";
 }
-
-// 内部方法：创建一个新的 ODBC 连接
+// 创建并返回一个新的 ODBC 连接名，失败则返回空字符串
 QString ConnectionPool::createNewConnection()
 {
     QString connName = QString("pool_conn_%1").arg(m_totalCreated++);
@@ -276,7 +261,7 @@ QString ConnectionPool::createNewConnection()
         m_totalCreated--;
         return QString();
     }
-    // 初始化连接的字符集配置
+    // 为新连接设置字符集以支持多字节编码
     QSqlQuery initQ(db);
     initQ.exec("SET NAMES utf8mb4");
     return connName;

@@ -25,8 +25,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QThread>
-
-// 构造函数：执行模块生命周期的初始化绑定，并控制不同角色的控件可视状态
+// 构造函数，初始化打卡模块并按角色绑定界面
 PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     QLabel* morningTime, QLabel* morningStatus,
     QLabel* eveningTime, QLabel* eveningStatus,
@@ -41,45 +40,46 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     m_btnAppealRequest(appealReqBtn), m_btnAppealApprove(appealApprBtn),
     m_lblCurrentTime(currentTimeLabel), m_role(role), m_loginName(loginName), m_cheatCount(0)
 {
-    // 拉取用户归属部门信息以决定模块渲染策略
+    // 查询当前用户部门
     QJsonObject uReq;
     uReq["type"] = "query_user_dept";
     uReq["name"] = m_loginName;
     QJsonObject uRes = NetworkHelper::request(uReq);
     QString myDept = uRes["department"].toString();
-    // 仅针对人资部门开放考勤排班规则设置功能
+    // 人资部门才显示排班设置
     if (myDept != "人力资源部") {
         if (m_btnRuleSettings) m_btnRuleSettings->setHidden(true);
     }
     else {
         if (m_btnRuleSettings) connect(m_btnRuleSettings, &QPushButton::clicked, this, &PunchModule::onRuleSettingsClicked);
     }
-    // 过滤普通职员的审批级操作界面
+    // 普通员工隐藏审批按钮
     if (m_role != "管理员登录" && m_role != "经理") {
         if (m_btnLeaveApprove) m_btnLeaveApprove->setHidden(true);
         if (m_btnAppealApprove) m_btnAppealApprove->setHidden(true);
     }
     loadRules(myDept);
     loadTodayPunchStatus();
-    // 挂载交互控件底层事件槽
+    // 绑定按钮事件
     if (m_manualBtn) connect(m_manualBtn, &QPushButton::clicked, this, &PunchModule::onManualPunchClicked);
     if (m_btnLeaveRequest) connect(m_btnLeaveRequest, &QPushButton::clicked, this, &PunchModule::onLeaveRequestClicked);
     if (m_btnLeaveApprove) connect(m_btnLeaveApprove, &QPushButton::clicked, this, &PunchModule::onLeaveApproveClicked);
     if (m_btnAppealRequest) connect(m_btnAppealRequest, &QPushButton::clicked, this, &PunchModule::onAppealRequestClicked);
     if (m_btnAppealApprove) connect(m_btnAppealApprove, &QPushButton::clicked, this, &PunchModule::onAppealApproveClicked);
-    // 构建并启动界面时钟刷新任务
+    // 启动时间刷新定时器
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &PunchModule::onTimeUpdate);
     m_timer->start(1000);
     onTimeUpdate();
 }
-// 通过外部系统组件接口完成字符串的语音合成播报
+// 播放语音提示
 void PunchModule::speakText(const QString& text) {
     QString command = QString("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('%1');").arg(text);
     QProcess::startDetached("powershell", QStringList() << "-WindowStyle" << "Hidden" << "-Command" << command);
 }
+// 预留排班表初始化入口
 void PunchModule::initRulesTable() {}
-// 从服务端同步指定部门当前生效的排班参数
+// 加载当前部门的排班规则
 void PunchModule::loadRules(QString myDept) {
     QJsonObject req;
     req["type"] = "query_shift_rule";
@@ -96,7 +96,7 @@ void PunchModule::loadRules(QString myDept) {
         if (m_lblEveningTime) m_lblEveningTime->setText(QString("<div style='text-align:center;'><span style='font-size:12px; color:#888;'>[%1]</span><br><span style='font-size:16px; font-weight:bold;'>下班 %2</span></div>").arg(m_shiftName, m_endTime.toString("HH:mm")));
     }
 }
-// 获取并渲染考勤界面主逻辑：解析打卡记录并控制面板覆盖更新
+// 加载当天考勤状态并刷新界面
 void PunchModule::loadTodayPunchStatus() {
     if (m_loginName.isEmpty()) return;
     QJsonObject req;
@@ -105,7 +105,7 @@ void PunchModule::loadTodayPunchStatus() {
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() != "success") return;
     bool isOnLeave = res["is_on_leave"].toBool();
-    // 考勤状态拦截：若员工当前处于请假审批通过的日期期间，则优先渲染请假占位面板
+    // 请假期间直接显示请假状态
     if (isOnLeave) {
         QString leaveHtml = "<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>请假</span><br><span style='font-size:12px;'>已准假</span></div>";
         if (m_lblMorningStatus) {
@@ -121,14 +121,14 @@ void PunchModule::loadTodayPunchStatus() {
     QJsonArray punches = res["punches"].toArray();
     bool hasMorning = false;
     bool hasEvening = false;
-    // 遍历服务端回传的升序打卡流水队列
+    // 遍历当天打卡记录
     for (int i = 0; i < punches.size(); ++i) {
         QJsonObject p = punches[i].toObject();
         QTime pTime = QTime::fromString(p["time"].toString(), "HH:mm:ss");
         QString statusStr = p["status"].toString();
         QString displayTxt = QString("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>%1</span><br><span style='font-size:12px;'>%2</span></div>").arg(pTime.toString("HH:mm"), statusStr);
         if (pTime < QTime(12, 0)) {
-            // 早班判定规则：取时间线内最早的一条打卡数据作为最终早班结果展示
+            // 记录最早的上午打卡
             if (!hasMorning) {
                 m_lblMorningStatus->setText(displayTxt);
                 m_lblMorningStatus->setStyleSheet(statusStr.contains("正常") || statusStr.contains("修正") ? "color: #67C23A;" : "color: #F56C6C;");
@@ -136,13 +136,13 @@ void PunchModule::loadTodayPunchStatus() {
             }
         }
         else if (pTime >= QTime(12, 0)) {
-            // 晚班判定规则：队列遍历将持续覆盖旧面板，确保显示的是时间最晚的一条记录
+            // 记录最后的下午打卡
             m_lblEveningStatus->setText(displayTxt);
             m_lblEveningStatus->setStyleSheet(statusStr.contains("正常") || statusStr.contains("修正") || statusStr.contains("下班") ? "color: #409EFF;" : "color: #E6A23C;");
             hasEvening = true;
         }
     }
-    // 缺卡补全逻辑：时间段内无流水的空缺面板绘制为缺卡红警状态
+    // 没有记录时显示缺卡
     if (!hasMorning) {
         m_lblMorningStatus->setText("<div style='text-align:center;'><span style='font-size:16px; font-weight:bold;'>缺卡</span><br><span style='font-size:12px;'>待打卡/旷工</span></div>");
         m_lblMorningStatus->setStyleSheet("color: #F56C6C;");
@@ -152,7 +152,7 @@ void PunchModule::loadTodayPunchStatus() {
         m_lblEveningStatus->setStyleSheet("color: #F56C6C;");
     }
 }
-// 提取抽象的打卡状态判定函数
+// 判断单条打卡状态
 QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
     if (punchTime < QTime(12, 0)) {
         int secsLate = m_startTime.secsTo(punchTime);
@@ -161,7 +161,7 @@ QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
     }
     return (punchTime < m_endTime) ? "早退" : "正常下班";
 }
-// 排班设置窗口唤起与表单数据处理
+// 打开排班设置窗口
 void PunchModule::onRuleSettingsClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("排班规则设置");
@@ -225,7 +225,7 @@ void PunchModule::onRuleSettingsClicked() {
         QTimer::singleShot(500, this, [=]() { loadRules(deptCombo->currentText()); loadTodayPunchStatus(); });
     }
 }
-// 辅助打卡表单的防欺骗鉴权与记录推送
+// 处理手动打卡
 void PunchModule::onManualPunchClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("手动打卡辅助");
@@ -238,13 +238,11 @@ void PunchModule::onManualPunchClicked() {
     connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() == QDialog::Accepted) {
         QString claimName = nameEdit->text().trimmed();
-
         if (claimName != m_loginName) {
             QMessageBox::warning(nullptr, "拒绝", "只能为本人打卡！");
             return;
         }
         if (claimName == m_currentFaceName && m_currentFaceName != "未知访客" && !m_currentFeatureBytes.isEmpty()) {
-
             QJsonObject req;
             req["type"] = "secure_punch_request";
             req["feature"] = QString(m_currentFeatureBytes.toBase64());
@@ -259,13 +257,12 @@ void PunchModule::onManualPunchClicked() {
             }
         }
         else {
-            // 防作弊安全拦截机制处理
+            // 作弊次数累计
             m_cheatCount++;
             if (m_cheatCount >= 3) {
                 QJsonObject req;
                 req["type"] = "punch_cheat";
                 req["name"] = claimName;
-
                 NetworkHelper::request(req);
                 m_cheatCount = 0;
             }
@@ -275,7 +272,7 @@ void PunchModule::onManualPunchClicked() {
         }
     }
 }
-// 查询近期考勤记录并动态构建申诉链路单据
+// 发起异常申诉
 void PunchModule::onAppealRequestClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QJsonObject initReq;
@@ -337,17 +334,14 @@ void PunchModule::onAppealRequestClicked() {
     auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: ");  };
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: ");    };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
-    // 按5场景动态生成审批链
     int approvalLevels = 0;
     if (applicantDept == "总经办" && applicantJob == "总经理") {
-        // 场景二：总经办总经理 → 人资经理
         approvalLevels = 1;
         fillHR(app1);
         form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "总经办") {
-        // 场景一：总经办非总经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
         form->addRow("第一审批人:", app1);
@@ -355,14 +349,12 @@ void PunchModule::onAppealRequestClicked() {
         app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
-        // 场景三：人资部门经理 → 总经理
         approvalLevels = 1;
         fillGM(app1);
         form->addRow("第一审批人:", app1);
         app2->setVisible(false); app3->setVisible(false);
     }
     else if (applicantDept == "人力资源部") {
-        // 场景四：人资部非经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
         form->addRow("第一审批人:", app1);
@@ -370,7 +362,6 @@ void PunchModule::onAppealRequestClicked() {
         app3->setVisible(false);
     }
     else if (applicantJob == "部门经理") {
-        // 场景六：其余部门的部门经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
         form->addRow("第一审批人:", app1);
@@ -378,7 +369,6 @@ void PunchModule::onAppealRequestClicked() {
         app3->setVisible(false);
     }
     else {
-        // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
         fillDeptMgr(app1); fillGM(app2); fillHR(app3);
         form->addRow("第一审批人:", app1);
@@ -434,7 +424,7 @@ void PunchModule::onAppealRequestClicked() {
         emit requestSendChat(notifyMsg);
     }
 }
-// 调度请假申请面板并构造审批链路
+// 发起请假申请
 void PunchModule::onLeaveRequestClicked()
 {
     QWidget* parentWidget = qobject_cast<QWidget*>(this->parent());
@@ -452,6 +442,7 @@ void PunchModule::onLeaveRequestClicked()
     QJsonArray hrArr = initRes["hr_list"].toArray();
     QJsonArray gmArr = initRes["gm_list"].toArray();
     QJsonArray mgrArr = initRes["mgr_list"].toArray();
+    // 先选择请假类型
     QDialog typeDlg(parentWidget);
     typeDlg.setWindowTitle("请选择请假类型");
     typeDlg.resize(300, 350);
@@ -542,7 +533,6 @@ void PunchModule::onLeaveRequestClicked()
         app3->setVisible(false);
     }
     else if (applicantJob == "部门经理") {
-        // 场景六：其余部门的部门经理 → 总经理→人资经理
         approvalLevels = 2;
         fillGM(app1); fillHR(app2);
         form->addRow("第一审批人:", app1);
@@ -550,7 +540,6 @@ void PunchModule::onLeaveRequestClicked()
         app3->setVisible(false);
     }
     else {
-        // 场景五：其余部门普通员工 → 部门经理→总经理→人资经理
         approvalLevels = 3;
         fillDeptMgr(app1); fillGM(app2); fillHR(app3);
         form->addRow("第一审批人:", app1);
@@ -601,18 +590,16 @@ void PunchModule::onLeaveRequestClicked()
         emit requestSendChat(notifyMsg);
     }
 }
-// 请假审批工作流：获取针对当前用户的待办请假单并执行通过指令
+// 审批请假申请
 void PunchModule::onLeaveApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget);
     apprDlg.setWindowTitle("假条审批中心");
     apprDlg.resize(800, 550);
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
-
     QLabel* pendingLabel = new QLabel("待审批");
     pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
     layout->addWidget(pendingLabel);
-
     QTableWidget* table = new QTableWidget(&apprDlg);
     table->setColumnCount(6);
     table->setHorizontalHeaderLabels({ "申请人", "类型", "开始时间", "理由", "状态", "操作" });
@@ -637,7 +624,7 @@ void PunchModule::onLeaveApproveClicked() {
             table->setItem(row, 2, new QTableWidgetItem(sTime));
             table->setItem(row, 3, new QTableWidgetItem(rowObj["reason"].toString()));
             table->setItem(row, 4, new QTableWidgetItem("待审批"));
-            // 操作列：通过 + 驳回 双按钮
+            // 操作列按钮
             QWidget* opWidget = new QWidget();
             QHBoxLayout* opLayout = new QHBoxLayout(opWidget);
             opLayout->setContentsMargins(2, 2, 2, 2);
@@ -682,18 +669,15 @@ void PunchModule::onLeaveApproveClicked() {
         }
     }
     layout->addWidget(table);
-
-    // ── 已审批记录区域 ──
+    // 已审批记录区域
     QLabel* doneLabel = new QLabel("已审批的记录");
     doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
     layout->addWidget(doneLabel);
-
     QTableWidget* doneTable = new QTableWidget(&apprDlg);
     doneTable->setColumnCount(6);
     doneTable->setHorizontalHeaderLabels({ "申请人", "请假类型", "时间", "审批链", "当前状态", "驳回理由" });
     doneTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     doneTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
     if (res["status"].toString() == "success") {
         QJsonArray doneArr = res["done_data"].toArray();
         for (int i = 0; i < doneArr.size(); ++i) {
@@ -718,30 +702,25 @@ void PunchModule::onLeaveApproveClicked() {
 
     apprDlg.exec();
 }
-// 申诉审批工作流：处理员工由于异常打卡提出的申诉，并在通过后重写考勤数据底表
+// 审批异常申诉
 void PunchModule::onAppealApproveClicked() {
     QWidget* parentWidget = (QWidget*)this->parent();
     QDialog apprDlg(parentWidget);
     apprDlg.setWindowTitle("申诉审批中心");
     apprDlg.resize(800, 550);
-
     QVBoxLayout* layout = new QVBoxLayout(&apprDlg);
-
-    // ── 待审批区域 ──
+    // 待审批区域
     QLabel* pendingLabel = new QLabel("待审批");
     pendingLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#409EFF; margin-bottom:4px;");
     layout->addWidget(pendingLabel);
-
     QTableWidget* table = new QTableWidget(&apprDlg);
     table->setColumnCount(6);
     table->setHorizontalHeaderLabels({ "申请人", "异常时间/日期", "申诉类型", "理由", "状态", "操作" });
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-
     QJsonObject req;
     req["type"] = "query_pending_appeals";
     req["approver"] = m_loginName;
     QJsonObject res = NetworkHelper::request(req);
-
     if (res["status"].toString() == "success") {
         QJsonArray arr = res["data"].toArray();
         for (int i = 0; i < arr.size(); ++i) {
@@ -800,18 +779,15 @@ void PunchModule::onAppealApproveClicked() {
         }
     }
     layout->addWidget(table);
-
-    // ── 已审批记录区域 ──
+    // 已审批记录区域
     QLabel* doneLabel = new QLabel("已审批记录");
     doneLabel->setStyleSheet("font-size:14px; font-weight:bold; color:#67C23A; margin-top:12px; margin-bottom:4px;");
     layout->addWidget(doneLabel);
-
     QTableWidget* doneTable = new QTableWidget(&apprDlg);
     doneTable->setColumnCount(6);
     doneTable->setHorizontalHeaderLabels({ "申请人", "申诉类型", "理由", "审批链", "当前状态", "驳回理由" });
     doneTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     doneTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
     if (res["status"].toString() == "success") {
         QJsonArray doneArr = res["done_data"].toArray();
         for (int i = 0; i < doneArr.size(); ++i) {
@@ -835,17 +811,19 @@ void PunchModule::onAppealApproveClicked() {
     layout->addWidget(doneTable);
     apprDlg.exec();
 }
-// 界面系统时间驱动函数
+// 更新时间显示
 void PunchModule::onTimeUpdate() {
     if (m_lblCurrentTime) m_lblCurrentTime->setText("当前时间: " + QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
 }
-// 从处理线程接收当前帧图像并按比例映射回系统界面
+// 渲染摄像头画面
 void PunchModule::renderFrame(const QImage& img) {
     if (m_cameraLabel && !img.isNull()) m_cameraLabel->setPixmap(QPixmap::fromImage(img).scaled(m_cameraLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
+// 保存当前人脸特征
 void PunchModule::updateCurrentFaceFeature(const QByteArray& featureBytes) {
     m_currentFeatureBytes = featureBytes;
 }
+// 保存当前识别姓名
 void PunchModule::updateRecognizedName(const QString& name) {
     m_currentFaceName = name;
 }

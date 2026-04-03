@@ -23,48 +23,51 @@ class ChatModule : public QObject
 {
     Q_OBJECT
 public:
-    // 初始化通讯模块并绑定界面控件
-    ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser, QLineEdit* lineEdit, QLabel* targetLabel, QPushButton* btnEmoji, QPushButton* btnFolder, QPushButton* btnHistory, QPushButton* btnMoreOpt, QLineEdit* searchEdit, QObject* parent = nullptr);
-    void connectToServer(const QString& ip, quint16 port, const QString& myName); // 发起TCP网络连接以连接服务端
-    void loadContactsFromDatabase();                                              // 从数据库检索并加载员工及群聊列表
-    void sendBroadcast(const QString& msg);                                       // 触发并发送全局系统广播消息
+    // 构造并绑定界面控件到通讯模块
+    ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser, QLineEdit* lineEdit, QLabel* targetLabel, QPushButton* btnEmoji, QPushButton* btnFolder, QPushButton* btnHistory, QPushButton* btnMoreOpt, QLineEdit* searchEdit, QObject* parent = nullptr); 
+    void connectToServer(const QString& ip, quint16 port, const QString& myName); // 建立到服务器的 TCP 连接并登录
+    void loadContactsFromDatabase();                                              // 从本地数据库加载联系人与群组列表
+    void sendBroadcast(const QString& msg);                                       // 发送系统级广播消息到服务器
 public slots:
-    void sendMessage();                                                           // 处理文本、图片或文件的消息外发逻辑
-    void onContactSwitched(int currentRow);                                       // 响应左侧列表切换，重新加载对应聊天上下文
-    void sendSystemMessage(const QString& to, const QString& msg);                // 向特定目标发送不可篡改的系统结构化信息
+    void sendMessage();                                                           // 发送消息（文本/图片/文件）到当前会话
+    void onContactSwitched(int currentRow);                                       // 切换联系人时加载对应会话历史与 UI
+    void sendSystemMessage(const QString& to, const QString& msg);                // 发送系统通知类的结构化消息
 
 signals:
-    void broadcastReceived(QString from, QString msg);                            // 接收到全局广播消息时向外触发该信号
+    void broadcastReceived(QString from, QString msg);                            // 接收到广播时发出信号以更新 UI
 protected:
-    bool eventFilter(QObject* obj, QEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;                       // 事件过滤用于拦截输入框或按钮的自定义行为
 private slots:
-    void onConnected();                                     // 监听到Socket连接成功，发送初始化登录校验报文
-    void onDisconnected();                                 // 监听到Socket断开，进行连接状态清理
-    void onReadyRead();                                    // 异步读取并解析从网络套接字传来的JSON通讯数据
-    void onBtnEmojiClicked();                              // 响应按钮操作：唤出Emoji表情选择面板
-    void onBtnHistoryClicked();                            // 响应按钮操作：唤出历史常用表情快捷面板
-    void onBtnFolderClicked();                             // 响应按钮操作：打开本地文件管理器选择附件
-    void onBtnMoreOptClicked();                            // 响应按钮操作：弹出个人资料名片或群成员列表
+    void onConnected();                                     // 套接字连接建立后的初始化处理
+    void onDisconnected();                                 // 套接字断开时的清理逻辑
+    void onReadyRead();                                    // 读取并解析来自服务器的消息数据
+    void onBtnEmojiClicked();                              // 处理表情按钮点击展示表情面板
+    void onBtnHistoryClicked();                            // 打开历史表情或常用项面板
+    void onBtnFolderClicked();                             // 打开文件选择对话框并准备上传
+    void onBtnMoreOptClicked();                            // 展示更多操作菜单（名片/群组信息）
 private:
-    // 控件
-    QListWidget* m_contactsList;                           // 联系人列表显示控件
-    QTextBrowser* m_textBrowser;                          // 富文本聊天内容展示大屏控件
-    QLineEdit* m_lineEdit;                               // 底部的聊天消息文本输入框
-    QLabel* m_targetLabel;                              // 顶部用于显示当前聊天目标名称的标签
-    QPushButton* m_btnEmoji;                           // 调出表情包菜单的触发按钮
-    QPushButton* m_btnFolder;                           // 选择本地文件或图片进行上传的触发按钮
-    QPushButton* m_btnHistory;                        // 快捷浏览并复用历史操作的触发按钮
-    QPushButton* m_btnMoreOpt;                        // 查看联系人名片或群组详情的触发按钮
-    QLineEdit* m_searchEdit;                       // 左侧联系人列表上方的模糊搜索过滤输入框
-    // 核心变量
-    QTcpSocket* m_tcpSocket;                    // 底层TCP通讯套接字对象，负责二进制传输
-    QString m_myName;                           // 记录当前成功登录系统的本地用户名称
-    QString m_myEmpId;                          // 记录当前登录用户的本地唯一工号(预留)
-    QString m_currentTarget;                   // 记录当前选中的对话对象名称（单聊或群聊名）
-    bool m_isCurrentGroup;                     // 状态标识：当前对话是否处于部门群聊模式
-    QStringList m_recentEmojis;               // LRU缓存队列：存储用户最近使用过的表情符号
-    QMap<QString, QString> m_chatHistories;      // 内存字典：按照对话目标名称缓存的HTML完整记录
-    QTextEdit* m_textEdit;
-    void showUserInfo(const QString& userName);
+    // 界面控件指针
+    QListWidget* m_contactsList;                           // 联系人列表视图指针
+    QTextBrowser* m_textBrowser;                          // 聊天消息展示区域
+    QLineEdit* m_lineEdit;                                // 消息输入框
+    QLabel* m_targetLabel;                                 // 显示当前会话目标的标签
+    QPushButton* m_btnEmoji;                               // 表情按钮
+    QPushButton* m_btnFolder;                              // 文件/图片选择按钮
+    QPushButton* m_btnHistory;                             // 历史表情按钮
+    QPushButton* m_btnMoreOpt;                             // 更多选项按钮
+    QLineEdit* m_searchEdit;                               // 联系人搜索输入框
+    // 核心网络与状态变量
+    QTcpSocket* m_tcpSocket;                               // 与服务器通信的 TCP 套接字
+    QString m_myName;                                      // 本地登录用户名
+    QString m_myEmpId;                                     // 本地员工工号（预留字段）
+    QString m_currentTarget;                               // 当前会话目标名（用户或群组）
+    bool m_isCurrentGroup;                                 // 当前目标是否为群组
+    QStringList m_recentEmojis;                            // 最近使用表情的缓存列表
+    QMap<QString, QString> m_chatHistories;                // 缓存每个会话的 HTML 聊天记录
+    QTextEdit* m_textEdit;                                 // 可编辑的消息输入区域（富文本）
+    void showUserInfo(const QString& userName);            // 弹出并显示指定用户信息界面
+    QMap<QString, QString> m_fileNameMap;                  // 本地文件路径与远端文件名映射
+    void sendFileChunked(const QString& filePath, const QString& fileName,const QString& receiver, bool isGroup, const QString& dept); // 分块发送大文件以支持断点续传
+    void executeFileSend(const QString& filePath);         // 执行文件发送的具体流程
 };
 #endif // CHATMODULE_H

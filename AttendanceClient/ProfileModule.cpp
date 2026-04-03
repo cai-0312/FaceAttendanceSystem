@@ -39,8 +39,7 @@
 #include <QCameraDevice>
 #include <QMediaDevices>
 #include <QTimer>
-
-// 构造函数：初始化组件指针并绑定基础的鼠标点击事件过滤器
+// 构造函数，绑定头像点击事件并注入界面
 ProfileModule::ProfileModule(QLabel* avatarLabel, QLabel* nameLabel, QLabel* deptLabel,
     QLabel* genderLabel, QLabel* phoneLabel,
     QPushButton* avatarBtn, QPushButton* editBtn, QObject* parent)
@@ -57,7 +56,7 @@ ProfileModule::ProfileModule(QLabel* avatarLabel, QLabel* nameLabel, QLabel* dep
     }
     injectAdvancedUI();
 }
-
+// 处理头像标签的点击事件
 bool ProfileModule::eventFilter(QObject* watched, QEvent* event) {
     if (event->type() == QEvent::MouseButtonPress) {
         if (watched == m_avatarLabel) {
@@ -67,41 +66,32 @@ bool ProfileModule::eventFilter(QObject* watched, QEvent* event) {
     }
     return QObject::eventFilter(watched, event);
 }
-
+// 重构个人资料页布局并绑定功能按钮
 void ProfileModule::injectAdvancedUI() {
     if (!m_editBtn || !m_editBtn->parentWidget()) return;
     QWidget* parentW = m_editBtn->parentWidget();
-
     QString baseStyle = "QPushButton { color: #FFFFFF; border-radius: 6px; font-family: 'Microsoft YaHei'; font-size: 14px; font-weight: bold; min-height: 36px; padding: 0 16px; border: none; }"
         "QPushButton:pressed { padding-top: 2px; padding-left: 2px; }";
     QString cardStyle = "QFrame { background-color: #FFFFFF; border: 1px solid #E5E6EB; border-radius: 12px; }";
-
     QLabel* avatarLabel = parentW->window()->findChild<QLabel*>("label_Avatar");
     QComboBox* statusCombo = parentW->window()->findChild<QComboBox*>("comboBox_Status");
     QPushButton* btnChangeAvatar = parentW->window()->findChild<QPushButton*>("btn_ChangeAvatar");
     QFormLayout* formLay = parentW->window()->findChild<QFormLayout*>("formLayout_Profile");
-
-    // 获取二维码相关的控件，准备迁移
     QLabel* qrCodeLabel = parentW->window()->findChild<QLabel*>("label_QRCode");
     QLabel* qrTitleLabel = parentW->window()->findChild<QLabel*>("label_QRTitle");
-
     QLabel* nameLabel = parentW->window()->findChild<QLabel*>("label_ProfileName");
     QLabel* deptLabel = parentW->window()->findChild<QLabel*>("label_ProfileDept");
     QLabel* roleLabel = parentW->window()->findChild<QLabel*>("label_ProfileRole");
-
     if (!avatarLabel || !formLay || !nameLabel) return;
-
-    // ⭐️ 修复 1：设置头像 QLabel 为固定大小并确保它没有默认边框样式干扰
+    // 设置头像控件样式
     if (avatarLabel) {
         avatarLabel->setFixedSize(130, 130);
         avatarLabel->setStyleSheet("background: transparent; border: none; padding: 0px;");
     }
-
     if (m_editBtn) m_editBtn->hide();
     if (m_avatarBtn) m_avatarBtn->hide();
     QPushButton* oldPwdBtn = parentW->window()->findChild<QPushButton*>("btn_ChangePassword");
     if (oldPwdBtn) oldPwdBtn->hide();
-
     if (statusCombo) {
         statusCombo->clear();
         statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_online.svg"), "在线");
@@ -109,14 +99,12 @@ void ProfileModule::injectAdvancedUI() {
         statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_not_disturb.svg"), "请勿打扰");
         statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_on_business_trip.svg"), "出差中");
         statusCombo->addItem(QIcon("../../AttendanceClient/icon_library/Profile/icon_on_vacation.svg"), "休假中");
-        statusCombo->setFixedSize(110, 32);
-
-        // ⭐️ 修复 2：强力且全面的胶囊圆角 QSS
+        statusCombo->setFixedSize(120, 32);
         statusCombo->setObjectName("comboBox_Status_Final");
         statusCombo->setStyleSheet(
             "QComboBox#comboBox_Status_Final {"
             "  border: 1px solid #DEE0E3;"
-            "  border-radius: 16px;"  /* 半径是高度的一半 = 完美的胶囊圆角 */
+            "  border-radius: 16px;" 
             "  background-color: #FFFFFF;"
             "  padding-left: 15px;"
             "  font-weight: bold;"
@@ -125,12 +113,10 @@ void ProfileModule::injectAdvancedUI() {
             "}"
             "QComboBox#comboBox_Status_Final:hover { border: 1px solid #3370FF; }"
             "QComboBox#comboBox_Status_Final::drop-down { border: none; background: transparent; width: 30px; }"
-            /* ⭐️ 精准美化下拉箭头样式 (可以根据项目更换箭头SVG) */
             "QComboBox#comboBox_Status_Final::down-arrow {"
             "  image: url('../../AttendanceClient/icon_library/Profile/icon_arrow_down.svg');"
             "  width: 14px; height: 14px;"
             "}"
-            /* 下拉列表的圆角也必须打上 */
             "QComboBox#comboBox_Status_Final QAbstractItemView {"
             "  border: 1px solid #E5E6EB;"
             "  border-radius: 8px;"
@@ -142,42 +128,32 @@ void ProfileModule::injectAdvancedUI() {
             "}"
         );
     }
-
     QVBoxLayout* mainCardLay = parentW->window()->findChild<QVBoxLayout*>("vL_Card");
     if (!mainCardLay) return;
     mainCardLay->setSpacing(20);
-
     QWidget* lineSep = parentW->window()->findChild<QWidget*>("line_separator");
     if (lineSep) { lineSep->hide(); mainCardLay->removeWidget(lineSep); }
     QHBoxLayout* bottomLay = parentW->window()->findChild<QHBoxLayout*>("hL_BottomArea");
     if (bottomLay) mainCardLay->removeItem(bottomLay);
     QHBoxLayout* avCenterLay = parentW->window()->findChild<QHBoxLayout*>("hL_AvatarCenter");
     if (avCenterLay) mainCardLay->removeItem(avCenterLay);
-
-    // ==========================================================
-    // 模块 A：顶部个人名片区 (Header)
-    // ==========================================================
+    // 构建顶部个人名片区
     QFrame* headerFrame = new QFrame(parentW->window());
     headerFrame->setStyleSheet("QFrame { background-color: #F7F8FA; border-radius: 12px; border: 1px solid #E5E6EB; }");
     QHBoxLayout* hLayHeader = new QHBoxLayout(headerFrame);
     hLayHeader->setContentsMargins(25, 20, 25, 20);
     hLayHeader->setSpacing(20);
-
     QVBoxLayout* avLay = new QVBoxLayout();
     avLay->addWidget(avatarLabel, 0, Qt::AlignCenter);
     if (btnChangeAvatar) avLay->addWidget(btnChangeAvatar, 0, Qt::AlignCenter);
     hLayHeader->addLayout(avLay);
-
     QVBoxLayout* infoLay = new QVBoxLayout();
     infoLay->setAlignment(Qt::AlignVCenter);
-
     QHBoxLayout* nameTitleLay = new QHBoxLayout();
-
     QLabel* headerNameLabel = new QLabel(nameLabel->text());
     headerNameLabel->setObjectName("label_HeaderName");
     headerNameLabel->setStyleSheet("font-size: 22px; font-weight: bold; color: #1F2329; border: none; background: transparent;");
     nameTitleLay->addWidget(headerNameLabel);
-
     QLabel* badgeLabel = new QLabel(QString("%1 · %2").arg(deptLabel ? deptLabel->text() : "").arg(roleLabel ? roleLabel->text() : ""));
     badgeLabel->setObjectName("label_HeaderBadge");
     badgeLabel->setStyleSheet("font-size: 14px; color: #4E5969; font-weight: bold; border: none; background: transparent; margin-left: 10px;");
@@ -187,9 +163,9 @@ void ProfileModule::injectAdvancedUI() {
     infoLay->addSpacing(8);
     if (statusCombo) infoLay->addWidget(statusCombo);
     hLayHeader->addLayout(infoLay, 1);
-
     QHBoxLayout* topActionLay = new QHBoxLayout();
     QString iconBase = "../../AttendanceClient/icon_library/Profile/";
+    // 创建顶部操作按钮
     QPushButton* helpBtn = new QPushButton(" 操作指引与考勤规范");
     helpBtn->setIcon(QIcon(iconBase + "icon_operation.svg"));
     helpBtn->setIconSize(QSize(16, 16)); // 设置合适的图标尺寸
@@ -201,16 +177,11 @@ void ProfileModule::injectAdvancedUI() {
     topActionLay->addWidget(helpBtn);
     topActionLay->addWidget(m_faceBtn);
     hLayHeader->addLayout(topActionLay);
-
     mainCardLay->insertWidget(0, headerFrame);
-
-    // ==========================================================
-    // 模块 B：中部核心内容区 (Content)
-    // ==========================================================
+    // 构建中部内容区
     QHBoxLayout* contentLay = new QHBoxLayout();
     contentLay->setSpacing(20);
-
-    // B1: 左侧大卡片 (仅包含“表单”)
+    // 左侧信息卡片
     QFrame* baseInfoFrame = new QFrame(parentW->window());
     baseInfoFrame->setStyleSheet(cardStyle);
     QVBoxLayout* baseInfoLay = new QVBoxLayout(baseInfoFrame);
@@ -219,64 +190,52 @@ void ProfileModule::injectAdvancedUI() {
     baseInfoTitle->setStyleSheet("font-size: 16px; font-weight: bold; color: #1F2329; border: none;");
     baseInfoLay->addWidget(baseInfoTitle);
     baseInfoLay->addSpacing(15);
-
-    // 纯表单容器
+    // 组装表单内容
     QVBoxLayout* formWrapperLay = new QVBoxLayout();
     formWrapperLay->setSpacing(12);
-
     if (formLay) {
         for (int i = 0; i < formLay->rowCount(); ++i) {
             QLayoutItem* fieldItem = formLay->itemAt(i, QFormLayout::FieldRole);
             if (!fieldItem || !fieldItem->widget()) continue;
             QWidget* fieldWidget = fieldItem->widget();
-
             QWidget* labelWidget = formLay->labelForField(fieldWidget);
             QLabel* titleLabel = qobject_cast<QLabel*>(labelWidget);
             if (!titleLabel) continue;
-
+            // 将每一行包装成独立卡片
             QWidget* rowContainer = new QWidget(baseInfoFrame);
             rowContainer->setObjectName("infoRowBox");
             rowContainer->setStyleSheet("QWidget#infoRowBox { background-color: #F7F8FA; border: 1px solid #E5E6EB; border-radius: 6px; }");
             rowContainer->setFixedHeight(40);
-
             QHBoxLayout* rowLay = new QHBoxLayout(rowContainer);
             rowLay->setContentsMargins(15, 0, 15, 0);
-
             titleLabel->setStyleSheet("QLabel { font-size: 13px; color: #4E5969; font-weight: bold; background: transparent; border: none; }");
             rowLay->addWidget(titleLabel);
-
-
             QLabel* dataLabel = qobject_cast<QLabel*>(fieldWidget);
             if (dataLabel) { dataLabel->setStyleSheet("QLabel { font-size: 13px; color: #1F2329; background: transparent; border: none; }"); }
             rowLay->addWidget(fieldWidget);
             rowLay->addStretch();
-
             formWrapperLay->addWidget(rowContainer);
         }
     }
     formWrapperLay->addStretch();
-    baseInfoLay->addLayout(formWrapperLay); // 直接加入左侧卡片
-    contentLay->addWidget(baseInfoFrame, 6); // 左侧大卡片整体占 6 成宽度
-
-    // B2: 右侧列 (终端运行状态卡片 + 二维码卡片)
+    baseInfoLay->addLayout(formWrapperLay);
+    contentLay->addWidget(baseInfoFrame, 6);
+    // 构建右侧状态和二维码区域
     QVBoxLayout* rightColLay = new QVBoxLayout();
     rightColLay->setSpacing(20);
-
-    // 1. 终端状态卡片放在上面
+    // 生成终端状态卡片
     renderDiagnosticsCard();
     QFrame* diagFrame = parentW->window()->findChild<QFrame*>("frame_Diagnostics");
     if (diagFrame) {
         diagFrame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         rightColLay->addWidget(diagFrame);
     }
-
-    // 2. ⭐️ 二维码独立成一张卡片放在下面
+    // 创建二维码卡片
     QFrame* qrFrame = new QFrame(parentW->window());
     qrFrame->setStyleSheet(cardStyle);
     QVBoxLayout* qrFrameLay = new QVBoxLayout(qrFrame);
     qrFrameLay->setContentsMargins(20, 20, 20, 20);
     qrFrameLay->setAlignment(Qt::AlignCenter);
-
     if (qrCodeLabel) {
         qrCodeLabel->setFixedSize(140, 140);
         qrCodeLabel->setStyleSheet("background: white; border: 1px solid #E5E6EB; border-radius: 8px;");
@@ -286,22 +245,15 @@ void ProfileModule::injectAdvancedUI() {
         qrTitleLabel->setStyleSheet("color: #8F959E; font-size: 12px; margin-top: 5px;");
         qrFrameLay->addWidget(qrTitleLabel, 0, Qt::AlignCenter);
     }
-
-    rightColLay->addWidget(qrFrame); // 把二维码卡片挂载到右侧列
-    rightColLay->addStretch();       // 底部加上弹簧，把卡片往上推齐
-
-    contentLay->addLayout(rightColLay, 4); // 右侧列整体占 4 成宽度
-
+    rightColLay->addWidget(qrFrame);
+    rightColLay->addStretch();
+    contentLay->addLayout(rightColLay, 4);
     mainCardLay->insertLayout(1, contentLay);
-
-    // ==========================================================
-    // 模块 C：底部操作栏 (Footer)
-    // ==========================================================
+    // 构建底部操作栏
     QFrame* footerFrame = new QFrame(parentW->window());
     footerFrame->setStyleSheet(cardStyle + "QFrame { background-color: #F8FAFF; border-color: #BED0FF; }");
     QHBoxLayout* footerLay = new QHBoxLayout(footerFrame);
     footerLay->setContentsMargins(20, 15, 20, 15);
-
     m_pwdBtn = new QPushButton(" 修改登录密码");
     m_pwdBtn->setIcon(QIcon(iconBase + "btn_password.svg"));
     m_pwdBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #F56C6C; } QPushButton:hover { background-color: #F78989; }");
@@ -311,20 +263,18 @@ void ProfileModule::injectAdvancedUI() {
     m_settingsBtn = new QPushButton(" 系统设置");
     m_settingsBtn->setIcon(QIcon(iconBase + "btn_preference.svg"));
     m_settingsBtn->setStyleSheet(baseStyle + "QPushButton { background-color: #722ED1; } QPushButton:hover { background-color: #8D51DE; }");
-
     footerLay->addWidget(m_pwdBtn);
     footerLay->addWidget(m_exportPdfBtn);
     footerLay->addStretch();
     footerLay->addWidget(m_settingsBtn);
-
     mainCardLay->insertWidget(2, footerFrame);
-
+    // 绑定功能按钮事件
     connect(m_pwdBtn, &QPushButton::clicked, this, &ProfileModule::onChangePasswordClicked);
     connect(m_faceBtn, &QPushButton::clicked, this, &ProfileModule::onReRegisterFaceClicked);
     connect(m_exportPdfBtn, &QPushButton::clicked, this, &ProfileModule::onExportProfilePdfClicked);
     connect(m_settingsBtn, &QPushButton::clicked, this, &ProfileModule::onPreferencesClicked);
     connect(helpBtn, &QPushButton::clicked, this, [this]() { renderHelpAccordion(); });
-
+    // 让性别和电话可点击编辑
     if (m_genderLabel) {
         m_genderLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
         connect(m_genderLabel, &QLabel::linkActivated, this, [this]() { onEditGenderClicked(); });
@@ -334,21 +284,20 @@ void ProfileModule::injectAdvancedUI() {
         connect(m_phoneLabel, &QLabel::linkActivated, this, [this]() { onEditPhoneClicked(); });
     }
 }
+// 从服务器加载个人资料并刷新界面
 void ProfileModule::loadUserProfile(const QString& username) {
     m_currentUser = username;
     QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
-
     if (m_currentUser.isEmpty()) {
         if (m_nameLabel) m_nameLabel->setText("错误：登录名丢失！");
         return;
     }
     if (m_nameLabel) m_nameLabel->setText("正在努力拉取数据...");
-
+    // 请求用户资料
     QJsonObject req;
     req["type"] = "query_user_profile";
     req["name"] = username;
     QJsonObject res = NetworkHelper::request(req);
-
     if (res.isEmpty()) {
         if (m_nameLabel) m_nameLabel->setText("错误：网络断开或服务器未响应！");
         return;
@@ -359,7 +308,6 @@ void ProfileModule::loadUserProfile(const QString& username) {
         if (m_nameLabel) m_nameLabel->setText(QString("<font color='red'>服务端拒绝: %1</font>").arg(errMsg));
         return;
     }
-
     QString formattedId = QString("%1").arg(res["id"].toInt(), 3, 10, QChar('0'));
     QString jobTitle = res["job_title"].toString();
     QString role = res["role"].toString();
@@ -368,7 +316,7 @@ void ProfileModule::loadUserProfile(const QString& username) {
     QString phoneStr = res["phone"].toString().isEmpty() ? "未设置" : res["phone"].toString();
     QString realName = res["real_name"].toString();
     if (realName.isEmpty()) realName = username;
-
+    // 刷新基础信息标签
     if (m_nameLabel) m_nameLabel->setText(realName);
     if (m_deptLabel) m_deptLabel->setText(dept);
     if (m_genderLabel) {
@@ -379,7 +327,7 @@ void ProfileModule::loadUserProfile(const QString& username) {
         m_phoneLabel->setText(QString("%1 &nbsp;<a href='edit_phone' style='color:#50C0C0; text-decoration:none; font-size:13px;'>"
             "<img src='../../AttendanceClient/icon_library/Profile/btn_edit.svg' width='14' height='14' align='middle'> 修改</a>").arg(phoneStr));
     }
-
+    // 同步顶部标题栏信息
     if (window) {
         QLabel* headerName = window->findChild<QLabel*>("label_HeaderName");
         if (headerName) headerName->setText(realName);
@@ -387,7 +335,7 @@ void ProfileModule::loadUserProfile(const QString& username) {
         QLabel* headerBadge = window->findChild<QLabel*>("label_HeaderBadge");
         if (headerBadge) headerBadge->setText(QString("%1 · %2").arg(dept, jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle));
     }
-
+    // 更新左侧说明标签
     if (window) {
         QString absIconBase = QFileInfo("../../AttendanceClient/icon_library/Profile/").absoluteFilePath() + "/";
         QLabel* lb1 = window->findChild<QLabel*>("lb_1");
@@ -409,13 +357,12 @@ void ProfileModule::loadUserProfile(const QString& username) {
         QLabel* lb6 = window->findChild<QLabel*>("lb_name");
         if (!lb6) lb6 = window->findChild<QLabel*>("label_Name");
         if (lb6) lb6->setText(QString("<img src='%1icon_name.svg' width='16' height='16' align='middle'>&nbsp;员工姓名：").arg(absIconBase));
-
         QLabel* idLabel = window->findChild<QLabel*>("label_ProfileEmpId");
         if (idLabel) idLabel->setText(formattedId);
         QLabel* roleLabel = window->findChild<QLabel*>("label_ProfileRole");
         if (roleLabel) roleLabel->setText(jobTitle.isEmpty() || jobTitle == "未分配" ? role : jobTitle);
     }
-
+    // 生成电子名片二维码内容
     QString cardData = QString::fromUtf8(
         "┌──────────────┐\n"
         "│  员工电子名片  │\n"
@@ -428,6 +375,7 @@ void ProfileModule::loadUserProfile(const QString& username) {
         "└──────────────┘")
         .arg(realName, formattedId, dept, jobTitle, phoneStr);
     {
+        // 生成二维码并显示到界面
         using namespace qrcodegen;
         QrCode qr = QrCode::encodeText(cardData.toUtf8().constData(), QrCode::Ecc::LOW);
         int sz = qr.getSize();
@@ -452,55 +400,53 @@ void ProfileModule::loadUserProfile(const QString& username) {
             }
         }
     }
-
+    // 加载头像数据
     QString avatarPath = res["avatar_path"].toString();
     QString avatarBase64 = res["avatar_base64"].toString();
     bool hasFilePath = !avatarPath.isEmpty() && avatarPath.contains("/") && !avatarPath.startsWith("/9j/");
     if (hasFilePath) {
+        // 头像为路径时先读取文件内容
         QJsonObject avReq;
         avReq["type"] = "query_avatar_file";
         avReq["avatar_path"] = avatarPath;
         QJsonObject avRes = NetworkHelper::request(avReq);
         if (avRes["status"].toString() == "success") avatarBase64 = avRes["avatar_data"].toString();
     }
-
-    // ⭐️ 核心重构：实现完美的圆形头像
+    // 渲染圆形头像
     if (!avatarBase64.isEmpty()) {
         QFuture<QImage> future = QtConcurrent::run([avatarBase64]() -> QImage {
             QImage result, img;
             img.loadFromData(QByteArray::fromBase64(avatarBase64.toUtf8()));
             if (!img.isNull()) {
-                // 定义最终大小，必须是正方形
+                // 设置头像大小
                 int size = 130;
-
-                // 1. 裁剪为正方形 (QKeepAspectRatioByExpanding)
+                // 裁剪为正方形
                 QImage scaledImg = img.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
                 QImage squareImg = scaledImg.copy((scaledImg.width() - size) / 2, (scaledImg.height() - size) / 2, size, size);
-
-                // 2. 在一个透明背景的 QImage 上绘制clip圆
+                // 绘制圆形透明头像
                 result = QImage(size, size, QImage::Format_ARGB32_Premultiplied);
-                result.fill(Qt::transparent); // 关键：填充透明背景
+                result.fill(Qt::transparent);
                 QPainter painter(&result);
-                painter.setRenderHint(QPainter::Antialiasing); // 高级抗锯齿
+                painter.setRenderHint(QPainter::Antialiasing);
                 painter.setRenderHint(QPainter::SmoothPixmapTransform);
-                QPainterPath path; path.addEllipse(0, 0, size, size); // 创建圆形 clip 路径
+                QPainterPath path; path.addEllipse(0, 0, size, size);
                 painter.setClipPath(path);
-                painter.drawImage(0, 0, squareImg); // 绘制裁剪后的图片
+                painter.drawImage(0, 0, squareImg);
                 painter.end();
             }
             return result;
             });
         QFutureWatcher<QImage>* watcher = new QFutureWatcher<QImage>(this);
+        // 头像生成完成后刷新控件
         connect(watcher, &QFutureWatcher<QImage>::finished, this, [this, watcher]() {
             QImage resImg = watcher->result();
             if (!resImg.isNull() && m_avatarLabel) {
                 m_avatarLabel->setPixmap(QPixmap::fromImage(resImg));
-                // ⭐️ 关闭 QLabel 自伸缩，保持固定大小和原型
                 m_avatarLabel->setScaledContents(false);
                 m_avatarLabel->setAlignment(Qt::AlignCenter);
             }
             else if (m_avatarLabel) {
-                // 模拟默认头像也需要是圆形的
+                // 默认头像使用圆形占位
                 QImage d(130, 130, QImage::Format_ARGB32_Premultiplied);
                 d.fill(Qt::transparent);
                 QPainter p(&d); p.setRenderHint(QPainter::Antialiasing); p.setBrush(Qt::darkCyan); p.setPen(Qt::NoPen);
@@ -512,15 +458,16 @@ void ProfileModule::loadUserProfile(const QString& username) {
         watcher->setFuture(future);
     }
     else if (m_avatarLabel) {
+        // 无头像时显示默认占位
         QImage d(130, 130, QImage::Format_ARGB32_Premultiplied);
         d.fill(Qt::transparent);
         QPainter p(&d); p.setRenderHint(QPainter::Antialiasing); p.setBrush(Qt::darkCyan); p.setPen(Qt::NoPen);
         p.drawEllipse(0, 0, 130, 130); p.end();
         m_avatarLabel->setPixmap(QPixmap::fromImage(d));
     }
-
     renderDiagnosticsCard();
 }
+// 修改性别
 void ProfileModule::onEditGenderClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("修改性别");
@@ -546,7 +493,7 @@ void ProfileModule::onEditGenderClicked() {
         loadUserProfile(m_currentUser);
     }
 }
-
+// 修改手机号
 void ProfileModule::onEditPhoneClicked() {
     bool ok;
     QInputDialog dialog((QWidget*)this->parent());
@@ -582,7 +529,7 @@ void ProfileModule::onEditPhoneClicked() {
         }
     }
 }
-
+// 修改登录密码
 void ProfileModule::onChangePasswordClicked() {
     QWidget* pw = (QWidget*)this->parent();
     QDialog dialog(pw);
@@ -622,7 +569,7 @@ void ProfileModule::onChangePasswordClicked() {
         else { QString e = res["msg"].toString(); QMessageBox::warning(pw, "修改失败", e.isEmpty() ? "服务端未响应" : e); }
     }
 }
-// 响应用户点击修改头像按钮：打开本地文件选择器，进行图片裁剪缩放，并向服务端发起更换请求
+// 修改头像并上传到服务端
 void ProfileModule::onChangeAvatarClicked()
 {
     QWidget* parentWidget = (QWidget*)this->parent();
@@ -630,13 +577,12 @@ void ProfileModule::onChangeAvatarClicked()
     if (filePath.isEmpty()) return;
     QPixmap pix(filePath);
     if (pix.isNull()) {
-        // ⭐️ 修复 2：修改警告弹窗的父对象
         QMessageBox::warning(parentWidget, "错误", "无法加载图片！");
         return;
     }
     QString currentName = m_nameLabel->text().trimmed();
     if (currentName.isEmpty()) return;
-    // 统一缩放并裁剪为 100x100 的正方形
+    // 裁剪头像为正方形
     QPixmap scaledPix = pix.scaled(100, 100, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
     int x = (scaledPix.width() - 100) / 2;
     int y = (scaledPix.height() - 100) / 2;
@@ -654,6 +600,7 @@ void ProfileModule::onChangeAvatarClicked()
         oldFile.rename(backupPath);
     }
     finalPix.save(localPath, "JPG", 90);
+    // 生成圆形预览图
     QPainterPath path;
     path.addEllipse(0, 0, 100, 100);
     QPixmap roundedPix(100, 100);
@@ -663,12 +610,11 @@ void ProfileModule::onChangeAvatarClicked()
     painter.setClipPath(path);
     painter.drawPixmap(0, 0, finalPix);
     m_avatarLabel->setPixmap(roundedPix);
-
+    // 上传头像数据到服务端
     QByteArray imgData;
     QBuffer buffer(&imgData);
     buffer.open(QIODevice::WriteOnly);
     finalPix.save(&buffer, "JPG", 80); 
-
     QJsonObject req;
     req["type"] = "upload_avatar";
     req["name"] = currentName;  
@@ -676,6 +622,7 @@ void ProfileModule::onChangeAvatarClicked()
     NetworkHelper::sendAsync(req);
     QMessageBox::information(parentWidget, "成功", "头像修改成功！");
 }
+// 导出个人入职档案为 PDF
 void ProfileModule::onExportProfilePdfClicked() {
     if (m_currentUser.isEmpty()) return;
     QString defaultName = QString("%1_入职登记表.pdf").arg(m_currentUser);
@@ -688,9 +635,11 @@ void ProfileModule::onExportProfilePdfClicked() {
     writer.setResolution(300);
     QPainter painter(&writer);
     if (!painter.isActive()) return;
+    // 设置版面参数
     int width = writer.width();
     int height = writer.height();
     int margin = 200;
+    // 重新读取个人资料用于导出
     QJsonObject req;
     req["type"] = "query_user_profile";
     req["name"] = m_currentUser;
@@ -700,6 +649,7 @@ void ProfileModule::onExportProfilePdfClicked() {
     QString cleanDept = res["department"].toString();
     painter.setFont(QFont("Microsoft YaHei", 24, QFont::Bold));
     painter.drawText(0, 0, width, 400, Qt::AlignCenter, "员工入职登记档案");
+    // 绘制表格边框
     painter.setPen(QPen(Qt::black, 5));
     painter.drawRect(margin, 500, width - 2 * margin, 2000);
     painter.setPen(QPen(Qt::black, 2));
@@ -716,6 +666,7 @@ void ProfileModule::onExportProfilePdfClicked() {
     auto drawCellValue = [&](int row, QString text) {
         painter.drawText(margin + 550, 500 + row * 400, 1000, 400, Qt::AlignVCenter, text);
         };
+    // 填写基础信息
     drawCellLabel(0, "真实姓名"); drawCellValue(0, m_currentUser);
     drawCellLabel(1, "所属部门"); drawCellValue(1, cleanDept);
     drawCellLabel(2, "联系电话"); drawCellValue(2, cleanPhone);
@@ -733,6 +684,7 @@ void ProfileModule::onExportProfilePdfClicked() {
     else {
         painter.drawText(width - 750, 500, 600, 800, Qt::AlignCenter, "（未上传照片）");
     }
+    // 写入页脚时间
     painter.setFont(QFont("Microsoft YaHei", 10, QFont::Normal));
     painter.setPen(Qt::gray);
     QString timeStr = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
@@ -742,48 +694,44 @@ void ProfileModule::onExportProfilePdfClicked() {
     QMessageBox::information((QWidget*)this->parent(), "导出成功",
         "员工档案已成功导出为 PDF");
 }
-
+// 发起人脸重录申请
 void ProfileModule::onReRegisterFaceClicked() {
     QWidget* pw = (QWidget*)this->parent();
-
+    // 查询可选审批人
     QJsonObject cReq; cReq["type"] = "query_approval_candidates"; cReq["name"] = m_currentUser;
     QJsonObject cRes = NetworkHelper::request(cReq);
     if (cRes.isEmpty() || !cRes.contains("my_role")) {
         QMessageBox::critical(pw, "错误", "无法获取审批信息，请检查网络！");
         return;
     }
-
     QString role = cRes["my_role"].toString();
     QString dept = cRes["my_dept"].toString();
     QString jobTitle = cRes["my_job"].toString();
     QJsonArray hrArr = cRes["hr_list"].toArray();
     QJsonArray gmArr = cRes["gm_list"].toArray();
     QJsonArray mgrArr = cRes["mgr_list"].toArray();
-
     QDialog dialog(pw);
     dialog.setWindowTitle("人脸重录申请单");
     dialog.resize(280, 280);
     QFormLayout* form = new QFormLayout(&dialog);
     form->setContentsMargins(25, 25, 25, 25);
     form->setSpacing(15);
-
+    // 输入框样式
     QString modernInputStyle =
         "QComboBox, QTextEdit { border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 10px; background: white; color: #606266; font-size: 13px; min-height: 28px; }"
         "QComboBox:hover, QTextEdit:hover { border-color: #C0C4CC; }"
         "QComboBox:focus, QTextEdit:focus { border-color: #409EFF; }"
         "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 25px; border-left: none; }"
         "QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #909399; }";
-
     QLabel* tip = new QLabel("人脸特征重采集需经审批通过后方可执行，请填写申请理由并选择审批人！");
     tip->setStyleSheet("color: #E6A23C; font-size: 16px; margin-bottom: 8px; line-height: 1.5;");
     form->addRow(tip);
-
+    // 填写申请理由
     QTextEdit* reasonEdit = new QTextEdit(&dialog);
     reasonEdit->setPlaceholderText("请输入人脸重录原因（如：面部变化、原照片质量差等）");
     reasonEdit->setMaximumHeight(80);
     reasonEdit->setStyleSheet(modernInputStyle);
     form->addRow("申请理由:", reasonEdit);
-
     auto fillFromArray = [](QComboBox* cb, const QJsonArray& arr, const QString& prefix) {
         cb->clear();
         for (int i = 0; i < arr.size(); ++i) {
@@ -791,16 +739,14 @@ void ProfileModule::onReRegisterFaceClicked() {
             cb->addItem(prefix + name, name);
         }
         };
-
+    // 准备审批人下拉框
     QComboBox* app1 = new QComboBox(&dialog), * app2 = new QComboBox(&dialog), * app3 = new QComboBox(&dialog);
     app1->setStyleSheet(modernInputStyle);
     app2->setStyleSheet(modernInputStyle);
     app3->setStyleSheet(modernInputStyle);
-
     auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: "); };
     auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: "); };
     auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
-
     int levels = 0;
     if (dept == "总经办" && jobTitle == "总经理") {
         levels = 1; fillHR(app1);
@@ -836,7 +782,7 @@ void ProfileModule::onReRegisterFaceClicked() {
         form->addRow("第二审批人:", app2);
         form->addRow("第三审批人:", app3);
     }
-
+    // 提交和取消按钮
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     bb->button(QDialogButtonBox::Ok)->setText("提交申请");
     bb->button(QDialogButtonBox::Ok)->setStyleSheet("QPushButton { background-color: #67C23A; color: white; border-radius: 4px; padding: 6px 20px; font-weight: bold; border: none; } QPushButton:hover { background-color: #85CE61; }");
@@ -845,7 +791,6 @@ void ProfileModule::onReRegisterFaceClicked() {
     form->addRow(bb);
     connect(bb, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
     if (dialog.exec() == QDialog::Accepted) {
         if (app1->count() == 0) {
             QMessageBox::critical(pw, "失败", "无有效的第一审批人，请联系管理员！");
@@ -853,18 +798,17 @@ void ProfileModule::onReRegisterFaceClicked() {
         }
         QString reason = reasonEdit->toPlainText().trimmed();
         if (reason.isEmpty()) { QMessageBox::warning(pw, "提示", "请填写申请理由！"); return; }
-
+        // 组装审批链
         QStringList chainList;
         chainList << app1->currentData().toString();
         if (levels >= 2 && app2->count() > 0) chainList << app2->currentData().toString();
         if (levels >= 3 && app3->count() > 0) chainList << app3->currentData().toString();
-
         QJsonObject req;
         req["type"] = "face_reregister_request";
         req["applicant"] = m_currentUser;
         req["reason"] = reason;
         req["approver"] = chainList.join(",");
-
+        // 提交申请
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") {
             QMessageBox::information(pw, "申请已提交",
@@ -876,7 +820,7 @@ void ProfileModule::onReRegisterFaceClicked() {
         }
     }
 }
-
+// 打开系统偏好设置
 void ProfileModule::onPreferencesClicked() {
     QDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("系统偏好设置");
@@ -888,10 +832,10 @@ void ProfileModule::onPreferencesClicked() {
     QSettings settings("config.ini", QSettings::IniFormat);
     bool voiceEnabled = settings.value("Preferences/VoiceEnabled", true).toBool();
     bool popupEnabled = settings.value("Preferences/PopupEnabled", true).toBool();
+    // 语音开关
     QCheckBox* voiceCheck = new QCheckBox(" 开启打卡成功/失败语音播报");
     voiceCheck->setChecked(voiceEnabled);
     voiceCheck->setCursor(Qt::PointingHandCursor);
-
     QString customVoiceCheckStyle =
         "QCheckBox {"
         "   spacing: 10px;"
@@ -913,7 +857,6 @@ void ProfileModule::onPreferencesClicked() {
     QCheckBox* popupCheck = new QCheckBox(" 接收系统全局广播弹窗");
     popupCheck->setChecked(popupEnabled);
     popupCheck->setCursor(Qt::PointingHandCursor);
-
     QString customBroadcastCheckStyle =
         "QCheckBox {"
         "   spacing: 10px;"
@@ -932,34 +875,27 @@ void ProfileModule::onPreferencesClicked() {
         "   image: url(../../AttendanceClient/icon_library/Profile/icon_broadcast_tick.svg);"
         "}";
     popupCheck->setStyleSheet(customBroadcastCheckStyle);
-
     layout.addWidget(voiceCheck);
     layout.addWidget(popupCheck);
-
     QDialogButtonBox buttonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     buttonBox.button(QDialogButtonBox::Save)->setStyleSheet("QPushButton { background-color: #409EFF; color: white; border-radius: 4px; padding: 6px 15px; border: none; } QPushButton:hover { background-color: #66b1ff; }");
     buttonBox.button(QDialogButtonBox::Cancel)->setStyleSheet("QPushButton { background-color: #FFFFFF; color: #606266; border: 1px solid #DCDFE6; border-radius: 4px; padding: 6px 15px; } QPushButton:hover { color: #409EFF; border-color: #c6e2ff; background-color: #ecf5ff; }");
-
     layout.addWidget(&buttonBox);
-
     connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
     if (dialog.exec() == QDialog::Accepted) {
         settings.setValue("Preferences/VoiceEnabled", voiceCheck->isChecked());
         settings.setValue("Preferences/PopupEnabled", popupCheck->isChecked());
         QMessageBox::information((QWidget*)this->parent(), "设置已完成", "重启后生效。");
     }
 }
-
-// 终端运行态势诊断卡片 (右侧卡片)
+// 渲染终端状态卡片
 void ProfileModule::renderDiagnosticsCard()
 {
     QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
     if (!window) return;
-
     if (window->findChild<QFrame*>("frame_Diagnostics")) return;
-
+    // 获取本机网络和硬件状态
     QString localIP = "未知";
     for (const QHostAddress& addr : QNetworkInterface::allAddresses()) {
         if (addr.protocol() == QAbstractSocket::IPv4Protocol && !addr.isLoopback()) {
@@ -972,71 +908,58 @@ void ProfileModule::renderDiagnosticsCard()
     QString cameraName = cameraOnline ? cameras.first().description() : "未检测到摄像头";
     QString version = "v1.0.3";
     QString sysTime = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-
-    QFrame* diagFrame = new QFrame(window); // ⭐️ 唯一初始化，带上 parent
+    // 创建状态卡片
+    QFrame* diagFrame = new QFrame(window);
     diagFrame->setObjectName("frame_Diagnostics");
-    diagFrame->setFixedWidth(260); // 固定宽度与二维码卡片保持一致
-
+    diagFrame->setFixedWidth(260);
     diagFrame->setStyleSheet(
         "QFrame#frame_Diagnostics {"
         "  background-color: #FFFFFF;"
         "  border: 1px solid #E5E6EB;"
         "  border-radius: 12px;"
         "}");
-
     QVBoxLayout* diagLay = new QVBoxLayout(diagFrame);
     diagLay->setContentsMargins(15, 15, 15, 15);
     diagLay->setSpacing(8);
-
     QLabel* titleLabel = new QLabel("终端运行状态");
     titleLabel->setStyleSheet("font-family:'Microsoft YaHei'; font-size:13px; font-weight:bold; color:#1F2329; border:none;");
     titleLabel->setAlignment(Qt::AlignCenter);
     diagLay->addWidget(titleLabel);
-
     QFrame* line = new QFrame();
     line->setFrameShape(QFrame::HLine);
     line->setStyleSheet("color:#DEE0E3; border:none; background-color:#DEE0E3; max-height:1px;");
     diagLay->addWidget(line);
-
     auto addDiagItem = [&](const QString& icon, const QString& label, const QString& value, bool isGreen) {
         QHBoxLayout* row = new QHBoxLayout();
         row->setSpacing(6);
-
         QLabel* iconLbl = new QLabel();
         iconLbl->setPixmap(QIcon(icon).pixmap(16, 16));
         iconLbl->setFixedSize(16, 16);
         iconLbl->setStyleSheet("border:none;");
-
         QLabel* nameLbl = new QLabel(label);
         nameLbl->setStyleSheet("font-size:11px; color:#8F959E; border:none;");
-
         QLabel* valLbl = new QLabel(value);
         valLbl->setStyleSheet(QString("font-size:11px; font-weight:bold; color:%1; border:none;")
             .arg(isGreen ? "#00B42A" : "#F53F3F"));
         valLbl->setWordWrap(true);
-
         row->addWidget(iconLbl);
         row->addWidget(nameLbl);
         row->addStretch();
         row->addWidget(valLbl);
         diagLay->addLayout(row);
         };
-
     QString iconBase2 = "../../AttendanceClient/icon_library/Profile/";
-
+    // 填充状态项
     addDiagItem(iconBase2 + "icon_LAN.svg", "局域网 IP", localIP, true);
     addDiagItem(iconBase2 + (cameraOnline ? "icon_cameras_on.svg" : "icon_cameras_off.svg"), "摄像头", cameraOnline ? "在线" : "离线", cameraOnline);
-
     QLabel* camNameLbl = new QLabel("  " + cameraName);
     camNameLbl->setObjectName("RealCameraNameLabel"); 
     camNameLbl->setStyleSheet("font-size:10px; color:#8F959E; border:none;");
     camNameLbl->setWordWrap(true);
     diagLay->addWidget(camNameLbl);
-
     QLabel* timeValLabel = new QLabel(sysTime);
     timeValLabel->setObjectName("diagTimeLabel");
     timeValLabel->setStyleSheet("font-size:11px; font-weight:bold; color:#00B42A; border:none;");
-
     QHBoxLayout* timeRow = new QHBoxLayout();
     timeRow->setSpacing(6);
     QLabel* timeIcon = new QLabel();
@@ -1050,15 +973,12 @@ void ProfileModule::renderDiagnosticsCard()
     timeRow->addStretch();
     diagLay->addLayout(timeRow);
     diagLay->addWidget(timeValLabel);
-
     QTimer* timer = new QTimer(diagFrame);
     connect(timer, &QTimer::timeout, [timeValLabel]() {
         timeValLabel->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
         });
     timer->start(1000);
-
     diagLay->addStretch();
-
     QLabel* summaryLabel = new QLabel(cameraOnline ? "✓ 终端状态正常" : "✗ 摄像头异常");
     summaryLabel->setAlignment(Qt::AlignCenter);
     summaryLabel->setStyleSheet(QString(
@@ -1071,24 +991,20 @@ void ProfileModule::renderHelpAccordion()
 {
     QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
     if (!window) return;
-
     QDialog dialog(window);
     dialog.setWindowTitle("操作指引与考勤规范");
     dialog.resize(480, 520);
     dialog.setStyleSheet("QDialog { background-color: #FFFFFF; }");
-
     QVBoxLayout* mainLay = new QVBoxLayout(&dialog);
     mainLay->setContentsMargins(20, 20, 20, 20);
-
     QScrollArea* scrollArea = new QScrollArea(&dialog);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setStyleSheet("QScrollArea { background: transparent; border: none; }");
-
     QWidget* scrollWidget = new QWidget();
     QVBoxLayout* helpLay = new QVBoxLayout(scrollWidget);
     helpLay->setSpacing(8);
-
+    // 添加可折叠帮助项
     auto addAccordionItem = [&](const QString& title, const QString& content) {
         QPushButton* headerBtn = new QPushButton("▸ " + title);
         headerBtn->setCursor(Qt::PointingHandCursor);
@@ -1097,7 +1013,6 @@ void ProfileModule::renderHelpAccordion()
             "font-family:'Microsoft YaHei'; font-size:14px; font-weight:bold; "
             "color:#1F2329; padding:12px; border-radius: 6px; }"
             "QPushButton:hover { background-color:#F2F3F5; color:#3370FF; }");
-
         QTextBrowser* bodyBrowser = new QTextBrowser();
         bodyBrowser->setOpenExternalLinks(false);
         bodyBrowser->setVisible(false);
@@ -1106,35 +1021,28 @@ void ProfileModule::renderHelpAccordion()
             "font-size:13px; color:#4E5969; padding:12px; }");
         bodyBrowser->setHtml(content);
         bodyBrowser->setMinimumHeight(140);
-
         connect(headerBtn, &QPushButton::clicked, [headerBtn, bodyBrowser]() {
             bool visible = !bodyBrowser->isVisible();
             bodyBrowser->setVisible(visible);
             headerBtn->setText((visible ? "▾ " : "▸ ") + headerBtn->text().mid(2));
             });
-
         helpLay->addWidget(headerBtn);
         helpLay->addWidget(bodyBrowser);
         };
-
-    // 动态加载外部 JSON 说明文档
+    // 读取帮助配置文件
     QString filePath = QCoreApplication::applicationDirPath() + "/config/help_docs.json";
     QFile file(filePath);
-
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QByteArray data = file.readAll();
         file.close();
-
         QJsonParseError parseError;
         QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-
         if (parseError.error == QJsonParseError::NoError && doc.isArray()) {
             QJsonArray arr = doc.array();
             for (int i = 0; i < arr.size(); ++i) {
                 QJsonObject obj = arr[i].toObject();
                 QString title = obj["title"].toString();
                 QString content = obj["content"].toString();
-
                 addAccordionItem(title, content);
             }
         }
@@ -1142,28 +1050,24 @@ void ProfileModule::renderHelpAccordion()
     helpLay->addStretch();
     scrollArea->setWidget(scrollWidget);
     mainLay->addWidget(scrollArea);
-
     QPushButton* closeBtn = new QPushButton("我知道了", &dialog);
     closeBtn->setStyleSheet("QPushButton { background-color: #3370FF; color: white; border-radius: 6px; padding: 10px; font-weight: bold; border: none; } QPushButton:hover { background-color: #4E83FF; }");
     connect(closeBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
     mainLay->addWidget(closeBtn);
-
     dialog.exec();
 }
+// 更新摄像头编号对应的设备名称
 void ProfileModule::updateCameraId(int camId)
 {
     QWidget* window = m_avatarLabel ? m_avatarLabel->window() : nullptr;
     if (!window) return;
-
     QLabel* camNameLbl = window->findChild<QLabel*>("RealCameraNameLabel");
     if (camNameLbl) {
         QList<QCameraDevice> cameras = QMediaDevices::videoInputs();
         QString realCamName = "未知设备";
-
         if (camId >= 0 && camId < cameras.size()) {
             realCamName = cameras.at(camId).description();
         }
-
         camNameLbl->setText(QString("  [ID:%1] %2").arg(camId).arg(realCamName));
         camNameLbl->setStyleSheet("font-size:10px; color:#8F959E; border:none;");
     }

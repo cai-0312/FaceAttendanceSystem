@@ -13,38 +13,38 @@ using std::uint8_t;
 using std::size_t;
 using std::vector;
 
+// QR 编码实现命名空间
 namespace qrcodegen {
-
+// 模式构造函数
 QrSegment::Mode::Mode(int mode, int cc0, int cc1, int cc2) :
 	modeBits(mode) {
 	numBitsCharCount[0] = cc0;
 	numBitsCharCount[1] = cc1;
 	numBitsCharCount[2] = cc2;
 }
-
 int QrSegment::Mode::getModeBits() const {
 	return modeBits;
 }
-
 int QrSegment::Mode::numCharCountBits(int ver) const {
 	return numBitsCharCount[(ver + 7) / 17];
 }
-
+// 分段模式常量
 const QrSegment::Mode QrSegment::Mode::NUMERIC     (0x1, 10, 12, 14);
 const QrSegment::Mode QrSegment::Mode::ALPHANUMERIC(0x2,  9, 11, 13);
 const QrSegment::Mode QrSegment::Mode::BYTE        (0x4,  8, 16, 16);
 const QrSegment::Mode QrSegment::Mode::KANJI       (0x8,  8, 10, 12);
 const QrSegment::Mode QrSegment::Mode::ECI         (0x7,  0,  0,  0);
-
+// 二进制分段编码
 QrSegment QrSegment::makeBytes(const vector<uint8_t> &data) {
 	if (data.size() > static_cast<unsigned int>(INT_MAX))
 		throw std::length_error("Data too long");
 	BitBuffer bb;
+  // 按字节写入位流
 	for (uint8_t b : data)
 		bb.appendBits(b, 8);
 	return QrSegment(Mode::BYTE, static_cast<int>(data.size()), std::move(bb));
 }
-
+// 数字分段编码
 QrSegment QrSegment::makeNumeric(const char *digits) {
 	BitBuffer bb;
 	int accumData = 0;
@@ -62,11 +62,12 @@ QrSegment QrSegment::makeNumeric(const char *digits) {
 			accumCount = 0;
 		}
 	}
+ // 处理剩余数字
 	if (accumCount > 0)
 		bb.appendBits(static_cast<uint32_t>(accumData), accumCount * 3 + 1);
 	return QrSegment(Mode::NUMERIC, charCount, std::move(bb));
 }
-
+// 字母数字分段编码
 QrSegment QrSegment::makeAlphanumeric(const char *text) {
 	BitBuffer bb;
 	int accumData = 0;
@@ -84,15 +85,17 @@ QrSegment QrSegment::makeAlphanumeric(const char *text) {
 			accumCount = 0;
 		}
 	}
+ // 处理剩余字符
 	if (accumCount > 0)
 		bb.appendBits(static_cast<uint32_t>(accumData), 6);
 	return QrSegment(Mode::ALPHANUMERIC, charCount, std::move(bb));
 }
-
+// 自动选择分段编码
 vector<QrSegment> QrSegment::makeSegments(const char *text) {
 	vector<QrSegment> result;
 	if (*text == '\0')
 		return result;
+    // 自动选择最合适的编码方式
 	if (isNumeric(text))
 		result.push_back(makeNumeric(text));
 	else if (isAlphanumeric(text))
@@ -105,7 +108,7 @@ vector<QrSegment> QrSegment::makeSegments(const char *text) {
 	}
 	return result;
 }
-
+// ECI 分段编码
 QrSegment QrSegment::makeEci(long assignVal) {
 	BitBuffer bb;
 	if (assignVal < 0)
@@ -122,7 +125,6 @@ QrSegment QrSegment::makeEci(long assignVal) {
 		throw std::domain_error("ECI assignment value out of range");
 	return QrSegment(Mode::ECI, 0, std::move(bb));
 }
-
 QrSegment::QrSegment(const Mode &md, int numCh, const std::vector<bool> &dt) :
 	mode(&md),
 	numChars(numCh),
@@ -130,7 +132,7 @@ QrSegment::QrSegment(const Mode &md, int numCh, const std::vector<bool> &dt) :
 	if (numCh < 0)
 		throw std::domain_error("Invalid value");
 }
-
+// 段构造函数
 QrSegment::QrSegment(const Mode &md, int numCh, std::vector<bool> &&dt) :
 	mode(&md),
 	numChars(numCh),
@@ -138,7 +140,7 @@ QrSegment::QrSegment(const Mode &md, int numCh, std::vector<bool> &&dt) :
 	if (numCh < 0)
 		throw std::domain_error("Invalid value");
 }
-
+// 计算总位数
 int QrSegment::getTotalBits(const vector<QrSegment> &segs, int version) {
 	int result = 0;
 	for (const QrSegment &seg : segs) {
@@ -154,7 +156,7 @@ int QrSegment::getTotalBits(const vector<QrSegment> &segs, int version) {
 	}
 	return result;
 }
-
+// 判断是否全为数字
 bool QrSegment::isNumeric(const char *text) {
 	for (; *text != '\0'; text++) {
 		char c = *text;
@@ -163,7 +165,7 @@ bool QrSegment::isNumeric(const char *text) {
 	}
 	return true;
 }
-
+// 判断是否为字母数字模式
 bool QrSegment::isAlphanumeric(const char *text) {
 	for (; *text != '\0'; text++) {
 		if (std::strchr(ALPHANUMERIC_CHARSET, *text) == nullptr)
@@ -171,21 +173,18 @@ bool QrSegment::isAlphanumeric(const char *text) {
 	}
 	return true;
 }
-
 const QrSegment::Mode &QrSegment::getMode() const {
 	return *mode;
 }
-
 int QrSegment::getNumChars() const {
 	return numChars;
 }
-
 const std::vector<bool> &QrSegment::getData() const {
 	return data;
 }
-
+// 字母数字模式允许的字符集
 const char *QrSegment::ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
-
+// 获取格式位
 int QrCode::getFormatBits(Ecc ecl) {
 	switch (ecl) {
 		case Ecc::LOW     :  return 1;
@@ -195,22 +194,21 @@ int QrCode::getFormatBits(Ecc ecl) {
 		default:  throw std::logic_error("Unreachable");
 	}
 }
-
+// 编码文本
 QrCode QrCode::encodeText(const char *text, Ecc ecl) {
 	vector<QrSegment> segs = QrSegment::makeSegments(text);
 	return encodeSegments(segs, ecl);
 }
-
+// 编码二进制数据
 QrCode QrCode::encodeBinary(const vector<uint8_t> &data, Ecc ecl) {
 	vector<QrSegment> segs{QrSegment::makeBytes(data)};
 	return encodeSegments(segs, ecl);
 }
-
 QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl,
 	int minVersion, int maxVersion, int mask, bool boostEcl) {
 	if (!(MIN_VERSION <= minVersion && minVersion <= maxVersion && maxVersion <= MAX_VERSION) || mask < -1 || mask > 7)
 		throw std::invalid_argument("Invalid value");
-
+   // 选择可容纳数据的最小版本
 	int version, dataUsedBits;
 	for (version = minVersion; ; version++) {
 		int dataCapacityBits = getNumDataCodewords(version, ecl) * 8;
@@ -234,7 +232,7 @@ QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl,
 		if (boostEcl && dataUsedBits <= getNumDataCodewords(version, newEcl) * 8)
 			ecl = newEcl;
 	}
-
+ // 拼接段数据
 	BitBuffer bb;
 	for (const QrSegment &seg : segs) {
 		bb.appendBits(static_cast<uint32_t>(seg.getMode().getModeBits()), 4);
@@ -242,23 +240,20 @@ QrCode QrCode::encodeSegments(const vector<QrSegment> &segs, Ecc ecl,
 		bb.insert(bb.end(), seg.getData().begin(), seg.getData().end());
 	}
 	assert(bb.size() == static_cast<unsigned int>(dataUsedBits));
-
+   // 填充到容量大小
 	size_t dataCapacityBits = static_cast<size_t>(getNumDataCodewords(version, ecl)) * 8;
 	assert(bb.size() <= dataCapacityBits);
 	bb.appendBits(0, std::min(4, static_cast<int>(dataCapacityBits - bb.size())));
 	bb.appendBits(0, (8 - static_cast<int>(bb.size() % 8)) % 8);
 	assert(bb.size() % 8 == 0);
-
 	for (uint8_t padByte = 0xEC; bb.size() < dataCapacityBits; padByte ^= 0xEC ^ 0x11)
 		bb.appendBits(padByte, 8);
-
+    // 转为字节数组
 	vector<uint8_t> dataCodewords(bb.size() / 8);
 	for (size_t i = 0; i < bb.size(); i++)
 		dataCodewords.at(i >> 3) |= (bb.at(i) ? 1 : 0) << (7 - (i & 7));
-
 	return QrCode(version, ecl, dataCodewords, mask);
 }
-
 QrCode::QrCode(int ver, Ecc ecl, const vector<uint8_t> &dataCodewords, int msk) :
 	version(ver),
 	errorCorrectionLevel(ecl) {
@@ -270,11 +265,13 @@ QrCode::QrCode(int ver, Ecc ecl, const vector<uint8_t> &dataCodewords, int msk) 
 	size_t sz = static_cast<size_t>(size);
 	modules    = vector<vector<bool> >(sz, vector<bool>(sz));
 	isFunction = vector<vector<bool> >(sz, vector<bool>(sz));
-
+ // 绘制功能图案
 	drawFunctionPatterns();
+    // 追加纠错并分块
 	const vector<uint8_t> allCodewords = addEccAndInterleave(dataCodewords);
+    // 写入数据码字
 	drawCodewords(allCodewords);
-
+    // 自动选择掩码
 	if (msk == -1) {
 		long minPenalty = LONG_MAX;
 		for (int i = 0; i < 8; i++) {
@@ -290,43 +287,41 @@ QrCode::QrCode(int ver, Ecc ecl, const vector<uint8_t> &dataCodewords, int msk) 
 	}
 	assert(0 <= msk && msk <= 7);
 	mask = msk;
+ // 应用掩码并写入格式信息
 	applyMask(msk);
 	drawFormatBits(msk);
-
 	isFunction.clear();
 	isFunction.shrink_to_fit();
 }
-
+// 获取版本号
 int QrCode::getVersion() const {
 	return version;
 }
-
+// 获取二维码边长
 int QrCode::getSize() const {
 	return size;
 }
-
+// 获取纠错级别
 QrCode::Ecc QrCode::getErrorCorrectionLevel() const {
 	return errorCorrectionLevel;
 }
-
+// 获取掩码编号
 int QrCode::getMask() const {
 	return mask;
 }
-
+// 读取模块颜色
 bool QrCode::getModule(int x, int y) const {
 	return 0 <= x && x < size && 0 <= y && y < size && module(x, y);
 }
-
 void QrCode::drawFunctionPatterns() {
+    // 绘制定位线
 	for (int i = 0; i < size; i++) {
 		setFunctionModule(6, i, i % 2 == 0);
 		setFunctionModule(i, 6, i % 2 == 0);
 	}
-
 	drawFinderPattern(3, 3);
 	drawFinderPattern(size - 4, 3);
 	drawFinderPattern(3, size - 4);
-
 	const vector<int> alignPatPos = getAlignmentPatternPositions();
 	size_t numAlign = alignPatPos.size();
 	for (size_t i = 0; i < numAlign; i++) {
@@ -335,19 +330,17 @@ void QrCode::drawFunctionPatterns() {
 				drawAlignmentPattern(alignPatPos.at(i), alignPatPos.at(j));
 		}
 	}
-
 	drawFormatBits(0);
 	drawVersion();
 }
-
 void QrCode::drawFormatBits(int msk) {
+ // 写入格式信息
 	int data = getFormatBits(errorCorrectionLevel) << 3 | msk;
 	int rem = data;
 	for (int i = 0; i < 10; i++)
 		rem = (rem << 1) ^ ((rem >> 9) * 0x537);
 	int bits = (data << 10 | rem) ^ 0x5412;
 	assert(bits >> 15 == 0);
-
 	for (int i = 0; i <= 5; i++)
 		setFunctionModule(8, i, getBit(bits, i));
 	setFunctionModule(8, 7, getBit(bits, 6));
@@ -355,18 +348,16 @@ void QrCode::drawFormatBits(int msk) {
 	setFunctionModule(7, 8, getBit(bits, 8));
 	for (int i = 9; i < 15; i++)
 		setFunctionModule(14 - i, 8, getBit(bits, i));
-
 	for (int i = 0; i < 8; i++)
 		setFunctionModule(size - 1 - i, 8, getBit(bits, i));
 	for (int i = 8; i < 15; i++)
 		setFunctionModule(8, size - 15 + i, getBit(bits, i));
 	setFunctionModule(8, size - 8, true);
 }
-
 void QrCode::drawVersion() {
+   // 写入版本信息
 	if (version < 7)
 		return;
-
 	int rem = version;
 	for (int i = 0; i < 12; i++)
 		rem = (rem << 1) ^ ((rem >> 11) * 0x1F25);
@@ -381,8 +372,8 @@ void QrCode::drawVersion() {
 		setFunctionModule(b, a, bit);
 	}
 }
-
 void QrCode::drawFinderPattern(int x, int y) {
+ // 绘制定位图案
 	for (int dy = -4; dy <= 4; dy++) {
 		for (int dx = -4; dx <= 4; dx++) {
 			int dist = std::max(std::abs(dx), std::abs(dy));
@@ -392,35 +383,33 @@ void QrCode::drawFinderPattern(int x, int y) {
 		}
 	}
 }
-
 void QrCode::drawAlignmentPattern(int x, int y) {
+ // 绘制对齐图案
 	for (int dy = -2; dy <= 2; dy++) {
 		for (int dx = -2; dx <= 2; dx++)
 			setFunctionModule(x + dx, y + dy, std::max(std::abs(dx), std::abs(dy)) != 1);
 	}
 }
-
 void QrCode::setFunctionModule(int x, int y, bool isDark) {
+  // 设置功能模块
 	size_t ux = static_cast<size_t>(x);
 	size_t uy = static_cast<size_t>(y);
 	modules   .at(uy).at(ux) = isDark;
 	isFunction.at(uy).at(ux) = true;
 }
-
 bool QrCode::module(int x, int y) const {
+ // 读取模块值
 	return modules.at(static_cast<size_t>(y)).at(static_cast<size_t>(x));
 }
-
+// 追加纠错码并交错
 vector<uint8_t> QrCode::addEccAndInterleave(const vector<uint8_t> &data) const {
 	if (data.size() != static_cast<unsigned int>(getNumDataCodewords(version, errorCorrectionLevel)))
 		throw std::invalid_argument("Invalid argument");
-
 	int numBlocks = NUM_ERROR_CORRECTION_BLOCKS[static_cast<int>(errorCorrectionLevel)][version];
 	int blockEccLen = ECC_CODEWORDS_PER_BLOCK  [static_cast<int>(errorCorrectionLevel)][version];
 	int rawCodewords = getNumRawDataModules(version) / 8;
 	int numShortBlocks = numBlocks - rawCodewords % numBlocks;
 	int shortBlockLen = rawCodewords / numBlocks;
-
 	vector<vector<uint8_t> > blocks;
 	const vector<uint8_t> rsDiv = reedSolomonComputeDivisor(blockEccLen);
 	for (int i = 0, k = 0; i < numBlocks; i++) {
@@ -432,7 +421,6 @@ vector<uint8_t> QrCode::addEccAndInterleave(const vector<uint8_t> &data) const {
 		dat.insert(dat.end(), ecc.cbegin(), ecc.cend());
 		blocks.push_back(std::move(dat));
 	}
-
 	vector<uint8_t> result;
 	for (size_t i = 0; i < blocks.at(0).size(); i++) {
 		for (size_t j = 0; j < blocks.size(); j++) {
@@ -443,11 +431,10 @@ vector<uint8_t> QrCode::addEccAndInterleave(const vector<uint8_t> &data) const {
 	assert(result.size() == static_cast<unsigned int>(rawCodewords));
 	return result;
 }
-
+// 画入数据码字
 void QrCode::drawCodewords(const vector<uint8_t> &data) {
 	if (data.size() != static_cast<unsigned int>(getNumRawDataModules(version) / 8))
 		throw std::invalid_argument("Invalid argument");
-
 	size_t i = 0;
 	for (int right = size - 1; right >= 1; right -= 2) {
 		if (right == 6)
@@ -466,7 +453,7 @@ void QrCode::drawCodewords(const vector<uint8_t> &data) {
 	}
 	assert(i == data.size() * 8);
 }
-
+// 应用掩码
 void QrCode::applyMask(int msk) {
 	if (msk < 0 || msk > 7)
 		throw std::domain_error("Mask value out of range");
@@ -489,10 +476,9 @@ void QrCode::applyMask(int msk) {
 		}
 	}
 }
-
+// 计算惩罚分
 long QrCode::getPenaltyScore() const {
 	long result = 0;
-
 	for (int y = 0; y < size; y++) {
 		bool runColor = false;
 		int runX = 0;
@@ -535,7 +521,6 @@ long QrCode::getPenaltyScore() const {
 		}
 		result += finderPenaltyTerminateAndCount(runColor, runY, runHistory) * PENALTY_N3;
 	}
-
 	for (int y = 0; y < size - 1; y++) {
 		for (int x = 0; x < size - 1; x++) {
 			bool  color = module(x, y);
@@ -545,7 +530,6 @@ long QrCode::getPenaltyScore() const {
 				result += PENALTY_N2;
 		}
 	}
-
 	int dark = 0;
 	for (const vector<bool> &row : modules) {
 		for (bool color : row) {
@@ -560,7 +544,7 @@ long QrCode::getPenaltyScore() const {
 	assert(0 <= result && result <= 2568888L);
 	return result;
 }
-
+// 获取对齐图案位置
 vector<int> QrCode::getAlignmentPatternPositions() const {
 	if (version == 1)
 		return vector<int>();
@@ -574,7 +558,7 @@ vector<int> QrCode::getAlignmentPatternPositions() const {
 		return result;
 	}
 }
-
+// 计算原始数据模块数
 int QrCode::getNumRawDataModules(int ver) {
 	if (ver < MIN_VERSION || ver > MAX_VERSION)
 		throw std::domain_error("Version number out of range");
@@ -588,13 +572,13 @@ int QrCode::getNumRawDataModules(int ver) {
 	assert(208 <= result && result <= 29648);
 	return result;
 }
-
+// 计算数据码字数
 int QrCode::getNumDataCodewords(int ver, Ecc ecl) {
 	return getNumRawDataModules(ver) / 8
 		- ECC_CODEWORDS_PER_BLOCK    [static_cast<int>(ecl)][ver]
 		* NUM_ERROR_CORRECTION_BLOCKS[static_cast<int>(ecl)][ver];
 }
-
+// 计算 RS 除数
 vector<uint8_t> QrCode::reedSolomonComputeDivisor(int degree) {
 	if (degree < 1 || degree > 255)
 		throw std::domain_error("Degree out of range");
@@ -611,7 +595,7 @@ vector<uint8_t> QrCode::reedSolomonComputeDivisor(int degree) {
 	}
 	return result;
 }
-
+// 计算 RS 余数
 vector<uint8_t> QrCode::reedSolomonComputeRemainder(const vector<uint8_t> &data, const vector<uint8_t> &divisor) {
 	vector<uint8_t> result(divisor.size());
 	for (uint8_t b : data) {
@@ -623,7 +607,7 @@ vector<uint8_t> QrCode::reedSolomonComputeRemainder(const vector<uint8_t> &data,
 	}
 	return result;
 }
-
+// GF(256) 乘法
 uint8_t QrCode::reedSolomonMultiply(uint8_t x, uint8_t y) {
 	int z = 0;
 	for (int i = 7; i >= 0; i--) {
@@ -633,7 +617,7 @@ uint8_t QrCode::reedSolomonMultiply(uint8_t x, uint8_t y) {
 	assert(z >> 8 == 0);
 	return static_cast<uint8_t>(z);
 }
-
+// 统计查找图案惩罚
 int QrCode::finderPenaltyCountPatterns(const std::array<int,7> &runHistory) const {
 	int n = runHistory.at(1);
 	assert(n <= size * 3);
@@ -641,7 +625,7 @@ int QrCode::finderPenaltyCountPatterns(const std::array<int,7> &runHistory) cons
 	return (core && runHistory.at(0) >= n * 4 && runHistory.at(6) >= n ? 1 : 0)
 	     + (core && runHistory.at(6) >= n * 4 && runHistory.at(0) >= n ? 1 : 0);
 }
-
+// 结束统计并计数
 int QrCode::finderPenaltyTerminateAndCount(bool currentRunColor, int currentRunLength, std::array<int,7> &runHistory) const {
 	if (currentRunColor) {
 		finderPenaltyAddHistory(currentRunLength, runHistory);
@@ -651,48 +635,48 @@ int QrCode::finderPenaltyTerminateAndCount(bool currentRunColor, int currentRunL
 	finderPenaltyAddHistory(currentRunLength, runHistory);
 	return finderPenaltyCountPatterns(runHistory);
 }
-
+// 记录连续长度
 void QrCode::finderPenaltyAddHistory(int currentRunLength, std::array<int,7> &runHistory) const {
 	if (runHistory.at(0) == 0)
 		currentRunLength += size;
 	std::copy_backward(runHistory.cbegin(), runHistory.cend() - 1, runHistory.end());
 	runHistory.at(0) = currentRunLength;
 }
-
+// 读取指定位
 bool QrCode::getBit(long x, int i) {
 	return ((x >> i) & 1) != 0;
 }
-
+// 掩码评分权重
 const int QrCode::PENALTY_N1 =  3;
 const int QrCode::PENALTY_N2 =  3;
 const int QrCode::PENALTY_N3 = 40;
 const int QrCode::PENALTY_N4 = 10;
-
+// 每块纠错码字数表
 const int8_t QrCode::ECC_CODEWORDS_PER_BLOCK[4][41] = {
 	{-1,  7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30},
 	{-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28},
 	{-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30},
 	{-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30},
 };
-
+// 纠错块数量表
+// [level][version]
 const int8_t QrCode::NUM_ERROR_CORRECTION_BLOCKS[4][41] = {
 	{-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4,  4,  4,  4,  4,  6,  6,  6,  6,  7,  8,  8,  9,  9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25},
 	{-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5,  5,  8,  9,  9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49},
 	{-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8,  8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68},
 	{-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81},
 };
-
+// 数据过长异常类型
 data_too_long::data_too_long(const std::string &msg) :
 	std::length_error(msg) {}
-
+// 位缓冲区
 BitBuffer::BitBuffer()
 	: std::vector<bool>() {}
-
+// 追加比特
 void BitBuffer::appendBits(std::uint32_t val, int len) {
 	if (len < 0 || len > 31 || val >> len != 0)
 		throw std::domain_error("Value out of range");
 	for (int i = len - 1; i >= 0; i--)
 		this->push_back(((val >> i) & 1) != 0);
 }
-
 }
