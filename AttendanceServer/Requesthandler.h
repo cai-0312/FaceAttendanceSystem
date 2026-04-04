@@ -9,9 +9,9 @@ class RequestHandler
 {
 public:
     // 人脸 & 账号
-    static void handleQueryFaceFeatures(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询并返回用户人脸特征
+    static void handleQueryFaceFeatures(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询当前用户人脸特征（仅返回本人）
     static void handleRegisterFace(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 注册或更新用户人脸特征
-    static void handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 验证客户端登录凭据并建立会话
+    static void handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 验证客户端登录凭据并建立会话
     static void handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 处理客户端账号注册请求
     static void handleVerifyUserForRegistration(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 校验注册信息合法性
     static void handleSecurePunchRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 安全打卡请求：包含人脸特征比对
@@ -25,13 +25,14 @@ public:
     static void handleQueryChatContacts(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询聊天联系人
     static void handleQueryGroupMembers(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询群组成员列表
     static void handleReadReceipt(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 处理已读回执
+    static void handleChatDeleteMessage(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 删除聊天消息（服务端同步）
     static void handleBroadcast(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json,
         const QByteArray& rawData, AttendanceServer* server); // 处理广播消息
-    static void handlePublishAnnouncement(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 发布系统公告
+    static void handlePublishAnnouncement(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 发布系统公告（需管理员权限）
     // 用户
     static void handleQueryUserProfile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询用户档案
     static void handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 更新用户档案字段
-    static void handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询用户列表
+    static void handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 查询用户列表（需权限校验）
     static void handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询用户部门信息
     static void handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 验证并修改密码
     static void handleFaceReregisterRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 处理人脸重录申请
@@ -42,12 +43,13 @@ public:
     static void handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 管理员修改用户状态
     static void handleQueryAvatarFile(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询头像文件
     static void handleQueryDeptList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询部门列表
+    static void handleQueryDeptJobList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询部门-职务映射表
     // 考勤核心
     static void handlePunchRequest(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 处理普通打卡并落库
     static void handlePunchCheat(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 记录作弊打卡并告警
     static void handleQueryTodayStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询今日考勤状态
     static void handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 返回月度按日状态
-    static void handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 月度汇总数据导出
+    static void handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server); // 月度汇总数据导出（需管理权限）
     static void handleQueryAttendanceDetail(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 查询考勤明细
     static void handleQueryTodayAttendanceForAi(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 提供当天数据给 AI
     static void handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json); // 聚合首页看板数据

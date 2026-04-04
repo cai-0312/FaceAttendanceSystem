@@ -13,6 +13,7 @@
 #include <QTcpSocket>
 #include <QList>
 #include <QPair>
+#include <QMap>
 class AIAssistantModule : public QObject
 {
     Q_OBJECT
@@ -33,6 +34,7 @@ private slots:
     void onSearchHistory();                           // 搜索历史消息
     void toggleSidebar();                            // 切换侧边栏显示状态
     void onSessionContextMenu(const QPoint& pos);   // 会话列表右键菜单处理
+    void onAnchorClicked(const QUrl& url);           // 处理聊天气泡中的链接点击（图片保存/外部链接）
 private:
     void initializeContext();                                      // 初始化对话上下文与系统提示词
     void appendMessage(const QString& role, const QString& msg, bool saveToDb = true); // 渲染并追加消息到界面
@@ -46,6 +48,7 @@ private:
     // 服务端审计上报
     void sendAuditToServer(const QString& sessionId, const QString& role, const QString& content); // 将聊天文本发送到服务端审计
     void sendAuditFileToServer(const QString& sessionId, const QString& fileName, const QByteArray& fileData); // 上传文件用于服务端审计
+    void downloadAndDisplayImage(const QString& imgUrl); // 下载 AI 生成的图片并内联展示到聊天界面
     // 控件
     QTextBrowser* m_textBrowser;    // 消息显示控件
     QLineEdit* m_oldLineEdit;       // 备用单行输入框
@@ -68,5 +71,6 @@ private:
     QList<QPair<QString, QByteArray>> m_pendingFiles;     // 待上传的文件队列
     bool m_isReplying;                               // 标记是否正在等待回复
     bool m_voiceEnabled;                             // 语音播报是否启用
+    QNetworkAccessManager* m_netManager = nullptr;   // 用于下载 AI 生成的图片
 };
 #endif // AIASSISTANTMODULE_H

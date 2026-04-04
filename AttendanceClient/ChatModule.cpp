@@ -185,9 +185,16 @@ ChatModule::ChatModule(QListWidget* contactsList, QTextBrowser* textBrowser,
                 QMessageBox::warning(m_textBrowser->window(), "提示", "无法定位该消息，请在要删除的消息或文件图标上点击右键。");
                 return;
             }
-            // 写入隐藏列表并刷新当前会话
-            int ret = QMessageBox::question(m_textBrowser->window(), "删除确认", "确定要在本地聊天记录中删除这条消息吗？", QMessageBox::Yes | QMessageBox::No);
+            // 写入隐藏列表并同步服务端删除
+            int ret = QMessageBox::question(m_textBrowser->window(), "删除确认", "确定要删除这条消息吗？", QMessageBox::Yes | QMessageBox::No);
             if (ret == QMessageBox::Yes) {
+                // 同步服务端删除
+                QJsonObject delReq;
+                delReq["type"] = "chat_delete_message";
+                delReq["msg_id"] = hashToDel;
+                delReq["name"] = m_myName;
+                NetworkHelper::request(delReq);
+                // 本地隐藏
                 QSettings settings("ChatLocalSettings.ini", QSettings::IniFormat);
                 QStringList hidden = settings.value("HiddenMessages").toStringList();
                 if (!hidden.contains(hashToDel)) {

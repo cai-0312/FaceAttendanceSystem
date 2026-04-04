@@ -3,6 +3,7 @@
 #include <QFileDialog>
 #include <QInputDialog>
 #include <QGraphicsDropShadowEffect>
+#include <QCryptographicHash>
 #include <QScrollArea>
 #include <QDir>
 #include <QMessageBox>
@@ -495,7 +496,6 @@ void ProfileModule::onEditGenderClicked() {
 }
 // 修改手机号
 void ProfileModule::onEditPhoneClicked() {
-    bool ok;
     QInputDialog dialog((QWidget*)this->parent());
     dialog.setWindowTitle("修改手机号");
     dialog.setLabelText("请输入11位手机号:");
@@ -559,11 +559,15 @@ void ProfileModule::onChangePasswordClicked() {
         for (const QChar& ch : newPwd) { if (ch.isLetter()) hasL = true; if (ch.isDigit()) hasD = true; }
         if (!hasL || !hasD) { QMessageBox::warning(pw, "密码强度不足", "新密码必须同时包含字母 and 数字！"); return; }
         if (newPwd == oldPwd) { QMessageBox::warning(pw, "错误", "新密码不能与旧密码相同！"); return; }
+        // 与登录链路一致，对密码做 SHA256 哈希后再传输，避免明文泄露
+        auto hashPwd = [](const QString& plain) -> QString {
+            return QString(QCryptographicHash::hash(plain.toUtf8(), QCryptographicHash::Sha256).toHex());
+        };
         QJsonObject req;
         req["type"] = "verify_and_update_password";
         req["name"] = m_currentUser;
-        req["old_pwd"] = oldPwd;
-        req["new_pwd"] = newPwd;
+        req["old_pwd"] = hashPwd(oldPwd);
+        req["new_pwd"] = hashPwd(newPwd);
         QJsonObject res = NetworkHelper::request(req);
         if (res["status"].toString() == "success") QMessageBox::information(pw, "成功", "密码修改成功！下次登录请使用新密码。");
         else { QString e = res["msg"].toString(); QMessageBox::warning(pw, "修改失败", e.isEmpty() ? "服务端未响应" : e); }

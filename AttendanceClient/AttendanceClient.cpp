@@ -73,7 +73,7 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
     ui->comboBox_RegGender->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegDept->setItemDelegate(new QStyledItemDelegate(this));
     ui->comboBox_RegJobTitle->setItemDelegate(new QStyledItemDelegate(this));
-    // 按角色设置下拉框图标
+    // 为角色下拉框设置图标（普通/管理员），最终登录权限由服务端校验
     for (int i = 0; i < ui->comboBox_Role->count(); ++i) {
         if (ui->comboBox_Role->itemText(i).contains("管理员")) {
             ui->comboBox_Role->setItemIcon(i, QIcon(iconBase + "icon_admin.svg"));
@@ -83,29 +83,21 @@ AttendanceClient::AttendanceClient(QWidget* parent) :
         }
     }
     ui->comboBox_Role->setIconSize(QSize(16, 16));
-    // 部门变化时同步更新职务列表
+    // 部门变化时同步更新职务列表（从服务端动态获取）
     connect(ui->comboBox_RegDept, &QComboBox::currentTextChanged, this, [=](const QString& dept) {
         ui->comboBox_RegJobTitle->clear();
-        if (dept == "总经办") {
-            ui->comboBox_RegJobTitle->addItems({ "总经理", "行政助理", "财务总监" });
-        }
-        else if (dept == "人力资源部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "招聘专员", "员工关系专员", "培训与发展专员" });
-        }
-        else if (dept == "财务部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "财务分析师", "会计", "出纳" });
-        }
-        else if (dept == "销售部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "区域销售经理", "销售代表", "客户服务代表" });
-        }
-        else if (dept == "研发部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "软件工程师", "测试工程师", "产品经理" });
-        }
-        else if (dept == "市场部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "市场营销专员", "品牌管理专员", "公关专员" });
-        }
-        else if (dept == "客户服务部") {
-            ui->comboBox_RegJobTitle->addItems({ "部门经理", "客户服务代表", "技术支持" });
+        // 从服务端查询部门-职务映射表
+        QJsonObject req;
+        req["type"] = "query_dept_job_list";
+        QJsonObject res = NetworkHelper::request(req);
+        if (res["status"].toString() == "success") {
+            QJsonObject deptJobMap = res["dept_job_map"].toObject();
+            if (deptJobMap.contains(dept)) {
+                QJsonArray jobs = deptJobMap[dept].toArray();
+                for (int i = 0; i < jobs.size(); ++i) {
+                    ui->comboBox_RegJobTitle->addItem(jobs[i].toString());
+                }
+            }
         }
         });
     // 触发一次部门联动，初始化职务列表
@@ -164,26 +156,29 @@ void AttendanceClient::on_btn_Min_clicked() { this->showMinimized(); }
 void AttendanceClient::on_btn_GoRegister_clicked() { ui->stackedWidget->setCurrentIndex(1); }
 // 返回登录页
 void AttendanceClient::on_btn_BackLogin_clicked() { ui->stackedWidget->setCurrentIndex(0); }
-// 登录校验并发送哈希后的密码
+// 登录校验并发送哈希后的密码及所选角色，由服务端校验角色权限后决定是否放行
 void AttendanceClient::on_btn_Login_clicked() {
     QString account = ui->lineEdit_Account->text().trimmed();
     QString pwd = ui->lineEdit_pwd->text().trimmed();
-    QString role = ui->comboBox_Role->currentText();
     if (account.isEmpty() || pwd.isEmpty()) {
         QMessageBox::warning(this, "提示", "工号和密码不能为空！");
         return;
     }
-    // 组装登录请求
+    // 组装登录请求（携带客户端选择的角色，由服务端校验是否与数据库角色匹配）
+    QString selectedRole = ui->comboBox_Role->currentText();
     QJsonObject req;
     req["type"] = "client_login_auth";
     req["account"] = account;
     req["pwd"] = hashPassword(pwd);
-    req["role"] = role;
+    req["role"] = selectedRole;
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
-        // 登录成功后进入主界面
+        // 登录成功后使用服务端确认的角色（可能与客户端选择一致，也可能被服务端调整）
         QString realName = res["real_name"].toString();
+        QString role = res["role"].toString();
         bool hasFace = res["has_face"].toBool(true);
+        // 保存会话令牌，后续所有请求自动携带以通过服务端认证门
+        NetworkHelper::setSessionToken(res["session_token"].toString());
         QMessageBox::information(this, "成功", "登录成功！欢迎 " + realName);
         mainWindow = new MainWidget(realName, role, nullptr, this);
         mainWindow->show();
@@ -201,7 +196,8 @@ void AttendanceClient::on_btn_Login_clicked() {
             QMessageBox::critical(this, "服务器连接失败", "无法连接到考勤总控服务器！\n请检查管理员是否已启动服务端程序。");
         }
         else {
-            QMessageBox::critical(this, "失败", "登录失败：工号、密码或角色错误！");
+            QString msg = res["msg"].toString();
+            QMessageBox::critical(this, "失败", msg.isEmpty() ? "登录失败：工号或密码错误！" : msg);
         }
     }
 }

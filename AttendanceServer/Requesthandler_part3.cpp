@@ -11,6 +11,23 @@
 #include <QTime>
 #include <QPointer>
 #include <QThread>
+// SQL 字符串安全化
+static QString S(const QString& val)
+{
+    QString safe = val;
+    safe.replace("'", "''");
+    return safe;
+}
+// 查询指定用户在数据库中的权限角色
+static QString queryUserRole(QSqlDatabase& db, const QString& userName)
+{
+    if (userName.isEmpty()) return QString();
+    QSqlQuery rq(db);
+    rq.prepare("SELECT role FROM users WHERE name = :name");
+    rq.bindValue(":name", userName);
+    if (rq.exec() && rq.next()) return rq.value(0).toString().trimmed();
+    return QString();
+}
 // 将 JSON 串化为紧凑格式并追加换行后写入 socket，用于跨线程安全发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
@@ -156,30 +173,40 @@ void RequestHandler::handlePunchRequest(QSqlDatabase& db, QTcpSocket* socket,
             }
             }, Qt::QueuedConnection);
     }
-    if (insertQuery.exec()) {
-        QJsonObject res;
-        res["status"] = "success";
-        res["msg"] = "打卡成功：" + status;
-        sendJson(socket, res);
-        QMetaObject::invokeMethod(server, [server, name, status]() {
-            if (server) {
-                server->logMessage(QString("<font color='#00B42A'>考勤成功: [%1] - %2</font>").arg(name, status));
-                server->loadGlobalRecords();
-            }
-            }, Qt::QueuedConnection);
-    }
 }
-// 记录作弊打卡并在服务端发出安全告警
-void RequestHandler::handlePunchCheat(QSqlDatabase& db, QTcpSocket* /*socket*/,
+// 记录作弊打卡并在服务端发出安全告警（阈值由服务端判断）
+void RequestHandler::handlePunchCheat(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
-    QSqlQuery q(db);
-    QString safeName = json["name"].toString();
+    QString name = json["name"].toString();
+    QString safeName = name;
     safeName.replace("'", "''");
+    // 服务端统计当天该用户的作弊打卡累计次数
+    QSqlQuery countQ(db);
+    countQ.prepare("SELECT COUNT(*) FROM attendance_records "
+        "WHERE name = :n AND DATE(punch_time) = CURDATE() AND status = '作弊打卡'");
+    countQ.bindValue(":n", name);
+    int todayCheatCount = 0;
+    if (countQ.exec() && countQ.next()) todayCheatCount = countQ.value(0).toInt();
+    // 当日累计达到阈值则写入作弊记录
+    const int cheatThreshold = 3;
+    QJsonObject res;
+    if (todayCheatCount < cheatThreshold) {
+        // 未达阈值，仅返回累计次数提示客户端
+        res["status"] = "warning";
+        res["cheat_count"] = todayCheatCount + 1;
+        res["msg"] = QString("人脸核验失败 (%1/%2)").arg(todayCheatCount + 1).arg(cheatThreshold);
+        sendJson(socket, res);
+        return;
+    }
+    // 达到阈值则插入作弊打卡记录
+    QSqlQuery q(db);
     q.exec(QString("INSERT INTO attendance_records (name, punch_time, status, similarity) "
         "VALUES ('%1', NOW(), '作弊打卡', 0.0000)").arg(safeName));
+    res["status"] = "cheat_recorded";
+    res["msg"] = "多次核验失败，已记为作弊打卡";
+    sendJson(socket, res);
     // 在服务端记录并展示安全告警
-    QString name = json["name"].toString();
     QMetaObject::invokeMethod(server, [server, name]() {
         server->logMessage(QString("<font color='red'>安全警报: 员工 [%1] 多次人脸核验失败，强制记为作弊！</font>").arg(name));
         server->loadGlobalRecords();
@@ -272,9 +299,25 @@ void RequestHandler::handleQueryMonthlyStatus(QSqlDatabase& db, QTcpSocket* sock
     res["color_map"] = colorMap;
     sendJson(socket, res);
 }
-// 管理员接口：生成全员当月考勤汇总数据用于报表导出
-void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+// [Issue #3 修复] 管理员接口：生成全员当月考勤汇总数据用于报表导出（需权限校验）
+void RequestHandler::handleQueryMonthlySummaryAll(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：仅管理员或人资经理可导出全员汇总
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        QSqlQuery dq(db);
+        dq.prepare("SELECT department, job_title FROM users WHERE name = :n");
+        dq.bindValue(":n", callerName);
+        bool isHRManager = false;
+        if (dq.exec() && dq.next()) {
+            isHRManager = (dq.value(0).toString() == "人力资源部" && dq.value(1).toString() == "部门经理");
+        }
+        if (!isHRManager) {
+            QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员或人资经理可导出全员汇总";
+            sendJson(socket, res); return;
+        }
+    }
     int year = json["year"].toInt();
     int month = json["month"].toInt();
     QString startDate = QString("%1-%2-01").arg(year).arg(month, 2, 10, QChar('0'));
@@ -501,6 +544,12 @@ void RequestHandler::handleQueryHomeDashboard(QSqlDatabase& db, QTcpSocket* sock
     // 实到人数
     q.exec("SELECT COUNT(DISTINCT name) FROM attendance_records WHERE DATE(punch_time) = CURDATE()" + nameFilterPlain);
     if (q.next()) topCards["actual_punched"] = q.value(0).toInt();
+    // [Issue #16 修复] 服务端计算出勤率并下发，客户端不再自行计算
+    int totalExpected = topCards["total_expected"].toInt();
+    int actualPunched = topCards["actual_punched"].toInt();
+    topCards["attendance_rate"] = totalExpected > 0
+        ? QString::number((actualPunched * 100) / totalExpected) + "%"
+        : "0%";
     // 异常人数（剥离请假/调休/外派/修正）
     q.exec("SELECT COUNT(DISTINCT a.name) FROM attendance_records a "
         "JOIN users u ON a.name = u.name "
@@ -613,9 +662,26 @@ void RequestHandler::handleQueryShiftRule(QSqlDatabase& db, QTcpSocket* socket, 
     sendJson(socket, res);
 }
 // 更新或替换排班规则并写审计日志到后台
-void RequestHandler::handleRuleSettings(QSqlDatabase& db, QTcpSocket* /*socket*/,
+void RequestHandler::handleRuleSettings(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：只有人力资源部或管理员才能修改排班规则
+    QString callerName = server->getClientName(socket);
+    if (!callerName.isEmpty()) {
+        QSqlQuery roleQ(db);
+        roleQ.prepare("SELECT role, department FROM users WHERE name = :name");
+        roleQ.bindValue(":name", callerName);
+        if (roleQ.exec() && roleQ.next()) {
+            QString role = roleQ.value(0).toString().trimmed();
+            QString dept = roleQ.value(1).toString().trimmed();
+            if (!role.contains("管理员") && dept != "人力资源部") {
+                QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅人力资源部或管理员可修改排班规则";
+                QByteArray outData = QJsonDocument(res).toJson(QJsonDocument::Compact) + "\n";
+                socket->write(outData); socket->flush();
+                return;
+            }
+        }
+    }
     QSqlQuery q(db);
     q.prepare("REPLACE INTO shift_rules (dept, rule_name, start_time, end_time, late_mins, absent_mins) "
         "VALUES (?, ?, ?, ?, ?, ?)");
@@ -1067,6 +1133,42 @@ void RequestHandler::handleQueryApprovalCandidates(QSqlDatabase& db, QTcpSocket*
     res["hr_list"] = hrArr;
     res["gm_list"] = gmArr;
     res["mgr_list"] = mgrArr;
+    // [Issue #7 修复] 服务端根据岗位信息决定审批层级和链路顺序
+    QString myDept = res["my_dept"].toString();
+    QString myJob = res["my_job"].toString();
+    int levels = 0;
+    QJsonArray chainOrder; // 每个元素: {"label": "第X审批人", "source": "hr|gm|mgr"}
+    if (myDept == "总经办" && myJob == "总经理") {
+        levels = 1;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "hr"}});
+    }
+    else if (myDept == "总经办") {
+        levels = 2;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "gm"}});
+        chainOrder.append(QJsonObject{{"label", "第二审批人"}, {"source", "hr"}});
+    }
+    else if (myDept == "人力资源部" && myJob == "部门经理") {
+        levels = 1;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "gm"}});
+    }
+    else if (myDept == "人力资源部") {
+        levels = 2;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "gm"}});
+        chainOrder.append(QJsonObject{{"label", "第二审批人"}, {"source", "hr"}});
+    }
+    else if (myJob == "部门经理") {
+        levels = 2;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "gm"}});
+        chainOrder.append(QJsonObject{{"label", "第二审批人"}, {"source", "hr"}});
+    }
+    else {
+        levels = 3;
+        chainOrder.append(QJsonObject{{"label", "第一审批人"}, {"source", "mgr"}});
+        chainOrder.append(QJsonObject{{"label", "第二审批人"}, {"source", "gm"}});
+        chainOrder.append(QJsonObject{{"label", "第三审批人"}, {"source", "hr"}});
+    }
+    res["approval_levels"] = levels;
+    res["chain_order"] = chainOrder;
     sendJson(socket, res);
 }
 // 部门汇总接口：根据权限返回部门考勤统计并防止越权访问

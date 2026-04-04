@@ -26,6 +26,20 @@
 #include <QTimer>
 #include <QBuffer>
 #include <QImage>
+#include <QDir>
+#include <QUrl>
+#include <QDesktopServices>
+#include <QSslError>
+#include <QStandardPaths>
+#include <QCryptographicHash>
+
+// 根据图片 URL 生成本地持久化缓存路径（使用 MD5 哈希作为文件名）
+static QString localImagePathForUrl(const QString& url) {
+    QString hash = QString(QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Md5).toHex());
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/ai_images/";
+    QDir().mkpath(dir);
+    return dir + hash + ".png";
+}
 //  构造函数：初始化 UI
 AIAssistantModule::AIAssistantModule(QTextBrowser* textBrowser, QLineEdit* lineEdit,
     QPushButton* sendBtn, QPushButton* clearBtn, QString userName, QObject* parent)
@@ -124,8 +138,11 @@ void AIAssistantModule::rebuildAdvancedUI() {
     QSplitter* rightSplitter = new QSplitter(Qt::Vertical, rightFrame);
     rightSplitter->setHandleWidth(1);
     rightSplitter->setStyleSheet("QSplitter::handle { background-color: transparent; } QSplitter::handle:vertical:hover { background-color: #DEE0E3; }");
-    m_textBrowser->setOpenExternalLinks(true);
+    // 禁止 QTextBrowser 自动导航（setOpenLinks=false 防止 setSource() 清空内容）
+    m_textBrowser->setOpenLinks(false);
+    m_textBrowser->setOpenExternalLinks(false);
     m_textBrowser->setStyleSheet("border: none; background: transparent;");
+    connect(m_textBrowser, &QTextBrowser::anchorClicked, this, &AIAssistantModule::onAnchorClicked);
     // 底部输入框
     QFrame* inputFrame = new QFrame();
     inputFrame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -324,12 +341,9 @@ void AIAssistantModule::handleAiResponse(const QJsonObject& json) {
     if (status == "success") {
         if (isImage && content.startsWith("[AI_IMAGE]")) {
             QString imgUrl = content.mid(10);
-            QString html = QString(
-                "🎨 <b>为您生成了一张图片！</b><br><br>"
-                "<a href='%1' style='color:#165DFF; font-weight:bold; text-decoration:underline;'>"
-                "🔗 点击查看高清原图并保存</a>"
-            ).arg(imgUrl);
-            appendMessage("ai", html, false);
+            // 先显示加载提示，再异步下载图片内联展示
+            appendMessage("ai", "🎨 <b>AI 已完成画图，正在为您加载预览...</b>", false);
+            downloadAndDisplayImage(imgUrl);
         }
         else {
             QJsonObject aiMsg;
@@ -426,7 +440,30 @@ void AIAssistantModule::appendMessage(const QString& role, const QString& msg, b
         formattedMsg.replace("\n", "<br>");
     }
     else {
-        if (msg.contains("<a ") || msg.contains("<img ") || msg.contains("<b>")) {
+        if (msg.startsWith("[AI_IMAGE]")) {
+            // 优先从本地持久化缓存加载图片内联展示
+            QString imgUrl = msg.mid(10);
+            QString localPath = localImagePathForUrl(imgUrl);
+            if (QFile::exists(localPath)) {
+                QImage img(localPath);
+                int dispW = img.width(), dispH = img.height();
+                if (dispW > 380) { dispH = dispH * 380 / dispW; dispW = 380; }
+                QString fileUrl = QUrl::fromLocalFile(localPath).toString();
+                formattedMsg = QString(
+                    "🎨 <b>AI 为您生成的图片：</b><br><br>"
+                    "<a href='saveimage:%1'>"
+                    "<img src='%2' width='%3' height='%4'></a><br>"
+                    "<span style='color:#86909C; font-size:12px;'>💾 点击图片可保存高清原图到本地</span>")
+                    .arg(localPath.toHtmlEscaped(), fileUrl).arg(dispW).arg(dispH);
+            } else {
+                // 本地缓存不存在时展示链接（CDN 地址可能已过期）
+                formattedMsg = QString(
+                    "🎨 <b>AI 生成的图片</b><br>"
+                    "<a href='%1' style='color:#165DFF; text-decoration:underline;'>🔗 点击查看原图</a>")
+                    .arg(imgUrl.toHtmlEscaped());
+            }
+        }
+        else if (msg.contains("<a ") || msg.contains("<img ") || msg.contains("<b>")) {
             formattedMsg = msg;
         }
         else {
@@ -434,8 +471,13 @@ void AIAssistantModule::appendMessage(const QString& role, const QString& msg, b
         }
     }
     QString bubble;
+    bool isImageBubble = formattedMsg.contains("<img ");
     if (role == "user") {
         bubble = QString("<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'><tr><td width='20%'></td><td align='right'><div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>我 %1</div><table border='0' cellpadding='12' cellspacing='0' bgcolor='#165DFF' style='border-radius:12px;'><tr><td style='color:white; font-size:14px; line-height:1.6;'>%2</td></tr></table></td></tr></table>").arg(timeStr, formattedMsg);
+    }
+    else if (isImageBubble) {
+        // 图片气泡：去掉右侧 20% 留白，让气泡自适应图片宽度
+        bubble = QString("<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'><tr><td align='left'><div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>智能管家 %1</div><table border='0' cellpadding='12' cellspacing='0' bgcolor='#F2F3F5' style='border-radius:12px; border: 1px solid #E5E6EB;'><tr><td style='color:#2F3542; font-size:14px; line-height:1.6;'>%2</td></tr></table></td></tr></table>").arg(timeStr, formattedMsg);
     }
     else {
         bubble = QString("<table width='100%' border='0' cellpadding='0' cellspacing='0' style='margin-bottom:15px;'><tr><td align='left'><div style='color:#8C8C8C; font-size:12px; margin-bottom:5px;'>智能管家 %1</div><table border='0' cellpadding='12' cellspacing='0' bgcolor='#F2F3F5' style='border-radius:12px; border: 1px solid #E5E6EB;'><tr><td style='color:#2F3542; font-size:14px; line-height:1.6;'>%2</td></tr></table></td><td width='20%'></td></tr></table>").arg(timeStr, formattedMsg);
@@ -472,6 +514,103 @@ void AIAssistantModule::speakText(const QString& text) {
     cleanText.replace("'", "''");
     QString command = QString("Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('%1');").arg(cleanText);
     QProcess::startDetached("powershell", QStringList() << "-WindowStyle" << "Hidden" << "-Command" << command);
+}
+// 下载 AI 生成的图片并持久化缓存到本地，然后内联展示到聊天界面
+void AIAssistantModule::downloadAndDisplayImage(const QString& imgUrl)
+{
+    if (!m_netManager) m_netManager = new QNetworkAccessManager(this);
+    // 构造请求对象，设置超时30秒
+    QUrl reqUrl(imgUrl);
+    QNetworkRequest netReq(reqUrl);
+    m_netManager->setTransferTimeout(30000);
+    QNetworkReply* reply = m_netManager->get(netReq);
+    // 忽略 SSL 证书错误（部分 CDN 证书链不完整）
+    connect(reply, &QNetworkReply::sslErrors, reply,
+        [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, imgUrl]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            appendMessage("ai", QString(
+                "❌ 图片下载失败: %1<br>"
+                "<a href='%2' style='color:#165DFF;'>🔗 点击用浏览器查看原图</a>")
+                .arg(reply->errorString().toHtmlEscaped(), imgUrl.toHtmlEscaped()), false);
+            return;
+        }
+        QByteArray rawData = reply->readAll();
+        if (rawData.isEmpty()) {
+            appendMessage("ai", "❌ 图片数据为空", false);
+            return;
+        }
+        QImage img;
+        if (!img.loadFromData(rawData)) {
+            appendMessage("ai", QString(
+                "❌ 图片解码失败<br>"
+                "<a href='%1' style='color:#165DFF;'>🔗 点击用浏览器查看原图</a>")
+                .arg(imgUrl.toHtmlEscaped()), false);
+            return;
+        }
+        // 将原始高清图片持久化保存到本地应用数据目录
+        QString localPath = localImagePathForUrl(imgUrl);
+        QFile cacheFile(localPath);
+        if (cacheFile.open(QIODevice::WriteOnly)) {
+            cacheFile.write(rawData);
+            cacheFile.close();
+        }
+        // 缩放到适合聊天窗口的展示尺寸
+        int dispW = img.width(), dispH = img.height();
+        if (dispW > 380) {
+            dispH = dispH * 380 / dispW;
+            dispW = 380;
+        }
+        QString fileUrl = QUrl::fromLocalFile(localPath).toString();
+        // 构建可点击图片的 HTML 气泡（点击触发 saveimage: 协议保存高清原图）
+        QString html = QString(
+            "🎨 <b>AI 为您生成的图片：</b><br><br>"
+            "<a href='saveimage:%1'>"
+            "<img src='%2' width='%3' height='%4'></a><br>"
+            "<span style='color:#86909C; font-size:12px;'>💾 点击图片可保存高清原图到本地</span>")
+            .arg(localPath.toHtmlEscaped(), fileUrl).arg(dispW).arg(dispH);
+        appendMessage("ai", html, false);
+    });
+}
+// 处理聊天气泡中的链接点击事件
+void AIAssistantModule::onAnchorClicked(const QUrl& url)
+{
+    // saveimage: 协议 → 从本地持久化缓存读取图片并弹出保存对话框
+    QString urlStr = url.toString();
+    if (urlStr.startsWith("saveimage:")) {
+        QString localPath = urlStr.mid(10);
+        QFile imgFile(localPath);
+        if (!imgFile.exists() || !imgFile.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(qobject_cast<QWidget*>(parent()),
+                "提示", "本地图片缓存已失效，请重新生成。");
+            return;
+        }
+        QByteArray imgData = imgFile.readAll();
+        imgFile.close();
+        QString defaultName = "AI_Generated_" +
+            QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".png";
+        QString savePath = QFileDialog::getSaveFileName(
+            qobject_cast<QWidget*>(parent()),
+            "保存 AI 生成的图片", defaultName,
+            "PNG 图片 (*.png);;JPEG 图片 (*.jpg *.jpeg);;所有文件 (*)");
+        if (savePath.isEmpty()) return;
+        QFile file(savePath);
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(imgData);
+            file.close();
+            QMessageBox::information(qobject_cast<QWidget*>(parent()),
+                "保存成功", QString("图片已保存到：\n%1").arg(savePath));
+        }
+        else {
+            QMessageBox::warning(qobject_cast<QWidget*>(parent()),
+                "保存失败", "无法写入文件: " + file.errorString());
+        }
+    }
+    else {
+        // 其他链接使用系统默认浏览器打开
+        QDesktopServices::openUrl(url);
+    }
 }
 // 侧边栏收起展开
 void AIAssistantModule::toggleSidebar() {

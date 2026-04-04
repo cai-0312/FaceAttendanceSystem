@@ -61,7 +61,7 @@ AttendanceServer::AttendanceServer(QWidget* parent)
             // 获取当前线程的数据库句柄，交由 RequestHandler 处理业务
             QSqlDatabase db = QSqlDatabase::database("server_db_connection");
             if (!db.isOpen()) {
-                qDebug() << "[onReadyRead] 连接已断开，正在尝试重连...";
+                qDebug() << "[DailyCheck] 连接已断开，正在尝试重连...";
                 db.open();
             }
             {
@@ -204,6 +204,7 @@ void AttendanceServer::on_btn_StopServer_clicked()
     m_clients.clear();
     m_nameToSocket.clear();
     m_authenticatedSockets.clear();
+    m_sessionTokens.clear();
     updateOnlineUsersTable();
     ui->label_ServerStatus->setText(
         "<img src='../../AttendanceServer/icon_library/dot_red.svg' width='12' height='12' align='middle'>&nbsp;"
@@ -237,13 +238,12 @@ void AttendanceServer::onClientDisconnected()
     }
     // 清除该 socket 的认证状态
     m_authenticatedSockets.remove(socket);
+    // 清除令牌认证的临时连接映射
+    m_tokenAuthNames.remove(socket);
     if (m_clients.contains(socket)) {
         QString name = m_clients[socket].name;
         logMessage(QString("<font color='#F56C6C'>节点掉线: [%1] 已断开连接。</font>").arg(name));
         m_nameToSocket.remove(name);
-        if (m_nameToSocket.value(name) == socket) {
-            m_nameToSocket.remove(name);
-        }
         m_clients.remove(socket);
         updateOnlineUsersTable();
     }
@@ -314,6 +314,7 @@ void AttendanceServer::onReadyRead()
         QJsonDocument doc = QJsonDocument::fromJson(data);
         if (doc.isNull() || !doc.isObject()) continue;
         QJsonObject json = doc.object();
+        // 安全拦截：剥离客户端可能伪造的内部标记字段，防止权限绕过
         if (json.contains("__internal_verified")) { json.remove("__internal_verified"); }
         QString type = json["type"].toString();
 
@@ -322,9 +323,14 @@ void AttendanceServer::onReadyRead()
             "client_login_auth", "client_register_account", "verify_user_for_registration"
         };
         if (!m_authenticatedSockets.contains(socket) && !allowedBeforeAuth.contains(type)) {
-            // client_login_auth 成功后由 handleLogin 标记认证状态
-            // 这里标记已通过 client_login_auth 的 socket（login 是认证后的第二步）
-            if (type == "login") {
+            // 检查请求中是否携带有效的会话令牌（用于 NetworkHelper 临时连接认证）
+            QString sessionToken = json["session_token"].toString();
+            QString tokenUser = validateSessionToken(sessionToken);
+            if (!tokenUser.isEmpty()) {
+                // 令牌有效，缓存用户名以便后续 getClientName 能解析临时连接的调用者身份
+                m_tokenAuthNames[socket] = tokenUser;
+            }
+            else if (type == "login") {
                 // login 请求需要先通过 client_login_auth，此处放行但在 handleLogin 中校验用户存在性
                 // 放行后由 registerClient 完成最终认证标记
             }
@@ -345,7 +351,6 @@ void AttendanceServer::onReadyRead()
             handleFileDownloadRequest(socket, json);
             continue;
         }
-        if (json["type"].toString() == "update_profile_field" && json["name"].toString().isEmpty()) continue;
         QString lookupKey = type.startsWith("group_") ? "chat" : type;
         auto it = m_dispatchTable.constFind(lookupKey);
         if (it == m_dispatchTable.constEnd()) continue;
@@ -454,26 +459,36 @@ void AttendanceServer::onFileTransferComplete(QTcpSocket* socket)
         }
         // TODO: 接收方离线时，可将通知存入 offline_messages 表
     }
-    // 数据库记录（只存元数据，不存文件内容）
+    // 数据库记录（只存元数据，不存文件内容，使用参数化查询防注入）
     QSqlDatabase db = QSqlDatabase::database("server_db_connection");
     if (db.isOpen()) {
         QSqlQuery q(db);
-        QString safeSender = state.sender;   safeSender.replace("'", "''");
-        QString safeReceiver = state.receiver;  safeReceiver.replace("'", "''");
-        QString safeFileName = state.fileName;  safeFileName.replace("'", "''");
-        QString safePath = state.savedPath; safePath.replace("'", "''");
-        q.exec(QString(
-            "INSERT INTO chat_history (sender, receiver, msg_type, content, filename, send_time, is_group) "
-            "VALUES ('%1', '%2', 'file', '%3', '%4', NOW(), %5)")
-            .arg(safeSender, safeReceiver, safePath, safeFileName)
-            .arg(state.isGroup ? 1 : 0));
+        q.prepare("INSERT INTO chat_history (sender, receiver, msg_type, content, filename, send_time, is_group) "
+                  "VALUES (:sender, :receiver, 'file', :content, :filename, NOW(), :is_group)");
+        q.bindValue(":sender", state.sender);
+        q.bindValue(":receiver", state.receiver);
+        q.bindValue(":content", state.savedPath);
+        q.bindValue(":filename", state.fileName);
+        q.bindValue(":is_group", state.isGroup ? 1 : 0);
+        q.exec();
     }
 }
 // 处理文件下载请求并以分片二进制方式发送文件给客户端。
 void AttendanceServer::handleFileDownloadRequest(QTcpSocket* socket, const QJsonObject& json)
 {
     QString filePath = json["saved_path"].toString();
-    QFile file(filePath);
+    // 路径穿越防护：只允许下载服务端数据目录内的文件
+    QString allowedBase = QDir::cleanPath(QCoreApplication::applicationDirPath() + "/../../AttendanceServer/");
+    QString cleanPath = QDir::cleanPath(filePath);
+    if (!cleanPath.startsWith(allowedBase)) {
+        QJsonObject err;
+        err["type"] = "file_download_error";
+        err["msg"] = "非法路径访问";
+        socket->write(QJsonDocument(err).toJson(QJsonDocument::Compact) + "\n");
+        logMessage(QString("<font color='#F53F3F'>[安全拦截] 路径穿越攻击: %1</font>").arg(filePath));
+        return;
+    }
+    QFile file(cleanPath);
     if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
         QJsonObject err;
         err["type"] = "file_download_error";
@@ -540,6 +555,38 @@ bool AttendanceServer::isClientOnline(const QString& name) const
 QTcpSocket* AttendanceServer::getSocketByName(const QString& name) const
 {
     return m_nameToSocket.value(name, nullptr);
+}
+// 根据套接字返回已认证的员工姓名，同时支持持久连接和令牌认证的临时连接。
+QString AttendanceServer::getClientName(QTcpSocket* socket) const
+{
+    if (m_clients.contains(socket)) return m_clients[socket].name;
+    if (m_tokenAuthNames.contains(socket)) return m_tokenAuthNames[socket];
+    return QString();
+}
+// 注册会话令牌，将令牌与用户名绑定
+void AttendanceServer::addSessionToken(const QString& token, const QString& userName)
+{
+    // 先清除该用户的旧令牌，确保每用户仅持有一个有效令牌
+    removeSessionTokensForUser(userName);
+    m_sessionTokens.insert(token, userName);
+    logMessage(QString("<font color='#409EFF'>令牌签发: 用户 [%1] 获得会话令牌。</font>").arg(userName));
+}
+// 移除指定用户的所有会话令牌
+void AttendanceServer::removeSessionTokensForUser(const QString& userName)
+{
+    QStringList toRemove;
+    for (auto it = m_sessionTokens.begin(); it != m_sessionTokens.end(); ++it) {
+        if (it.value() == userName) toRemove << it.key();
+    }
+    for (const QString& key : toRemove) {
+        m_sessionTokens.remove(key);
+    }
+}
+// 校验令牌有效性，返回绑定的用户名（无效则返回空串）
+QString AttendanceServer::validateSessionToken(const QString& token) const
+{
+    if (token.isEmpty()) return QString();
+    return m_sessionTokens.value(token);
 }
 // 刷新权限模型数据以同步前端视图。
 void AttendanceServer::refreshPermModel()
@@ -619,8 +666,8 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["register_face"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleRegisterFace(db, s, j);
         };
-    m_dispatchTable["client_login_auth"] = [](auto& db, auto* s, auto& j, auto&) {
-        RequestHandler::handleClientLoginAuth(db, s, j);
+    m_dispatchTable["client_login_auth"] = [this](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleClientLoginAuth(db, s, j, this);
         };
     m_dispatchTable["verify_user_for_registration"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleVerifyUserForRegistration(db, s, j);
@@ -658,8 +705,8 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["read_receipt"] = [this](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleReadReceipt(db, s, j, this);
         };
-    m_dispatchTable["publish_announcement"] = [](auto& db, auto* s, auto& j, auto&) {
-        RequestHandler::handlePublishAnnouncement(db, s, j);
+    m_dispatchTable["publish_announcement"] = [this](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handlePublishAnnouncement(db, s, j, this);
         };
     // 绑定企业级用户及花名册管控操作路由
     m_dispatchTable["query_user_profile"] = [](auto& db, auto* s, auto& j, auto&) {
@@ -668,8 +715,8 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["update_profile_field"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleUpdateProfileField(db, s, j);
         };
-    m_dispatchTable["query_user_list"] = [](auto& db, auto* s, auto& j, auto&) {
-        RequestHandler::handleQueryUserList(db, s, j);
+    m_dispatchTable["query_user_list"] = [this](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryUserList(db, s, j, this);
         };
     m_dispatchTable["query_user_dept"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryUserDept(db, s, j);
@@ -715,8 +762,8 @@ void AttendanceServer::initDispatchTable()
     m_dispatchTable["query_monthly_status"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryMonthlyStatus(db, s, j);
         };
-    m_dispatchTable["query_monthly_summary_all"] = [](auto& db, auto* s, auto& j, auto&) {
-        RequestHandler::handleQueryMonthlySummaryAll(db, s, j);
+    m_dispatchTable["query_monthly_summary_all"] = [this](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryMonthlySummaryAll(db, s, j, this);
         };
     // 部门报表路由
     m_dispatchTable["query_dept_summary"] = [](auto& db, auto* s, auto& j, auto&) {
@@ -795,5 +842,13 @@ void AttendanceServer::initDispatchTable()
     // 首页大屏：部门列表查询（供筛选下拉框用）
     m_dispatchTable["query_dept_list"] = [](auto& db, auto* s, auto& j, auto&) {
         RequestHandler::handleQueryDeptList(db, s, j);
+        };
+    // 聊天消息删除（同步到服务端）
+    m_dispatchTable["chat_delete_message"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleChatDeleteMessage(db, s, j);
+        };
+    // 部门-职务映射表：供客户端注册、录入等场景动态填充
+    m_dispatchTable["query_dept_job_list"] = [](auto& db, auto* s, auto& j, auto&) {
+        RequestHandler::handleQueryDeptJobList(db, s, j);
         };
 }

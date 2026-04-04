@@ -18,6 +18,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QProcess>
+#include <QMap>
 #include <QCheckBox>
 #include <QTimer>
 #include <QInputDialog>
@@ -38,7 +39,7 @@ PunchModule::PunchModule(QLabel* cameraLabel, QPushButton* manualBtn,
     m_lblEveningTime(eveningTime), m_lblEveningStatus(eveningStatus),
     m_btnRuleSettings(ruleBtn), m_btnLeaveRequest(leaveReqBtn), m_btnLeaveApprove(leaveApprBtn),
     m_btnAppealRequest(appealReqBtn), m_btnAppealApprove(appealApprBtn),
-    m_lblCurrentTime(currentTimeLabel), m_role(role), m_loginName(loginName), m_cheatCount(0)
+    m_lblCurrentTime(currentTimeLabel), m_role(role), m_loginName(loginName)
 {
     // 查询当前用户部门
     QJsonObject uReq;
@@ -152,14 +153,9 @@ void PunchModule::loadTodayPunchStatus() {
         m_lblEveningStatus->setStyleSheet("color: #F56C6C;");
     }
 }
-// 判断单条打卡状态
-QString PunchModule::calculatePunchStatus(const QTime& punchTime) {
-    if (punchTime < QTime(12, 0)) {
-        int secsLate = m_startTime.secsTo(punchTime);
-        if (secsLate <= 0) return "正常打卡";
-        return (secsLate > m_absentMins * 60) ? "旷工" : "迟到";
-    }
-    return (punchTime < m_endTime) ? "早退" : "正常下班";
+// [已废弃] 打卡状态判定已移至服务端执行，此方法保留空实现以兼容编译
+QString PunchModule::calculatePunchStatus(const QTime& /*punchTime*/) {
+    return "未知";
 }
 // 打开排班设置窗口
 void PunchModule::onRuleSettingsClicked() {
@@ -253,21 +249,28 @@ void PunchModule::onManualPunchClicked() {
             }
             else {
                 QMessageBox::warning(nullptr, "服务端安全拦截", res["msg"].toString());
-                m_cheatCount++;
+                // 每次核验失败都上报服务端，由服务端统计阈值
+                QJsonObject cheatReq;
+                cheatReq["type"] = "punch_cheat";
+                cheatReq["name"] = claimName;
+                QJsonObject cheatRes = NetworkHelper::request(cheatReq);
+                if (cheatRes["status"].toString() == "cheat_recorded") {
+                    QMessageBox::critical(nullptr, "安全警告", cheatRes["msg"].toString());
+                }
             }
         }
         else {
-            // 作弊次数累计
-            m_cheatCount++;
-            if (m_cheatCount >= 3) {
-                QJsonObject req;
-                req["type"] = "punch_cheat";
-                req["name"] = claimName;
-                NetworkHelper::request(req);
-                m_cheatCount = 0;
+            // 每次核验不匹配都上报服务端，由服务端判断是否达到作弊阈值
+            QJsonObject cheatReq;
+            cheatReq["type"] = "punch_cheat";
+            cheatReq["name"] = claimName;
+            QJsonObject cheatRes = NetworkHelper::request(cheatReq);
+            if (cheatRes["status"].toString() == "cheat_recorded") {
+                QMessageBox::critical(nullptr, "安全警告", cheatRes["msg"].toString());
             }
             else {
-                QMessageBox::warning(nullptr, "失败", "人脸核验不匹配！");
+                QMessageBox::warning(nullptr, "失败",
+                    QString("人脸核验不匹配！(%1)").arg(cheatRes["msg"].toString()));
             }
         }
     }
@@ -283,9 +286,6 @@ void PunchModule::onAppealRequestClicked() {
         QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络！");
         return;
     }
-    QString applicantRole = initRes["my_role"].toString();
-    QString applicantDept = initRes["my_dept"].toString();
-    QString applicantJob = initRes["my_job"].toString();
     QJsonArray abnArr = initRes["abnormal_records"].toArray();
     QJsonArray hrArr = initRes["hr_list"].toArray();
     QJsonArray gmArr = initRes["gm_list"].toArray();
@@ -331,49 +331,28 @@ void PunchModule::onAppealRequestClicked() {
             cb->addItem(prefix + name, name);
         }
         };
-    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: ");  };
-    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: ");    };
-    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
-    int approvalLevels = 0;
-    if (applicantDept == "总经办" && applicantJob == "总经理") {
-        approvalLevels = 1;
-        fillHR(app1);
-        form->addRow("第一审批人:", app1);
-        app2->setVisible(false); app3->setVisible(false);
-    }
-    else if (applicantDept == "总经办") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
-        approvalLevels = 1;
-        fillGM(app1);
-        form->addRow("第一审批人:", app1);
-        app2->setVisible(false); app3->setVisible(false);
-    }
-    else if (applicantDept == "人力资源部") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else if (applicantJob == "部门经理") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else {
-        approvalLevels = 3;
-        fillDeptMgr(app1); fillGM(app2); fillHR(app3);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        form->addRow("第三审批人):", app3);
+    // [Issue #7 修复] 审批链路由服务端计算，客户端只做展示
+    QComboBox* appBoxes[] = { app1, app2, app3 };
+    QJsonArray chainOrder = initRes["chain_order"].toArray();
+    int approvalLevels = initRes["approval_levels"].toInt();
+    QMap<QString, QPair<QJsonArray, QString>> sourceMap = {
+        {"hr",  {hrArr, "人资经理: "}},
+        {"gm",  {gmArr, "总经理: "}},
+        {"mgr", {mgrArr, "部门经理: "}}
+    };
+    for (int i = 0; i < 3; ++i) {
+        if (i < chainOrder.size()) {
+            QJsonObject step = chainOrder[i].toObject();
+            QString src = step["source"].toString();
+            QString label = step["label"].toString();
+            if (sourceMap.contains(src)) {
+                fillFromArray(appBoxes[i], sourceMap[src].first, sourceMap[src].second);
+            }
+            form->addRow(label + ":", appBoxes[i]);
+        }
+        else {
+            appBoxes[i]->setVisible(false);
+        }
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申诉");
@@ -436,9 +415,6 @@ void PunchModule::onLeaveRequestClicked()
         QMessageBox::critical(parentWidget, "错误", "无法连接服务器获取审批信息，请检查网络连接和服务器状态！");
         return;
     }
-    QString applicantRole = initRes["my_role"].toString();
-    QString applicantDept = initRes["my_dept"].toString();
-    QString applicantJob = initRes["my_job"].toString();
     QJsonArray hrArr = initRes["hr_list"].toArray();
     QJsonArray gmArr = initRes["gm_list"].toArray();
     QJsonArray mgrArr = initRes["mgr_list"].toArray();
@@ -502,49 +478,28 @@ void PunchModule::onLeaveRequestClicked()
             cb->addItem(prefix + name, name);
         }
         };
-    auto fillHR = [&](QComboBox* cb) { fillFromArray(cb, hrArr, "人资经理: ");  };
-    auto fillGM = [&](QComboBox* cb) { fillFromArray(cb, gmArr, "总经理: ");    };
-    auto fillDeptMgr = [&](QComboBox* cb) { fillFromArray(cb, mgrArr, "部门经理: "); };
-    int approvalLevels = 0;
-    if (applicantDept == "总经办" && applicantJob == "总经理") {
-        approvalLevels = 1;
-        fillHR(app1);
-        form->addRow("第一审批人:", app1);
-        app2->setVisible(false); app3->setVisible(false);
-    }
-    else if (applicantDept == "总经办") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else if (applicantDept == "人力资源部" && applicantJob == "部门经理") {
-        approvalLevels = 1;
-        fillGM(app1);
-        form->addRow("第一审批人:", app1);
-        app2->setVisible(false); app3->setVisible(false);
-    }
-    else if (applicantDept == "人力资源部") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else if (applicantJob == "部门经理") {
-        approvalLevels = 2;
-        fillGM(app1); fillHR(app2);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        app3->setVisible(false);
-    }
-    else {
-        approvalLevels = 3;
-        fillDeptMgr(app1); fillGM(app2); fillHR(app3);
-        form->addRow("第一审批人:", app1);
-        form->addRow("第二审批人:", app2);
-        form->addRow("第三审批人:", app3);
+    // [Issue #7 修复] 审批链路由服务端计算，客户端只做展示
+    QComboBox* appBoxes[] = { app1, app2, app3 };
+    QJsonArray chainOrder = initRes["chain_order"].toArray();
+    int approvalLevels = initRes["approval_levels"].toInt();
+    QMap<QString, QPair<QJsonArray, QString>> sourceMap = {
+        {"hr",  {hrArr, "人资经理: "}},
+        {"gm",  {gmArr, "总经理: "}},
+        {"mgr", {mgrArr, "部门经理: "}}
+    };
+    for (int i = 0; i < 3; ++i) {
+        if (i < chainOrder.size()) {
+            QJsonObject step = chainOrder[i].toObject();
+            QString src = step["source"].toString();
+            QString label = step["label"].toString();
+            if (sourceMap.contains(src)) {
+                fillFromArray(appBoxes[i], sourceMap[src].first, sourceMap[src].second);
+            }
+            form->addRow(label + ":", appBoxes[i]);
+        }
+        else {
+            appBoxes[i]->setVisible(false);
+        }
     }
     QDialogButtonBox* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &formDlg);
     bb->button(QDialogButtonBox::Ok)->setText("提交申请");

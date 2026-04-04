@@ -164,8 +164,8 @@ void HomeModule::renderTopCards(QVBoxLayout* parentLayout, const QJsonObject& da
     int actualPunched = data["actual_punched"].toInt();
     int abnormalCount = data["abnormal_count"].toInt();   // 异常人数（不含请假）
     int leaveCount = data["leave_count"].toInt();          // 请假人数（独立统计）
-    // 计算出勤率百分比
-    QString rateStr = totalExpected > 0 ? QString::number((actualPunched * 100) / totalExpected) + "%" : "0%";
+    // 使用服务端预计算的出勤率
+    QString rateStr = data["attendance_rate"].toString("0%");
     cardsLayout->addWidget(createDataCard("今日出勤率", rateStr, "较昨日持平", "#00B42A"));
     cardsLayout->addWidget(createDataCard("实到 / 应到人数", QString("%1 / %2").arg(actualPunched).arg(totalExpected), "人脸核验打卡", "#3370FF"));
     // 异常卡片仅统计迟到/早退/旷工，请假人数单独标注

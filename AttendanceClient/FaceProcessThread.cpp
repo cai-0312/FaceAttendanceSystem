@@ -180,7 +180,7 @@ void FaceProcessThread::requestAiGreeting(QString name)
     QJsonArray messages;
     QJsonObject sysMsg, userMsg;
     sysMsg["role"] = "system";
-    sysMsg["content"] = "你是一个考勤机语音助手。请根据员工姓名和时间，直接输出一句热情的欢迎语（15字以内）。请尽量缩短思考过程，直接给出结果。";
+    sysMsg["content"] = "你是一个考勤机语音助手，请根据员工姓名和时间，直接输出一句热情的欢迎语（15字以内），请尽量缩短思考过程，直接给出结果。";
     userMsg["role"] = "user";
     QDateTime now = QDateTime::currentDateTime();
     QString timeStr = now.toString("hh:mm");

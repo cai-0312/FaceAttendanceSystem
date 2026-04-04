@@ -1,5 +1,6 @@
 #include "RequestHandler.h"
 #include "AttendanceServer.h"
+#include "CryptoHelper.h"
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QJsonDocument>
@@ -13,6 +14,23 @@
 #include <QTextStream>
 #include <QUuid>
 #include <QThread>
+// SQL 字符串安全化
+static QString S(const QString& val)
+{
+    QString safe = val;
+    safe.replace("'", "''");
+    return safe;
+}
+// 查询指定用户在数据库中的权限角色
+static QString queryUserRole(QSqlDatabase& db, const QString& userName)
+{
+    if (userName.isEmpty()) return QString();
+    QSqlQuery rq(db);
+    rq.prepare("SELECT role FROM users WHERE name = :name");
+    rq.bindValue(":name", userName);
+    if (rq.exec() && rq.next()) return rq.value(0).toString().trimmed();
+    return QString();
+}
 // 将 JSON 串写入 socket（紧凑格式并追加换行），用于跨线程安全发送
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
@@ -27,18 +45,15 @@ static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
     catch (...) {
     }
 }
-// 解码聊天内容（目前为透传或占位，保留解码接口以便未来扩展）
+// 解码聊天内容（兼容 AES256 / B64 / 明文，保持与 part1 一致）
 static QString decodeContent(const QString& raw)
 {
-    return raw;
+    return CryptoHelper::safeDecrypt(raw);
 }
-// 对要入库的内容做编码处理（聊天文本使用 Base64 前缀以避免特殊字符问题）
-static QString encodeContent(const QString& content, const QString& type)
+// 对要入库的内容做编码处理（使用服务端统一的加密方法）
+static QString encodeContent(const QString& content, const QString& /*type*/)
 {
-    if (type == "chat" || type == "group_chat") {
-        return "B64:" + QString(content.toUtf8().toBase64());
-    }
-    return content;
+    return CryptoHelper::encryptContent(content);
 }
 // 处理并转发客户端发来的聊天消息（支持普通消息、图片及大文件分片的审计与转发）
 void RequestHandler::handleChatMessage(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, const QByteArray& /*rawData*/, AttendanceServer* server)
@@ -523,9 +538,16 @@ void RequestHandler::handleBroadcast(QSqlDatabase& db, QTcpSocket* /*socket*/,
         server->logMessage(QString("   └─ 成功即时推送到 %1 名在线员工。").arg(pushCount));
         }, Qt::QueuedConnection);
 }
-// 在服务端的系统公告板上发布持久化公告
-void RequestHandler::handlePublishAnnouncement(QSqlDatabase& db, QTcpSocket* /*socket*/, const QJsonObject& json)
+// [Issue #3 修复] 在服务端的系统公告板上发布持久化公告（需管理员权限）
+void RequestHandler::handlePublishAnnouncement(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：仅管理员可发布系统广播
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员可发布系统广播";
+        sendJson(socket, res); return;
+    }
     QString publisher = json["publisher"].toString();
     QString content = json["content"].toString();
     QSqlQuery q(db);
@@ -533,4 +555,30 @@ void RequestHandler::handlePublishAnnouncement(QSqlDatabase& db, QTcpSocket* /*s
     q.addBindValue(publisher);
     q.addBindValue(content);
     q.exec();
+}
+// [Issue #17] 删除聊天消息（服务端同步删除数据库记录）
+void RequestHandler::handleChatDeleteMessage(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+{
+    QString msgId = json["msg_id"].toString().trimmed();
+    QString caller = json["name"].toString().trimmed();
+    QJsonObject res;
+    if (msgId.isEmpty() || caller.isEmpty()) {
+        res["status"] = "fail";
+        res["msg"] = "参数缺失";
+        sendJson(socket, res);
+        return;
+    }
+    // 仅允许删除自己发送的消息
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM chat_messages WHERE msg_id = :mid AND sender = :s");
+    q.bindValue(":mid", msgId);
+    q.bindValue(":s", caller);
+    if (q.exec() && q.numRowsAffected() > 0) {
+        res["status"] = "success";
+    }
+    else {
+        res["status"] = "fail";
+        res["msg"] = "消息不存在或无权删除";
+    }
+    sendJson(socket, res);
 }

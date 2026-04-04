@@ -17,7 +17,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
-#include <QApplication> 
+#include <QApplication>
+#include <QPointer>
 #include "AttendanceClient.h"
 // 构造函数，初始化主界面并创建各业务模块
 MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, AttendanceClient* loginWindow)
@@ -207,11 +208,10 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
     connect(registerModule, &RegisterModule::startRegistration, aiThread, &FaceProcessThread::requestRegister);
     connect(aiThread, &FaceProcessThread::registerFeatureReady, registerModule, &RegisterModule::onFeatureReady);
     connect(aiThread, &FaceProcessThread::registerFailed, registerModule, &RegisterModule::onRegisterFailed);
-    // 数据变化后延迟刷新特征库
-    connect(registerModule, &RegisterModule::dataChanged, this, [this]() {
-        QTimer::singleShot(2000, this, &MainWidget::loadRegisteredUsers);
-        });
-    connect(userModule, &UserModule::dataChanged, this, &MainWidget::loadRegisteredUsers);
+    // 数据变化后不再重新拉取全量特征库（特征比对已移至服务端）
+    connect(userModule, &UserModule::dataChanged, this, [this]() {
+        qDebug() << "[MainWidget] User data changed, server-side feature DB auto-updated.";
+    });
     // 绑定首页快捷操作
     connect(homeModule, &HomeModule::requestQuickLeave, punchModule, &PunchModule::onLeaveRequestClicked);
     connect(homeModule, &HomeModule::requestQuickAppeal, punchModule, &PunchModule::onAppealRequestClicked);
@@ -288,11 +288,12 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
         req["type"] = "secure_punch_request";
         req["feature"] = QString(secureFeature.toBase64());
         // 丢入并发线程池，向服务端发起 1:N 特征盲比对，绝对不卡死 UI 画面
-        QtConcurrent::run([req, this]() {
+        QPointer<PunchModule> safePunch = punchModule;
+        QtConcurrent::run([req, safePunch]() {
             QJsonObject res = NetworkHelper::request(req, 2000, 3000);
-            if (res["status"].toString() == "success") {
+            if (res["status"].toString() == "success" && safePunch) {
                 // 服务端核验特征一致并落库成功，触发前端打卡记录面板刷新
-                QTimer::singleShot(500, punchModule, &PunchModule::loadTodayPunchStatus);
+                QTimer::singleShot(500, safePunch, &PunchModule::loadTodayPunchStatus);
             }
             });
         });
@@ -303,9 +304,8 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
     }
     // 创建网络管理对象
     m_netManager = new QNetworkAccessManager(this);
-    // 启动线程并加载初始数据
+    // 启动线程并加载初始数据（不再下载全量人脸特征库）
     if (aiThread) aiThread->start();
-    loadRegisteredUsers();
     // 启动时加载个人资料和首页数据
     if (profileModule) profileModule->loadUserProfile(m_loginName);
     if (homeModule) homeModule->refreshDashboard();
@@ -363,8 +363,12 @@ MainWidget::MainWidget(QString loginName, QString role, QWidget* parent, Attenda
                 aiThread->stop();
             }
             if (chatModule) {
-                QMetaObject::invokeMethod(chatModule, "disconnectFromServer", Qt::DirectConnection);
+                // 安全断开聊天模块的 TCP 连接
+                QTcpSocket* chatSocket = chatModule->findChild<QTcpSocket*>();
+                if (chatSocket) chatSocket->disconnectFromHost();
             }
+            // 清除会话令牌，防止旧令牌被复用
+            NetworkHelper::setSessionToken(QString());
             this->hide();
             if (m_loginWindow) {
                 m_loginWindow->showLoginReady();
@@ -380,10 +384,11 @@ MainWidget::~MainWidget() {
     if (aiThread) aiThread->stop();
     delete ui;
 }
-// 拉取人脸特征库并发送给线程
+// [Issue #2 修复] 不再下载全量人脸特征库，仅加载当前用户自己的特征用于本地显示
 void MainWidget::loadRegisteredUsers() {
     QJsonObject req;
     req["type"] = "query_face_features";
+    req["name"] = m_loginName;
     QJsonObject res = NetworkHelper::request(req);
     if (res["status"].toString() == "success") {
         std::map<QString, cv::Mat> users;
@@ -418,8 +423,12 @@ void MainWidget::closeEvent(QCloseEvent* event) {
     this->hide();
     if (aiThread) {
         aiThread->forceReleaseCamera();
-        aiThread->terminate();
-        aiThread->wait(500);
+        aiThread->stop();
+        if (!aiThread->wait(3000)) {
+            // 超时后才使用 terminate 兜底
+            aiThread->terminate();
+            aiThread->wait(1000);
+        }
     }
     qApp->quit();
 }

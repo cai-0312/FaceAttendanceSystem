@@ -18,8 +18,10 @@
 #include <QRegularExpression>
 #include <QPointer>
 #include <QThread>
+#include <QUuid>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QSettings>
 // 发送 JSON 回包（线程安全）
 static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
 {
@@ -40,6 +42,16 @@ static QString S(const QString& val)
     safe.replace("'", "''");
     return safe;
 }
+// 查询指定用户在数据库中的权限角色，用于服务端二次鉴权
+static QString queryUserRole(QSqlDatabase& db, const QString& userName)
+{
+    if (userName.isEmpty()) return QString();
+    QSqlQuery rq(db);
+    rq.prepare("SELECT role FROM users WHERE name = :name");
+    rq.bindValue(":name", userName);
+    if (rq.exec() && rq.next()) return rq.value(0).toString().trimmed();
+    return QString();
+}
 // 聊天内容解码：自动兼容 AES256 / B64 / 明文，返回明文字符串
 static QString decodeContent(const QString& raw)
 {
@@ -50,13 +62,24 @@ static QString encodeContent(const QString& content)
 {
     return CryptoHelper::encryptContent(content);
 }
-// 查询系统中所有已注册的人脸特征并返回 Base64 编码
-void RequestHandler::handleQueryFaceFeatures(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& /*json*/)
+// [Issue #2 修复] 仅返回当前用户自己的人脸特征，不再下发全量特征库
+void RequestHandler::handleQueryFaceFeatures(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QJsonArray arr;
     QSqlQuery query(db);
-    // 从 users 表读取 name 与二进制 feature 列
-    if (query.exec("SELECT name, feature FROM users WHERE feature IS NOT NULL")) {
+    QString reqName = json["name"].toString().trimmed();
+    if (reqName.isEmpty()) {
+        // 未指定用户时返回空结果
+        QJsonObject res;
+        res["status"] = "success";
+        res["data"] = arr;
+        sendJson(socket, res);
+        return;
+    }
+    // 仅查询请求用户自己的特征
+    query.prepare("SELECT name, feature FROM users WHERE name = :n AND feature IS NOT NULL");
+    query.bindValue(":n", reqName);
+    if (query.exec()) {
         while (query.next()) {
             QJsonObject o;
             o["name"] = query.value(0).toString();
@@ -82,25 +105,27 @@ void RequestHandler::handleRegisterFace(QSqlDatabase& db, QTcpSocket* /*socket*/
     q.bindValue(":f", featureData);
     q.exec();
 }
-// 客户端账号/密码/角色登录验证
-void RequestHandler::handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+// 客户端账号/密码登录验证（服务端校验客户端选择的角色是否与数据库匹配，超级管理员禁止客户端登录）
+void RequestHandler::handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server)
 {
     QString account = json["account"].toString();
     QString pwd = json["pwd"].toString();
-    QString role = json["role"].toString();
+    QString clientRole = json["role"].toString().trimmed();
     QJsonObject res;
     res["status"] = "fail";
-    qDebug() << "[LoginAuth] account=" << account << "role=" << role;
+    qDebug() << "[LoginAuth] account=" << account << "clientRole=" << clientRole;
     QSqlQuery q(db);
     // 查询账户的基本信息与密码哈希
     bool ok = q.exec(QString("SELECT name, feature, password, role FROM users WHERE account = '%1'").arg(S(account)));
     if (!ok) {
         qDebug() << "[LoginAuth] SQL执行失败:" << q.lastError().text();
+        res["msg"] = "服务器内部错误";
         sendJson(socket, res);
         return;
     }
     if (!q.next()) {
         qDebug() << "[LoginAuth] FAILED, account not found:" << account;
+        res["msg"] = "工号或密码错误";
         sendJson(socket, res);
         return;
     }
@@ -109,31 +134,49 @@ void RequestHandler::handleClientLoginAuth(QSqlDatabase& db, QTcpSocket* socket,
     QString dbName = q.value("name").toString();
     QByteArray feat = q.value("feature").toByteArray();
     q.finish();
-    // 比对客户端请求的角色与数据库中记录的角色
-    if (dbRole != role.trimmed()) {
-        qDebug() << "[LoginAuth] FAILED, role mismatch: db=" << dbRole << "client=" << role;
+    // 超级管理员禁止通过客户端登录，只能使用服务端控制台
+    if (dbRole == QStringLiteral("超级管理员")) {
+        res["msg"] = QStringLiteral("超级管理员账号不允许通过客户端登录，请使用服务端控制台登录！");
+        qDebug() << "[LoginAuth] BLOCKED, super admin cannot login via client:" << account;
         sendJson(socket, res);
         return;
     }
     // 验证密码哈希（支持旧版与新版哈希验证）
-    if (CryptoHelper::verifyPassword(pwd, storedHash)) {
-        res["status"] = "success";
-        res["real_name"] = dbName;
-        res["has_face"] = !feat.isNull() && !feat.isEmpty();
-        qDebug() << "[LoginAuth] SUCCESS, name=" << dbName;
-        // 若发现数据库中仍为旧格式哈希，则升级为 PBKDF2 存储
-        if (!storedHash.startsWith("PBKDF2:")) {
-            QString upgradedHash = CryptoHelper::hashPassword(pwd);
-            QSqlQuery upgradeQ(db);
-            upgradeQ.exec(QString("UPDATE users SET password = '%1' WHERE account = '%2'")
-                .arg(S(upgradedHash), S(account)));
-            if (upgradeQ.numRowsAffected() > 0) {
-                qDebug() << "[LoginAuth] 密码已自动升级为 PBKDF2 格式";
-            }
-        }
-    }
-    else {
+    if (!CryptoHelper::verifyPassword(pwd, storedHash)) {
+        res["msg"] = QStringLiteral("工号或密码错误");
         qDebug() << "[LoginAuth] FAILED, password mismatch for account=" << account;
+        sendJson(socket, res);
+        return;
+    }
+    // 校验客户端选择的角色是否与数据库中的角色一致
+    if (!clientRole.isEmpty() && clientRole != dbRole) {
+        res["msg"] = QStringLiteral("您的账号角色为「") + dbRole +
+            QStringLiteral("」，请选择正确的登录方式！");
+        qDebug() << "[LoginAuth] FAILED, role mismatch: client=" << clientRole << "db=" << dbRole;
+        sendJson(socket, res);
+        return;
+    }
+    // 登录成功，返回服务端确认的角色
+    res["status"] = "success";
+    res["real_name"] = dbName;
+    res["role"] = dbRole;
+    res["has_face"] = !feat.isNull() && !feat.isEmpty();
+    // 生成会话令牌，客户端后续请求需携带此令牌通过认证门
+    QString sessionToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    res["session_token"] = sessionToken;
+    if (server) {
+        server->addSessionToken(sessionToken, dbName);
+    }
+    qDebug() << "[LoginAuth] SUCCESS, name=" << dbName << "role=" << dbRole;
+    // 若发现数据库中仍为旧格式哈希，则升级为 PBKDF2 存储
+    if (!storedHash.startsWith("PBKDF2:")) {
+        QString upgradedHash = CryptoHelper::hashPassword(pwd);
+        QSqlQuery upgradeQ(db);
+        upgradeQ.exec(QString("UPDATE users SET password = '%1' WHERE account = '%2'")
+            .arg(S(upgradedHash), S(account)));
+        if (upgradeQ.numRowsAffected() > 0) {
+            qDebug() << "[LoginAuth] 密码已自动升级为 PBKDF2 格式";
+        }
     }
     sendJson(socket, res);
 }
@@ -195,6 +238,21 @@ void RequestHandler::handleClientRegisterAccount(QSqlDatabase& db, QTcpSocket* s
     };
     if (!validDepts.contains(dept)) {
         res["msg"] = "部门参数非法";
+        sendJson(socket, res);
+        return;
+    }
+    // 部门-职务合法性校验：防止客户端伪造非法职务组合
+    static const QMap<QString, QStringList> validJobTitles = {
+        {"总经办", {"总经理", "行政助理", "财务总监"}},
+        {"人力资源部", {"部门经理", "招聘专员", "员工关系专员", "培训与发展专员"}},
+        {"财务部", {"部门经理", "财务分析师", "会计", "出纳"}},
+        {"销售部", {"部门经理", "区域销售经理", "销售代表", "客户服务代表"}},
+        {"研发部", {"部门经理", "软件工程师", "测试工程师", "产品经理"}},
+        {"市场部", {"部门经理", "市场营销专员", "品牌管理专员", "公关专员"}},
+        {"客户服务部", {"部门经理", "客户服务代表", "技术支持"}}
+    };
+    if (validJobTitles.contains(dept) && !validJobTitles[dept].contains(jobTitle)) {
+        res["msg"] = "该部门下不存在此职务";
         sendJson(socket, res);
         return;
     }
@@ -467,9 +525,26 @@ void RequestHandler::handleUpdateProfileField(QSqlDatabase& db, QTcpSocket* sock
     }
     sendJson(socket, res);
 }
-// 按部门和关键字查询花名册（返回简版视图 view_users_lite） 支持排除管理员账号并按条件过滤
-void RequestHandler::handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
+// 按部门和关键字查询花名册（需服务端权限校验）
+void RequestHandler::handleQueryUserList(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：仅管理员或人资部门经理可查询花名册
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        // 进一步检查是否为人资部门经理
+        QSqlQuery dq(db);
+        dq.prepare("SELECT department, job_title FROM users WHERE name = :n");
+        dq.bindValue(":n", callerName);
+        bool isHRManager = false;
+        if (dq.exec() && dq.next()) {
+            isHRManager = (dq.value(0).toString() == "人力资源部" && dq.value(1).toString() == "部门经理");
+        }
+        if (!isHRManager) {
+            QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员或人资经理可查看员工列表";
+            sendJson(socket, res); return;
+        }
+    }
     QString dept = json["dept"].toString();
     QString keyword = json["keyword"].toString();
     QString sql = "SELECT id, account, name, gender, department, job_title, phone "
@@ -528,12 +603,21 @@ void RequestHandler::handleQueryUserDept(QSqlDatabase& db, QTcpSocket* socket, c
 void RequestHandler::handleAdminResetPassword(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：校验操作者是否具有管理员权限
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员可执行此操作";
+        sendJson(socket, res); return;
+    }
     QString account = json["account"].toString();
     QString empName = json["name"].toString();
-    // 按登录链路生成存储哈希：PBKDF2(SHA256("123456"))
-    QString sha256Of123456 = QString(QCryptographicHash::hash(
-        QByteArray("123456"), QCryptographicHash::Sha256).toHex());
-    QString hashedPwd = CryptoHelper::hashPassword(sha256Of123456);
+    // [Issue #6 修复] 从配置文件读取默认重置密码，避免硬编码
+    QSettings serverCfg(QCoreApplication::applicationDirPath() + "/server.ini", QSettings::IniFormat);
+    QString defaultPwd = serverCfg.value("Security/default_reset_password", "Abc@1234").toString();
+    QString sha256OfDefault = QString(QCryptographicHash::hash(
+        defaultPwd.toUtf8(), QCryptographicHash::Sha256).toHex());
+    QString hashedPwd = CryptoHelper::hashPassword(sha256OfDefault);
     QSqlQuery q(db);
     QJsonObject res;
     if (q.exec(QString("UPDATE users SET password = '%1' WHERE account = '%2'").arg(S(hashedPwd), S(account)))) {
@@ -552,6 +636,13 @@ void RequestHandler::handleAdminResetPassword(QSqlDatabase& db, QTcpSocket* sock
 void RequestHandler::handleAdminDeleteUser(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：校验操作者是否具有管理员权限
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员可执行此操作";
+        sendJson(socket, res); return;
+    }
     QString account = json["account"].toString();
     QString empName = json["name"].toString();
     // 使用事务守卫，确保中间任意失败时自动回滚
@@ -588,9 +679,16 @@ void RequestHandler::handleAdminDeleteUser(QSqlDatabase& db, QTcpSocket* socket,
         }, Qt::QueuedConnection);
 }
 // 超级管理员手动修改某条考勤记录的状态 变更后在服务端记录日志并重新加载全局考勤记录缓存
-void RequestHandler::handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* /*socket*/,
+void RequestHandler::handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* socket,
     const QJsonObject& json, AttendanceServer* server)
 {
+    // 服务端二次鉴权：校验操作者是否具有管理员权限
+    QString callerName = server->getClientName(socket);
+    QString callerRole = queryUserRole(db, callerName);
+    if (!callerRole.contains("管理员")) {
+        QJsonObject res; res["status"] = "fail"; res["msg"] = "权限不足：仅管理员可执行此操作";
+        sendJson(socket, res); return;
+    }
     int recordId = json["record_id"].toInt();
     QString newStatus = json["new_status"].toString();
     QSqlQuery q(db);
@@ -602,28 +700,24 @@ void RequestHandler::handleAdminModifyStatus(QSqlDatabase& db, QTcpSocket* /*soc
             }, Qt::QueuedConnection);
     }
 }
-//  修改密码（密码链路统一修复）
+//  修改密码（密码链路统一修复 — 客户端已发送 SHA256 哈希）
 void RequestHandler::handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket* socket, const QJsonObject& json)
 {
     QString name = json["name"].toString().trimmed();
-    QString oldPwd = json["old_pwd"].toString();   // 客户端发来的是明文
-    QString newPwd = json["new_pwd"].toString();   
+    QString oldPwdHash = json["old_pwd"].toString();   // 客户端发来的是 SHA256 哈希
+    QString newPwdHash = json["new_pwd"].toString();   // 客户端发来的是 SHA256 哈希
     QJsonObject res;
     res["status"] = "fail";
 
-    if (name.isEmpty() || oldPwd.isEmpty() || newPwd.isEmpty()) {
+    if (name.isEmpty() || oldPwdHash.isEmpty() || newPwdHash.isEmpty()) {
         res["msg"] = "参数不完整"; sendJson(socket, res); return;
     }
-    if (newPwd.length() < 8) {
-        res["msg"] = "新密码长度必须至少8位"; sendJson(socket, res); return;
+    // 校验哈希格式：SHA256 应为64位十六进制
+    if (oldPwdHash.length() != 64 || newPwdHash.length() != 64) {
+        res["msg"] = "密码格式异常"; sendJson(socket, res); return;
     }
-    bool hasLetter = false, hasDigit = false;
-    for (const QChar& ch : newPwd) {
-        if (ch.isLetter()) hasLetter = true;
-        if (ch.isDigit()) hasDigit = true;
-    }
-    if (!hasLetter || !hasDigit) {
-        res["msg"] = "新密码必须同时包含字母和数字"; sendJson(socket, res); return;
+    if (newPwdHash == oldPwdHash) {
+        res["msg"] = "新密码不能与旧密码相同"; sendJson(socket, res); return;
     }
     // 从数据库查出当前密码哈希
     QSqlQuery q(db);
@@ -633,18 +727,12 @@ void RequestHandler::handleVerifyAndUpdatePassword(QSqlDatabase& db, QTcpSocket*
     }
     QString stored = q.value(0).toString();
     q.finish();
-    // 密码验证客户端发的是明文，但数据库可能存的是 PBKDF2(SHA256(明文))
-    QString oldPwdSha256 = QString(QCryptographicHash::hash(oldPwd.toUtf8(), QCryptographicHash::Sha256).toHex());
-    if (!CryptoHelper::verifyPassword(oldPwd, stored) && !CryptoHelper::verifyPassword(oldPwdSha256, stored)) {
+    // 验证旧密码：客户端发的是 SHA256(明文)，数据库存储的是 PBKDF2(SHA256(明文))
+    if (!CryptoHelper::verifyPassword(oldPwdHash, stored)) {
         res["msg"] = "旧密码错误"; sendJson(socket, res); return;
     }
-
-    if (newPwd == oldPwd) {
-        res["msg"] = "新密码不能与旧密码相同"; sendJson(socket, res); return;
-    }
-    // 新密码存储：与登录链路一致 → PBKDF2(SHA256(明文))
-    QString newPwdSha256 = QString(QCryptographicHash::hash(newPwd.toUtf8(), QCryptographicHash::Sha256).toHex());
-    QString newHash = CryptoHelper::hashPassword(newPwdSha256);
+    // 新密码存储：PBKDF2(SHA256(明文))
+    QString newHash = CryptoHelper::hashPassword(newPwdHash);
 
     QSqlQuery uq(db);
     if (uq.exec(QString("UPDATE users SET password = '%1' WHERE name = '%2'").arg(S(newHash), S(name)))) {
@@ -764,5 +852,29 @@ void RequestHandler::handleQueryDeptList(QSqlDatabase& db, QTcpSocket* socket, c
     QJsonObject res;
     res["status"] = "success";
     res["departments"] = arr;
+    sendJson(socket, res);
+}
+// 查询部门-职务映射表，供客户端动态填充注册/录入等下拉框
+void RequestHandler::handleQueryDeptJobList(QSqlDatabase& /*db*/, QTcpSocket* socket, const QJsonObject& /*json*/)
+{
+    // 与服务端注册校验白名单保持一致的权威数据源
+    static const QMap<QString, QStringList> deptJobMap = {
+        {"总经办", {"总经理", "行政助理", "财务总监"}},
+        {"人力资源部", {"部门经理", "招聘专员", "员工关系专员", "培训与发展专员"}},
+        {"财务部", {"部门经理", "财务分析师", "会计", "出纳"}},
+        {"销售部", {"部门经理", "区域销售经理", "销售代表", "客户服务代表"}},
+        {"研发部", {"部门经理", "软件工程师", "测试工程师", "产品经理"}},
+        {"市场部", {"部门经理", "市场营销专员", "品牌管理专员", "公关专员"}},
+        {"客户服务部", {"部门经理", "客户服务代表", "技术支持"}}
+    };
+    QJsonObject mapping;
+    for (auto it = deptJobMap.constBegin(); it != deptJobMap.constEnd(); ++it) {
+        QJsonArray jobs;
+        for (const QString& j : it.value()) jobs.append(j);
+        mapping[it.key()] = jobs;
+    }
+    QJsonObject res;
+    res["status"] = "success";
+    res["dept_job_map"] = mapping;
     sendJson(socket, res);
 }

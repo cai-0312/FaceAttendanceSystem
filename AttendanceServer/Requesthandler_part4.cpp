@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QtConcurrent>
 #include <QSslError>
+#include <QSettings>
 // SQL 安全转义
 static QString S(const QString& val) { QString s = val; s.replace("'", "''"); return s; }
 // 线程安全 JSON 发送
@@ -36,7 +37,7 @@ static void sendJson(QTcpSocket* socket, const QJsonObject& obj)
     }
     catch (...) {}
 }
-//  AI 模型配置
+//  AI 模型配置（密钥从 server.ini 读取，不再硬编码到源码中）
 struct AiModelConfig {
     QString apiUrl;
     QString apiKey;
@@ -44,33 +45,37 @@ struct AiModelConfig {
 };
 static AiModelConfig getModelConfig(const QString& model)
 {
-    AiModelConfig cfg;
+    QSettings cfg(QCoreApplication::applicationDirPath() + "/server.ini", QSettings::IniFormat);
+    // 从配置文件读取 API 密钥，回退到空串（需管理员在 server.ini 中配置）
+    QString deepseekKey = cfg.value("AI/deepseek_key", "").toString();
+    QString doubaoKey   = cfg.value("AI/doubao_key", "").toString();
+    AiModelConfig c;
     if (model == "deepseek-chat" || model == "deepseek-v3") {
-        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
-        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
-        cfg.modelName = "deepseek-chat";
+        c.apiUrl = "https://api.deepseek.com/chat/completions";
+        c.apiKey = deepseekKey;
+        c.modelName = "deepseek-chat";
     }
     else if (model == "deepseek-reasoner" || model == "deepseek-r1") {
-        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
-        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
-        cfg.modelName = "deepseek-reasoner";
+        c.apiUrl = "https://api.deepseek.com/chat/completions";
+        c.apiKey = deepseekKey;
+        c.modelName = "deepseek-reasoner";
     }
     else if (model == "doubao-lite") {
-        cfg.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
-        cfg.apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
-        cfg.modelName = "ep-20260307031237-h5zmt";
+        c.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+        c.apiKey = doubaoKey;
+        c.modelName = cfg.value("AI/doubao_lite_ep", "ep-20260404162018-n225c").toString();
     }
     else if (model == "doubao-seedream") {
-        cfg.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
-        cfg.apiKey = "a49e5973-6d5c-442c-9d79-ba4b433381d9";
-        cfg.modelName = "ep-20260306195042-l95bj";
+        c.apiUrl = "https://ark.cn-beijing.volces.com/api/v3/images/generations";
+        c.apiKey = doubaoKey;
+        c.modelName = cfg.value("AI/doubao_seedream_ep", "ep-20260306195042-l95bj").toString();
     }
     else {
-        cfg.apiUrl = "https://api.deepseek.com/chat/completions";
-        cfg.apiKey = "sk-54ccee7e91ab405a94c622d9419a91e9";
-        cfg.modelName = "deepseek-chat";
+        c.apiUrl = "https://api.deepseek.com/chat/completions";
+        c.apiKey = deepseekKey;
+        c.modelName = "deepseek-chat";
     }
-    return cfg;
+    return c;
 }
 //  子线程异步调用大模型 API，不阻塞 TCP 主线程
 void RequestHandler::handleAiChatRequest(QSqlDatabase& db, QTcpSocket* socket,
@@ -125,8 +130,23 @@ void RequestHandler::handleAiChatRequest(QSqlDatabase& db, QTcpSocket* socket,
             file.close();
         }
     }
-    // 3. 获取模型配置
+    // 3. 获取模型配置，校验密钥是否有效
     AiModelConfig cfg = getModelConfig(model);
+    if (cfg.apiKey.isEmpty()) {
+        QJsonObject errResp;
+        errResp["type"] = "ai_chat_response";
+        errResp["session_id"] = sessionId;
+        errResp["status"] = "fail";
+        errResp["msg"] = "AI服务未配置：server.ini 中缺少 [AI] 段的 API 密钥，请联系管理员配置后重启服务端。";
+        sendJson(socket, errResp);
+        if (server) {
+            QMetaObject::invokeMethod(server, [server, name, model]() {
+                server->logMessage(QString("<font color='#F53F3F'>[AI代理] [%1] 请求模型 %2 失败：server.ini 中未配置 API 密钥</font>")
+                    .arg(name, model));
+                }, Qt::QueuedConnection);
+        }
+        return;
+    }
     // 4. 服务端日志
     if (server) {
         QMetaObject::invokeMethod(server, [server, name, model]() {
@@ -201,7 +221,24 @@ void RequestHandler::handleAiChatRequest(QSqlDatabase& db, QTcpSocket* socket,
                 }
             }
             else {
-                errMsg = "网络错误: " + reply->errorString();
+                // 读取 API 返回的错误响应体，提取详细诊断信息（如密钥过期、余额不足等）
+                QByteArray errBody = reply->readAll();
+                int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                QString errDetail;
+                QJsonDocument errDoc = QJsonDocument::fromJson(errBody);
+                if (!errDoc.isNull()) {
+                    QJsonObject errObj = errDoc.object();
+                    // 火山引擎/DeepSeek 标准错误格式: {"error": {"message": "...", "code": "..."}}
+                    if (errObj.contains("error")) {
+                        QJsonObject apiErr = errObj["error"].toObject();
+                        errDetail = apiErr["message"].toString();
+                        QString errCode = apiErr["code"].toString();
+                        if (!errCode.isEmpty() && !errDetail.contains(errCode))
+                            errDetail = QString("[%1] %2").arg(errCode, errDetail);
+                    }
+                }
+                if (errDetail.isEmpty()) errDetail = reply->errorString();
+                errMsg = QString("API错误 (HTTP %1): %2").arg(httpStatus).arg(errDetail);
             }
         }
         else {

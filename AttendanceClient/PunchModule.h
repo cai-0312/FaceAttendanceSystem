@@ -48,11 +48,10 @@ private:
     QString m_loginName; // 当前登录账号
     QString m_currentFaceName; // 当前识别到的人脸姓名
     QString m_shiftName; // 当前排班名称
-    QTime m_startTime; // 上班时间
-    QTime m_endTime; // 下班时间
-    int m_lateMins; // 允许迟到分钟数
-    int m_absentMins; // 判定旷工分钟数
-    int m_cheatCount; // 连续异常次数
+    QTime m_startTime;             // 上班时间
+    QTime m_endTime;               // 下班时间
+    int m_lateMins = 30;           // 允许迟到分钟数
+    int m_absentMins = 120;        // 判定旷工分钟数
     QTimer* m_timer; // 时间刷新定时器
     QByteArray m_currentFeatureBytes; // 当前人脸特征缓存
 };

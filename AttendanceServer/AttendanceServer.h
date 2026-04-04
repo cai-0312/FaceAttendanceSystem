@@ -41,6 +41,7 @@ public:
     void registerClient(QTcpSocket* socket, const QString& name, const QString& dept, const QString& jobTitle, const QString& ip); // 注册已认证客户端
     bool isClientOnline(const QString& name) const;       // 检查指定员工是否在线
     QTcpSocket* getSocketByName(const QString& name) const; // 根据姓名查找套接字
+    QString getClientName(QTcpSocket* socket) const;        // 根据套接字查找已认证的员工姓名
 private slots:
     void on_btn_StartServer_clicked();    // 启动 TCP 服务并开始监听
     void on_btn_StopServer_clicked();     // 停止 TCP 服务并断开所有连接
@@ -67,5 +68,11 @@ private:
     QHash<QString, Handler> m_dispatchTable; // 路由分发表
     QMap<QTcpSocket*, FileTransferState> m_fileTransfers; // 文件传输状态映射
     QSet<QTcpSocket*> m_authenticatedSockets; // 已通过登录认证的 socket 集合
+    QMap<QString, QString> m_sessionTokens;    // 会话令牌映射（token → 用户名）
+    QMap<QTcpSocket*, QString> m_tokenAuthNames; // 令牌认证的临时连接映射（socket → 用户名，用于 sendAsync 临时连接）
+public:
+    void addSessionToken(const QString& token, const QString& userName); // 注册会话令牌
+    void removeSessionTokensForUser(const QString& userName);           // 移除指定用户的所有令牌
+    QString validateSessionToken(const QString& token) const;           // 校验令牌并返回用户名
 };
 #endif // ATTENDANCESERVER_H

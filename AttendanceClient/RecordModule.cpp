@@ -42,8 +42,8 @@ RecordModule::RecordModule(QTableView* tableView, QCalendarWidget* calendar,
     connect(m_tableView, &QTableView::customContextMenuRequested, this, &RecordModule::onCustomContextMenu);
     // 注入筛选区域
     injectAdvancedUI();
-    // 普通员工隐藏姓名筛选
-    if (m_role != "管理员登录" && m_role != "经理") {
+    // 普通员工隐藏姓名筛选（服务端返回的角色值为"普通登录"或含"管理员"/"经理"）
+    if (!m_role.contains("管理员") && m_role != "经理") {
         m_searchNameEdit->hide();
         m_filterBtn->hide();
     }
